@@ -82,6 +82,11 @@ uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 Open **http://127.0.0.1:8000/web** to access the Admin Dashboard.
 
+
+### Website: Sonicvoice.pro
+
+Tele admin: https://t.me/BangNgocThai47271
+
 ---
 
 ## 📜 License
