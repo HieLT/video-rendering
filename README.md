@@ -83,9 +83,13 @@ uvicorn server:app --host 0.0.0.0 --port 8000
 Open **http://127.0.0.1:8000/web** to access the Admin Dashboard.
 
 
-### Website: Sonicvoice.pro
+### 🌐 SonicVoice (For Voice Clone)
 
-Tele admin: https://t.me/BangNgocThai47271
+[![Website](https://img.shields.io/badge/Website-SonicVoice.pro-6366f1?style=for-the-badge&logo=google-chrome&logoColor=white)](https://sonicvoice.pro)
+
+### 💬 Admin & Support
+
+[![Telegram](https://img.shields.io/badge/Telegram-Bang%20Ngọc%20Thái-229ED9?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/BangNgocThai47271)
 
 ---
 
