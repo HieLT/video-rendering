@@ -13,6 +13,11 @@ from video_worker_ui import (
 )
 import config
 
+
+def _log(message: str):
+    """Keeps pool diagnostics printable on Windows cp1252 consoles."""
+    print(str(message).encode("ascii", "backslashreplace").decode("ascii"), flush=True)
+
 DAILY_LIMIT = 2
 COOLDOWN_SEC = 1800  # 30-minute cooldown on risk control
 
@@ -216,11 +221,23 @@ class BrowserPool:
         lock = self._locks.get(name)
         if lock and lock.locked():
             raise RuntimeError("Account is generating video, cannot delete")
-        d = self.accounts_dir / name
-        if d.exists():
-            shutil.rmtree(d)
+        root = self.accounts_dir.resolve()
+        d = (root / name).resolve()
+        if d.parent != root or d == root:
+            raise RuntimeError("Invalid account profile path")
+        _log(f"[account-delete] account={name!r} stage=remove_profile path={str(d)!r} exists={d.exists()}")
+        try:
+            if d.exists():
+                shutil.rmtree(d)
+        except OSError as e:
+            _log(f"[account-delete] account={name!r} stage=remove_profile_failed "
+                 f"type={type(e).__name__} file={e.filename!r} errno={e.errno} "
+                 f"winerror={getattr(e, 'winerror', None)} error={str(e)!r}")
+            raise
+        _log(f"[account-delete] account={name!r} stage=remove_metadata")
         self._conn.execute("DELETE FROM accounts_meta WHERE name=?", (name,))
         self._conn.commit()
+        _log(f"[account-delete] account={name!r} stage=metadata_removed")
 
     async def verify_account(self, name: str) -> bool:
         """Verifies login state in headless mode and updates cache."""
@@ -325,6 +342,7 @@ class BrowserPool:
                 if not self._schedulable(a):
                     continue
                 account = a["name"]
+                _log(f"[pool] selected account={account} for generation")
                 lock = self._locks.setdefault(account, asyncio.Lock())
                 # Skip busy accounts to prevent concurrent collisions on same profile.
                 if lock.locked():
@@ -332,6 +350,12 @@ class BrowserPool:
                 async with lock:
                     if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
                         continue  # State changed while waiting
+                    submit_attempted = False
+
+                    def on_submit():
+                        nonlocal submit_attempted
+                        submit_attempted = True
+
                     try:
                         def on_balance(balance, source=""):
                             self._set_credit_balance(account, balance, source)
@@ -339,7 +363,8 @@ class BrowserPool:
                         result = await generate_video(
                             account, prompt, ratio, duration, model=model,
                             on_conversation_id=on_conversation_id, on_poll=on_poll,
-                            on_balance=on_balance, reference_image_paths=reference_image_paths)
+                            on_balance=on_balance, reference_image_paths=reference_image_paths,
+                            on_submit=on_submit)
                         self._claim(account)
                         self._conn.execute(
                             "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
@@ -347,22 +372,22 @@ class BrowserPool:
                         self._conn.commit()
                         return result
                     except CreditInsufficientError as e:
-                        print(f"[pool] {account} insufficient points before generation, skipping: {e}", flush=True)
+                        _log(f"[pool] {account} insufficient points before generation, skipping: {e}")
                         self._mark_quota_blocked(account, str(e))
                         last_err = e
                         continue
                     except AccountLimitedError as e:
-                        print(f"[pool] {account} reached daily limit, rotating: {e}", flush=True)
+                        _log(f"[pool] {account} reached daily limit; current Playwright context is closed by worker, rotating: {e}")
                         self._mark_daily_limit(account, str(e))
                         last_err = e
                         continue
                     except CreditError as e:
-                        print(f"[pool] {account} out of quota, rotating: {e}", flush=True)
+                        _log(f"[pool] {account} out of quota, rotating: {e}")
                         self._claim(account)
                         last_err = e
                         continue
                     except RiskControlError as e:
-                        print(f"[pool] {account} risk control triggered (30m cooldown), rotating: {e}", flush=True)
+                        _log(f"[pool] {account} risk control triggered (30m cooldown), rotating: {e}")
                         self._conn.execute(
                             "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
                             (time.time() + COOLDOWN_SEC, account))
@@ -370,16 +395,17 @@ class BrowserPool:
                         last_err = e
                         continue
                     except TimeoutError as e:
-                        # Once conversation_id is assigned, task continues on Dola side;
-                        # do not re-submit to prevent duplicate credit consumption.
-                        self._claim(account)
-                        self._conn.execute(
-                            "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
-                            (time.time(), account))
-                        self._conn.commit()
+                        # Setup failures consume no generation. After an Enter
+                        # attempt, conservatively count it and never auto-resubmit.
+                        if submit_attempted:
+                            self._claim(account)
+                            self._conn.execute(
+                                "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
+                                (time.time(), account))
+                            self._conn.commit()
                         raise
                     except FileNotFoundError as e:
-                        print(f"[pool] {account} profile missing, skipping: {e}", flush=True)
+                        _log(f"[pool] {account} profile missing, skipping: {e}")
                         last_err = e
                         continue
             if self.all_accounts_quota_blocked:

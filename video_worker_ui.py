@@ -17,6 +17,12 @@ from browser import cookie_value, launch_account_context
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
 from video_worker import POLL_JS, RiskControlError, _download, extract_unwatermarked_url
 
+
+def _log(message: str):
+    """Keeps worker diagnostics printable on Windows cp1252 consoles."""
+    safe = str(message).encode("ascii", "backslashreplace").decode("ascii")
+    print(safe, flush=True)
+
 # Daily limit pattern matching response text
 DAILY_LIMIT_PATTERN = re.compile(
     r"動画生成の\s*1日あたりの上限|每日(?:视频|影片)?生成.*(?:上限|限额|额度)|"
@@ -133,7 +139,23 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
     if not image_paths:
         return
     file_input = page.locator('input[type="file"]').first
-    await file_input.wait_for(state="attached", timeout=10000)
+    for _ in range(30):
+        if await file_input.count():
+            break
+        await page.wait_for_timeout(1000)
+    if not await file_input.count():
+        snapshot = await page.evaluate("""() => ({
+            url: location.href,
+            text: (document.body?.innerText || '').slice(0, 4000),
+            controls: [...document.querySelectorAll('button, [role="button"]')]
+                .map(e => ({text: (e.innerText || '').trim(), aria: e.getAttribute('aria-label'), title: e.getAttribute('title')}))
+                .filter(e => e.text || e.aria || e.title)
+                .slice(0, 100)
+        })""")
+        safe = json.dumps(snapshot, ensure_ascii=False).encode("ascii", "backslashreplace").decode("ascii")
+        _log(f"[upload] file input missing after 30s: {safe[:7000]}")
+        await page.screenshot(path="reference_upload_input_missing.png", full_page=True)
+        raise TimeoutError("Reference image upload control did not appear")
     events = []
 
     def on_response(response):
@@ -155,7 +177,7 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
             thumb_count = await page.locator('img[alt]').count()
             if prepare_count >= expected and tos_count >= expected and thumb_count >= expected:
                 await page.wait_for_timeout(800)
-                print(f"[upload] Reference images uploaded: {expected} image(s)", flush=True)
+                _log(f"[upload] Reference images uploaded: {expected} image(s)")
                 return
             await page.wait_for_timeout(250)
         raise TimeoutError(
@@ -203,7 +225,7 @@ async def solve_slider(page, frame, attempt: int) -> bool:
     bg = next((i for i in imgs if ".jpeg" in i["src"] or "-2." in i["src"]), None)
     piece = next((i for i in imgs if i is not bg and (".png" in i["src"] or "-1." in i["src"])), None)
     if not bg or not piece:
-        print("  ✗ Captcha background or puzzle image not found", flush=True)
+        _log("  Captcha background or puzzle image not found")
         return False
 
     bg_bytes = await _fetch_bytes(bg["src"])
@@ -214,12 +236,12 @@ async def solve_slider(page, frame, attempt: int) -> bool:
     gap_x, conf = find_gap_x(bg_bytes, piece_bytes)
     scale = bg["bw"] / bg["w"] if bg["w"] else 340 / 552
     distance = (gap_x - (piece["left"] - bg["left"]) / scale) * scale
-    print(f"  [solve#{attempt}] gap_x={gap_x} conf={conf:.3f} scale={scale:.2f} distance={distance:.0f}px", flush=True)
+    _log(f"  [solve#{attempt}] gap_x={gap_x} conf={conf:.3f} scale={scale:.2f} distance={distance:.0f}px")
 
     btn = frame.locator(".captcha-slider-btn")
     bb = await btn.bounding_box()
     if not bb:
-        print("  ✗ Drag handle .captcha-slider-btn not found", flush=True)
+        _log("  Drag handle .captcha-slider-btn not found")
         return False
     sx, sy = bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2
     await page.mouse.move(sx, sy)
@@ -275,7 +297,7 @@ async def _preflight_balance(page, ms_token: str, fp: str, required: int) -> dic
     except (AccountLimitedError, CreditInsufficientError):
         raise
     except Exception as e:
-        print(f"  Balance pre-check indeterminate (proceeding with submit): {str(e)[:120]}", flush=True)
+        _log(f"  Balance pre-check indeterminate (proceeding with submit): {str(e)[:120]}")
         return {"balance": None, "source": ""}
 
 
@@ -292,7 +314,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             poll = await asyncio.wait_for(page.evaluate(
                 POLL_JS, {"conversationId": conversation_id, "msToken": ms_token, "fp": fp}), timeout=30)
         except Exception as e:
-            print(f"  Polling exception: {e}", flush=True)
+            _log(f"  Polling exception: {e}")
             continue
         now = time.time()
         if on_poll and now - last_callback >= 30:
@@ -310,12 +332,12 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             video_models = poll.get("videoModels", [])
             url = extract_unwatermarked_url(
                 video_models[0] if video_models else "", poll["videos"][0])
-            print(f"[{account}] Completed! Downloading (unwatermarked priority)...", flush=True)
+            _log(f"[{account}] Completed! Downloading (unwatermarked priority)...")
             local = await _download(url, account)
-            print(f"[{account}] Downloaded {local} ({local.stat().st_size / 1e6:.1f} MB)", flush=True)
+            _log(f"[{account}] Downloaded {local} ({local.stat().st_size / 1e6:.1f} MB)")
             return {"video_url": url, "local_path": str(local),
                     "conversation_id": conversation_id, "account": account}
-        print(f"  ...Generating ({int(time.time() - start)}s)", flush=True)
+        _log(f"  ...Generating ({int(time.time() - start)}s)")
     raise TimeoutError(f"No video generated within {timeout}s (conversation_id={conversation_id})")
 
 
@@ -334,11 +356,189 @@ async def resume_video(account: str, conversation_id: str, timeout: int,
             await context.close()
 
 
+
+
+EDITOR_SELECTOR = ('textarea:visible:not([disabled]):not([readonly]), '
+                   '[contenteditable="true"]:visible')
+
+
+async def _composer(page):
+    editors = page.locator(EDITOR_SELECTOR)
+    await editors.first.wait_for(state="visible", timeout=10000)
+    # Mode-switch animations briefly keep both old and new editors visible.
+    for _ in range(25):
+        if await editors.count() == 1:
+            break
+        await page.wait_for_timeout(200)
+    else:
+        raise RuntimeError("Expected exactly one visible composer editor after transition")
+    box = editors.first
+    root = box.locator(
+        'xpath=ancestor::*[not(self::body) and not(self::html)]'
+        '[.//button or .//*[@role="button"]][1]'
+    )
+    if not await root.count():
+        raise RuntimeError("Could not identify composer controls for draft cleanup")
+    return box, root
+
+
+async def _composer_snapshot(page, account: str, stage: str):
+    try:
+        _, root = await _composer(page)
+        snapshot = await root.evaluate("""element => ({
+            editors: [...element.querySelectorAll('textarea, [contenteditable="true"]')]
+                .map(e => ({tag: e.tagName, chars: (e.value ?? e.innerText ?? '').length})),
+            images: element.querySelectorAll('img').length,
+            media: [...element.querySelectorAll('img, video')].slice(0, 30).map(e => ({
+                tag: e.tagName, alt: e.getAttribute('alt'), ariaHidden: e.getAttribute('aria-hidden'),
+                role: e.getAttribute('role'), classes: String(e.className),
+                width: e.getBoundingClientRect().width, height: e.getBoundingClientRect().height
+            })),
+            fileInputs: element.querySelectorAll('input[type="file"]').length,
+            controls: [...element.querySelectorAll('button, [role="button"], [aria-label], [title], [class*="close"], [class*="delete"]')]
+                .map(e => ({tag: e.tagName, text: (e.innerText || '').slice(0, 100),
+                    aria: e.getAttribute('aria-label'), title: e.getAttribute('title'),
+                    testid: e.getAttribute('data-testid'), classes: String(e.className)}))
+                .slice(0, 60)
+        })""")
+        _log(f"[{account}] composer stage={stage}: {json.dumps(snapshot, ensure_ascii=True)}")
+    except Exception as exc:
+        _log(f"[{account}] composer snapshot stage={stage} failed: {exc}")
+
+
+async def _clear_composer_draft(page, account: str):
+    await _composer_snapshot(page, account, "before_cleanup")
+    box, root = await _composer(page)
+    await box.fill("")
+    # Update frontend state through native input events and removal controls.
+    for file_input in await root.locator('input[type="file"]').all():
+        await file_input.set_input_files([])
+    # Dola's toolbar icons are IMG elements with aria-hidden=true.
+    # Keep real previews (even ones inside buttons), exclude decorative media.
+    previews = root.locator(
+        'img:visible:not([aria-hidden="true"]):not([role="presentation"]), '
+        'video:visible:not([aria-hidden="true"])'
+    )
+    _log(f"[{account}] draft media total_images={await root.locator('img').count()} "
+         f"attachment_candidates={await previews.count()}")
+    remove_name = re.compile(r"remove|delete|close|\u524a\u9664|\u9664\u53bb|\u9589\u3058\u308b|\u79fb\u9664|\u5220\u9664|\u5173\u95ed", re.I)
+    removed = 0
+    while await previews.count():
+        if removed >= 30:
+            raise RuntimeError("Too many draft attachments to clear safely")
+        preview = previews.first
+        await preview.hover()
+        before = await previews.count()
+        container = preview.locator('xpath=..')
+        clicked = False
+        for _ in range(4):
+            if not await container.evaluate("(e, root) => root.contains(e)", await root.element_handle()):
+                break
+            named = container.get_by_role("button", name=remove_name)
+            candidates = container.locator(
+                '[aria-label*="remove" i], [aria-label*="delete" i], '
+                '[aria-label*="close" i], [data-testid*="remove" i], '
+                '[data-testid*="delete" i], [data-testid*="close" i], '
+                '[class*="remove" i], [class*="delete" i], [class*="close" i]'
+            )
+            for choices in (named, candidates):
+                for control in await choices.all():
+                    if await control.is_visible():
+                        await control.click(timeout=3000)
+                        clicked = True
+                        break
+                if clicked:
+                    break
+            if clicked:
+                break
+            container = container.locator('xpath=..')
+        if not clicked:
+            raise RuntimeError("Draft attachment remove control not found; refusing to reuse old images")
+        for _ in range(20):
+            if await previews.count() < before:
+                break
+            await page.wait_for_timeout(100)
+        else:
+            raise RuntimeError("Draft attachment remained after clicking remove")
+        removed += 1
+    await page.wait_for_timeout(500)
+    remaining = await box.evaluate("e => e.value ?? e.innerText ?? ''")
+    if _normalize_composer_text(remaining) or await previews.count():
+        raise RuntimeError("Composer draft was restored after cleanup")
+    _log(f"[{account}] draft cleared text_chars=0 remaining_images=0 removed_images={removed}")
+    await _composer_snapshot(page, account, "after_cleanup")
+
+
+async def _prepare_video_composer(page, account: str, needs_upload: bool):
+    try:
+        await _clear_composer_draft(page, account)
+        for attempt in range(1, 3):
+            _, root = await _composer(page)
+            async def ready():
+                return (await root.get_by_text("\u30e2\u30c7\u30eb", exact=True).is_visible()
+                        and await root.get_by_text("\u6bd4\u7387", exact=True).is_visible()
+                        and await root.get_by_text(re.compile(r"^\d+s$")).first.is_visible()
+                        and (not needs_upload or await root.locator('input[type="file"]').count() > 0))
+            if not await ready():
+                button = page.get_by_role("button", name="\u52d5\u753b\u3092\u4f5c\u6210", exact=True)
+                await button.click(timeout=10000)
+            for _ in range(30):
+                _, root = await _composer(page)
+                if await ready():
+                    _log(f"[{account}] video composer ready attempt={attempt}")
+                    await _composer_snapshot(page, account, "video_ready")
+                    return
+                await page.wait_for_timeout(500)
+            await _composer_snapshot(page, account, f"video_not_ready_{attempt}")
+            if attempt == 1:
+                await _clear_composer_draft(page, account)
+        raise TimeoutError("Video composer did not open before reference upload")
+    except Exception:
+        await _composer_snapshot(page, account, "prepare_failed")
+        await page.screenshot(path=f"dbg_video_composer_missing_{account}.png", full_page=True)
+        raise
+
+
+def _normalize_composer_text(value: str) -> str:
+    # Rich-text editors can render paragraph boundaries as extra newlines.
+    return " ".join((value or "").replace("\u200b", "").split())
+
+
+async def _fill_video_prompt(page, prompt: str, account: str):
+    expected = _normalize_composer_text(prompt)
+    if not expected:
+        raise ValueError("Video prompt must not be empty")
+    editors = page.locator(EDITOR_SELECTOR)
+    await editors.first.wait_for(state="visible", timeout=10000)
+    # Refuse ambiguous targets instead of typing into an unrelated editor.
+    if await editors.count() != 1:
+        raise RuntimeError("Expected exactly one visible prompt editor")
+    box = editors.first
+    entered = ""
+    for attempt in range(2):
+        await box.fill("")
+        await box.fill(prompt)
+        # Allow the frontend to reconcile its editor state before reading back.
+        await page.wait_for_timeout(600)
+        entered = await box.evaluate(
+            "element => element.value ?? element.innerText ?? element.textContent ?? ''"
+        )
+        matches = _normalize_composer_text(entered) == expected
+        _log(f"[{account}] prompt attempt={attempt + 1} "
+             f"chars={len(entered)}/{len(prompt)} matches={matches}")
+        if matches:
+            return box
+    raise RuntimeError(
+        f"Prompt was not preserved in composer: entered {len(entered)}/{len(prompt)} characters"
+    )
+
+
 async def generate_video(account: str, prompt: str, ratio: str = None,
                          duration: int = None, timeout: int = None,
                          model: str = "seedance_v2.0", use_extension: bool = True,
                          on_conversation_id=None, on_poll=None, on_balance=None,
-                         reference_image_paths: list[str] | None = None) -> dict:
+                         reference_image_paths: list[str] | None = None,
+                         on_submit=None) -> dict:
     """Full generation flow via UI automation."""
     timeout = timeout or config.VIDEO_TIMEOUT
     model_key = model.lower().replace("-", "_")
@@ -363,6 +563,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             use_extension=use_extension)
         try:
             page = context.pages[0] if context.pages else await context.new_page()
+            _log(f"[{account}] Playwright context opened for generation")
             await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
             await page.wait_for_timeout(5000)
             cookies = await context.cookies("https://www.dola.com")
@@ -370,12 +571,25 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             await _preflight_balance(page, ms_token, fp, config.VIDEO_REQUIRED_POINTS)
 
             # ---- UI Submission ----
-            await page.click(VIDEO_BTN)
-            await page.wait_for_timeout(1500)
+            await _prepare_video_composer(page, account, bool(reference_image_paths))
             if reference_image_paths:
                 await attach_reference_images(page, reference_image_paths)
             # Select model in UI
             try:
+                async def model_ui_snapshot(stage):
+                    snapshot = await page.evaluate("""() => ({
+                        url: location.href,
+                        text: (document.body?.innerText || '').slice(0, 5000),
+                        candidates: [...document.querySelectorAll('button, [role="button"], [role="option"], li, div, span')]
+                            .map(e => ({text: (e.innerText || '').trim(), role: e.getAttribute('role')}))
+                            .filter(e => e.text && /model|seedance|2\\.0|2\\.5|高速|モデル/i.test(e.text))
+                            .slice(0, 120)
+                    })""")
+                    safe = json.dumps(snapshot, ensure_ascii=False).encode("ascii", "backslashreplace").decode("ascii")
+                    _log(f"[{account}] model UI snapshot stage={stage}: {safe[:8000]}")
+                    await page.screenshot(path=f"dbg_model_{account}_{stage}.png", full_page=True)
+
+                await model_ui_snapshot("before")
                 current_model = None
                 for label in ("モデル 2.0高速", "モデル 2.5"):
                     loc = page.get_by_text(label, exact=True).first
@@ -383,9 +597,11 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                         current_model = loc
                         break
                 if current_model is None:
+                    _log(f"[{account}] model selector labels not found; trying generic model selector")
                     current_model = page.get_by_text(re.compile(r"^モデル "), exact=False).first
                 await current_model.click(timeout=5000)
                 await page.wait_for_timeout(500)
+                await model_ui_snapshot("menu")
                 options = (("Dreamina Seedance 2.5",)
                            if model_key == "seedance_v2.5"
                            else ("Dreamina Seedance 2.0高速", "Dreamina Seedance 2.0", "Seedance2.0Fast"))
@@ -400,6 +616,11 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                     raise RuntimeError("Model option not found")
                 await page.wait_for_timeout(500)
             except Exception as e:
+                try:
+                    await page.screenshot(path=f"dbg_model_{account}_error.png", full_page=True)
+                except Exception:
+                    pass
+                _log(f"[{account}] model selection failed type={type(e).__name__}: {e}")
                 raise RuntimeError(f"Failed to set model ({model_key}): {str(e)[:120]}") from e
             if ratio:
                 try:
@@ -407,7 +628,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                     await page.wait_for_timeout(500)
                     await page.click(f"text={ratio}", timeout=3000)
                 except Exception as e:
-                    print(f"  (Failed to set ratio, using default: {str(e)[:80]})", flush=True)
+                    _log(f"  (Failed to set ratio, using default: {str(e)[:80]})")
             if duration:
                 try:
                     await page.click(f"text={duration}s", timeout=3000)
@@ -417,13 +638,13 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                         await page.wait_for_timeout(500)
                         await page.click(f"text={duration}s", timeout=3000)
                     except Exception as e:
-                        print(f"  (Failed to set duration, using default: {str(e)[:80]})", flush=True)
-            box = await page.query_selector("textarea") or await page.query_selector('[contenteditable="true"]')
-            await box.click()
-            await page.keyboard.type(prompt, delay=100)
-            await page.wait_for_timeout(600)
-            await page.keyboard.press("Enter")
-            print(f"[{account}] UI submitted prompt: {prompt[:40]}", flush=True)
+                        _log(f"  (Failed to set duration, using default: {str(e)[:80]})")
+            box = await _fill_video_prompt(page, prompt, account)
+            # Mark the attempt before Enter: a timeout may occur after dispatch.
+            if on_submit:
+                on_submit()
+            await box.press("Enter")
+            _log(f"[{account}] UI submitted prompt: {prompt[:40]}")
 
             # ---- Captcha Solver (up to 3 attempts) ----
             solved_or_absent = False
@@ -437,13 +658,13 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 if not frame:
                     solved_or_absent = True
                     break
-                print(f"[{account}] Captcha detected, attempt {attempt} solving...", flush=True)
+                _log(f"[{account}] Captcha detected, attempt {attempt} solving...")
                 if await solve_slider(page, frame, attempt):
-                    print(f"[{account}] Captcha passed ✓", flush=True)
+                    _log(f"[{account}] Captcha passed")
                     await page.wait_for_timeout(3000)  # Wait for frontend auto-retry
                     solved_or_absent = True
                     break
-                print(f"[{account}] Captcha not passed, retrying...", flush=True)
+                _log(f"[{account}] Captcha not passed, retrying...")
             if not solved_or_absent:
                 await page.screenshot(path="solve_fail.png")
                 raise RiskControlError("Captcha failed 3 times")
@@ -459,13 +680,14 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             if not conv_id:
                 await page.screenshot(path="no_conv.png")
                 raise TimeoutError("conversation_id not acquired within 30s")
-            print(f"[{account}] conversation_id={conv_id}, polling for video...", flush=True)
+            _log(f"[{account}] conversation_id={conv_id}, polling for video...")
 
             deadline = time.time() + timeout
             if on_conversation_id:
                 on_conversation_id(account, conv_id, deadline)
             return await poll_conversation(account, page, context, conv_id, timeout, on_poll, on_balance)
         finally:
+            _log(f"[{account}] Playwright context closing")
             await context.close()
 
 

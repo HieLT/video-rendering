@@ -160,9 +160,10 @@ def build_query_params(cookie: str, extra: dict = None) -> dict:
 class DolaClient:
     """Dola API Client instance."""
 
-    def __init__(self, cookie: str, api_base: str = "https://www.dola.com"):
+    def __init__(self, cookie: str, api_base: str = "https://www.dola.com", proxy: str = ""):
         self.cookie = cookie
         self.api_base = api_base
+        self.proxy = proxy or None
         self.info = parse_cookie(cookie)
 
     @property
@@ -184,7 +185,7 @@ class DolaClient:
         params = build_query_params(self.cookie)
         return await session.post(
             url, params=params, json=body, headers=headers,
-            timeout=aiohttp.ClientTimeout(total=timeout)
+            timeout=aiohttp.ClientTimeout(total=timeout), proxy=self.proxy
         )
 
     async def _request_im_chain(self, session: aiohttp.ClientSession, body: dict, conversation_id: str = "", timeout: int = 15) -> dict:
@@ -202,7 +203,7 @@ class DolaClient:
         params = build_query_params(self.cookie)
         async with session.post(
             url, params=params, json=body, headers=headers,
-            timeout=aiohttp.ClientTimeout(total=timeout)
+            timeout=aiohttp.ClientTimeout(total=timeout), proxy=self.proxy
         ) as resp:
             return await resp.json(content_type=None)
 
@@ -713,13 +714,21 @@ class DolaClient:
 
     # ===== Video Generation =====
 
-    async def generate_video(self, prompt: str, ratio: str = "9:16", duration: int = 5, timeout: int = 300) -> str:
+    async def generate_video(self, prompt: str, ratio: str = "9:16", duration: int = 5,
+                             timeout: int = 300, model: str = "seedance_v2.0") -> str:
         """Video generation, returns video download URL."""
-        body = self._build_video_body(prompt, ratio, duration)
+        print(f"[direct-api] submit model={model} ratio={ratio} duration={duration} prompt={prompt[:120]!r}", flush=True)
+        body = self._build_video_body(prompt, ratio, duration, model)
         async with aiohttp.ClientSession(trust_env=True) as session:
             resp = await self._request_chat_completion(session, body, timeout=120)
             async with resp:
+                status = resp.status
                 events = await self._read_sse_stream(resp)
+        event_summary = [
+            {"event": name, "data": json.dumps(data, ensure_ascii=False)[:500]}
+            for name, data in events[:20]
+        ]
+        print(f"[direct-api] submit response status={status} events={event_summary}", flush=True)
 
         conv_id = ""
         for event_name, data in events:
@@ -727,12 +736,16 @@ class DolaClient:
                 conv_id = (data.get("ack_client_meta") or {}).get("conversation_id", "")
 
         if not conv_id:
-            raise Exception("Video accepted but no conversation_id returned")
+            raise Exception(
+                f"Video accepted but no conversation_id returned (http={status}, "
+                f"events={json.dumps(event_summary, ensure_ascii=False)[:1500]})"
+            )
 
         # Poll for video
         return await self._poll_video(conv_id, timeout)
 
-    def _build_video_body(self, prompt: str, ratio: str, duration: int) -> dict:
+    def _build_video_body(self, prompt: str, ratio: str, duration: int,
+                          model: str = "seedance_v2.0") -> dict:
         now_ms = int(time.time() * 1000)
         now_sec = now_ms // 1000
         # Video prompt trigger prefix
@@ -797,7 +810,7 @@ class DolaClient:
             },
             "chat_ability": {
                 "ability_type": 17,
-                "ability_param": json.dumps({"ratio": ratio, "model": "seedance_v2.0", "duration": duration}),
+                "ability_param": json.dumps({"ratio": ratio, "model": model, "duration": duration}),
             },
             "user_context": [],
             "ext": {
@@ -827,6 +840,7 @@ class DolaClient:
                         "limit": 20,
                     }
                     data = await self._request_im_chain(session, body, conversation_id)
+                    print(f"[direct-api] poll account_session conversation={conversation_id} attempt={attempt} status=ok", flush=True)
                     dl_body = data.get("downlink_body") or {}
                     messages = (dl_body.get("pull_singe_chain_downlink_body") or {}).get("messages") or []
 
@@ -858,8 +872,8 @@ class DolaClient:
                                     return url
                 except CreditError:
                     raise
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f"[direct-api] poll attempt={attempt} error={type(exc).__name__}: {exc}", flush=True)
         raise Exception("Video generation timeout")
 
 

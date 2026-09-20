@@ -1,4 +1,4 @@
-"""Dola Pool: OpenAI-compatible Video API (FastAPI) and Admin Dashboard.
+"""Video Rendering: OpenAI-compatible Video API (FastAPI) and Admin Dashboard.
 
 Endpoints (Asynchronous 2-stage):
 POST /v1/videos/generations -> Create task (status=queued)
@@ -10,16 +10,21 @@ Admin Dashboard: GET / -> web/index.html; Admin API /api/admin/*
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import shutil
+import tempfile
 import time
+import traceback
 import uuid
 from collections import defaultdict
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
+from patchright.async_api import async_playwright
 from pydantic import BaseModel, Field
+from PIL import Image
 
 import config
 from add_account import add_account_flow
@@ -30,7 +35,7 @@ from store import PendingTaskLimitExceeded, TaskQuotaExceeded, TaskStore
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="dola-pool", version="0.4.0")
+app = FastAPI(title="Video Rendering", version="0.4.0")
 
 store = TaskStore(config.DB_PATH)
 pool = BrowserPool(max_concurrency=config.MAX_CONCURRENCY)
@@ -39,6 +44,8 @@ app.mount("/videos", StaticFiles(directory=config.DOWNLOAD_DIR), name="videos")
 
 # Background jobs (add/verify), in-memory
 JOBS: dict[str, dict] = {}
+WEB_SESSIONS: dict[str, dict] = {}
+UPLOADED_REFERENCES: dict[str, tuple[Path, list[str]]] = {}
 
 SIZE_TO_RATIO = {
     "1280x720": "16:9", "1920x1080": "16:9",
@@ -171,6 +178,40 @@ class TaskResponse(BaseModel):
     error: str | None = None
 
 
+@app.post("/api/admin/reference-images", status_code=201)
+async def upload_reference_images(
+    files: list[UploadFile] = File(...),
+    x_admin_key: str | None = Header(default=None),
+):
+    """Stores local reference images briefly for the next generation task."""
+    _admin_auth(x_admin_key)
+    if not files or len(files) > config.REFERENCE_IMAGE_MAX_COUNT:
+        raise HTTPException(422, f"Maximum of {config.REFERENCE_IMAGE_MAX_COUNT} images allowed")
+    root = Path(tempfile.mkdtemp(prefix="dola_upload_"))
+    paths = []
+    try:
+        for index, upload in enumerate(files):
+            data = await upload.read()
+            if len(data) > config.REFERENCE_IMAGE_MAX_BYTES:
+                raise ValueError("Reference image exceeds single file size limit")
+            from io import BytesIO
+            with Image.open(BytesIO(data)) as image:
+                image.verify()
+                image_format = image.format
+            suffix = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp"}.get(image_format)
+            if not suffix:
+                raise ValueError("Reference image only supports JPEG, PNG, WEBP")
+            path = root / f"image_{index}{suffix}"
+            path.write_bytes(data)
+            paths.append(str(path))
+    except Exception as exc:
+        shutil.rmtree(root, ignore_errors=True)
+        raise HTTPException(422, str(exc)) from exc
+    token = "uploaded://" + uuid.uuid4().hex
+    UPLOADED_REFERENCES[token] = (root, paths)
+    return {"reference_images": [token], "count": len(paths)}
+
+
 def _resolve_ratio(size, ratio):
     if size and size in SIZE_TO_RATIO:
         return SIZE_TO_RATIO[size]
@@ -180,7 +221,7 @@ def _resolve_ratio(size, ratio):
 async def _run_task(task_id, model, prompt, ratio, duration, reference_images, client):
     api_key_hash = client.get("api_key_hash")
     acquired = False
-    reference_root = None
+    reference_roots = []
     try:
         await key_limiter.acquire(api_key_hash, client.get("concurrency_limit", 0))
         acquired = True
@@ -194,8 +235,22 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         def on_poll(now):
             store.update(task_id, last_poll_at=now)
 
-        reference_root, reference_paths = await download_reference_images(
-            reference_images or [], task_id)
+        reference_paths = []
+        remote_references = []
+        for reference in reference_images or []:
+            uploaded = UPLOADED_REFERENCES.pop(reference, None)
+            if uploaded:
+                root, paths = uploaded
+                reference_roots.append(root)
+                reference_paths.extend(paths)
+            else:
+                remote_references.append(reference)
+        if remote_references:
+            reference_root, downloaded = await download_reference_images(
+                remote_references, task_id)
+            if reference_root:
+                reference_roots.append(reference_root)
+            reference_paths.extend(downloaded)
         result = await pool.generate_video(
             prompt, ratio, duration, model,
             on_conversation_id=on_conversation_id, on_poll=on_poll,
@@ -208,10 +263,13 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         store.update(task_id, status="failed", error=str(e)[:500],
                      failure_code="429", finished_at=time.time())
     except Exception as e:
+        print(f"[task:{task_id}] failed type={type(e).__name__}: "
+              f"{str(e).encode('ascii', 'backslashreplace').decode('ascii')}", flush=True)
+        print(traceback.format_exc().encode('ascii', 'backslashreplace').decode('ascii'), flush=True)
         store.update(task_id, status="failed", error=str(e)[:500],
                      finished_at=time.time())
     finally:
-        if reference_root:
+        for reference_root in reference_roots:
             shutil.rmtree(reference_root, ignore_errors=True)
         if acquired:
             await key_limiter.release(api_key_hash)
@@ -272,6 +330,9 @@ def _task_reference_images(raw) -> list[str]:
 @app.on_event("startup")
 async def resume_incomplete_tasks():
     """Recovers accepted sessions on startup and requeues pending tasks."""
+    orphaned = store.fail_orphaned_processing_tasks()
+    if orphaned:
+        print(f"[startup] marked {orphaned} orphaned processing task(s) as failed", flush=True)
     for row in store.recoverable_tasks():
         asyncio.create_task(_resume_task(row))
     for row in store.recoverable_queued_tasks():
@@ -299,7 +360,13 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
     ):
         raise HTTPException(422, "Supported models are seedance-2.0 and seedance-2.5")
     try:
-        reference_images = await validate_reference_urls(req.reference_images)
+        uploaded_references = [
+            value for value in req.reference_images if value.startswith("uploaded://")
+        ]
+        remote_references = [
+            value for value in req.reference_images if not value.startswith("uploaded://")
+        ]
+        reference_images = uploaded_references + await validate_reference_urls(remote_references)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     # Queue task when accounts are busy; reject only when pool is fully exhausted.
@@ -428,12 +495,31 @@ async def admin_account_patch(name: str, body: AccountPatch,
 @app.delete("/api/admin/accounts/{name}")
 async def admin_account_delete(name: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
+    logger = logging.getLogger("uvicorn.error")
+    session = WEB_SESSIONS.get(name)
+    lock = pool._locks.get(name)
+    logger.info("[account-delete] account=%r stage=request web_session=%s busy=%s",
+                name, session.get("status") if session else None, bool(lock and lock.locked()))
     if name not in pool.accounts:
+        logger.warning("[account-delete] account=%r stage=not_found", name)
         raise HTTPException(404, "account not found")
+    if session:
+        logger.warning("[account-delete] account=%r stage=blocked_open_web", name)
+        raise HTTPException(409, "Account browser is open. Close its Open Web window, then retry deletion.")
     try:
         pool.delete_account(name)
+    except PermissionError as e:
+        logger.exception("[account-delete] account=%r stage=permission_denied file=%r errno=%s winerror=%s",
+                         name, e.filename, e.errno, getattr(e, "winerror", None))
+        raise HTTPException(409, "Cannot delete account profile: a file is in use or access is denied. "
+                            "Close Chrome windows for this account, then retry. See server.err.log for details.") from e
     except RuntimeError as e:
-        raise HTTPException(409, str(e))
+        logger.warning("[account-delete] account=%r stage=blocked reason=%s", name, e)
+        raise HTTPException(409, str(e)) from e
+    except Exception as e:
+        logger.exception("[account-delete] account=%r stage=failed type=%s", name, type(e).__name__)
+        raise HTTPException(500, "Account deletion failed. See server.err.log for details.") from e
+    logger.info("[account-delete] account=%r stage=completed", name)
     return {"ok": True}
 
 
@@ -446,7 +532,50 @@ async def admin_account_verify(name: str, x_admin_key: str | None = Header(defau
         raise HTTPException(409, str(e))
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
+    if ok:
+        job = JOBS.get(name)
+        if job and job.get("kind") == "add" and job.get("status") == "failed":
+            JOBS[name] = {**job, "status": "success", "error": "", "verified_at": time.time()}
+            logging.getLogger("uvicorn.error").info(
+                "[account-verify] account=%r recovered previous add failure", name)
     return {"ok": ok}
+
+
+async def _run_open_web(name: str):
+    session = WEB_SESSIONS[name]
+    try:
+        from browser import launch_account_context
+
+        async with async_playwright() as playwright:
+            context = await launch_account_context(playwright, name, headless=False)
+            session["status"] = "open"
+            session["started_at"] = time.time()
+            page = context.pages[0] if context.pages else await context.new_page()
+            await page.goto("https://www.dola.com/chat", timeout=60000,
+                            wait_until="domcontentloaded")
+            while context.pages:
+                await asyncio.sleep(1)
+    except Exception as exc:
+        session["status"] = "failed"
+        session["error"] = f"{type(exc).__name__}: {exc}"[:500]
+        print(f"[open-web:{name}] {session['error']}", flush=True)
+    finally:
+        WEB_SESSIONS.pop(name, None)
+
+
+@app.post("/api/admin/accounts/{name}/open-web", status_code=202)
+async def admin_account_open_web(name: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if name not in pool.accounts:
+        raise HTTPException(404, "account not found")
+    lock = pool._locks.get(name)
+    if lock and lock.locked():
+        raise HTTPException(409, "Account is generating video, please open it later")
+    if name in WEB_SESSIONS:
+        raise HTTPException(409, "Account web session is already open")
+    WEB_SESSIONS[name] = {"status": "starting", "started_at": time.time()}
+    asyncio.create_task(_run_open_web(name))
+    return {"ok": True, "status": "starting"}
 
 
 async def _run_add_job(name: str, email: str, password: str, totp: str):
@@ -457,7 +586,9 @@ async def _run_add_job(name: str, email: str, password: str, totp: str):
         pool.set_login_status(name, True)
         JOBS[name] = {**JOBS[name], "status": "success"}
     except Exception as e:
-        JOBS[name] = {**JOBS[name], "status": "failed", "error": str(e)[:300]}
+        error = f"{type(e).__name__}: {e}"
+        print(f"[account-add:{name}] {error}", flush=True)
+        JOBS[name] = {**JOBS[name], "status": "failed", "error": error[:500]}
 
 
 @app.post("/api/admin/accounts", status_code=202)

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dola Pool Admin Dashboard</title>
+<title>Video Rendering Admin Dashboard</title>
 <style>
 :root{--bg:#f2f5f4;--card:#fff;--line:#e5e9e8;--text:#1f2a28;--sub:#7a8a86;--accent:#00a870;--accent-d:#008e5d;--red:#e5484d;--orange:#f59e0b;--blue:#3b82f6;--gray:#9aa8a4}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -71,6 +71,24 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .video-wrap{display:flex;gap:8px;align-items:center}
 .tiny{font-size:12px;color:var(--sub)}
 .account-id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#52615d;font-weight:600}
+.generate-form{display:grid;grid-template-columns:minmax(260px,1fr) 150px 120px 120px;gap:14px;align-items:end}
+.generate-form .field{display:flex;flex-direction:column;gap:5px}
+.generate-form label{font-size:12px;color:var(--sub)}
+.generate-form input,.generate-form select,.generate-form textarea{width:100%;padding:10px 12px;border:1px solid #d8e2de;border-radius:9px;font:inherit;font-size:13px;background:#fbfdfc;color:var(--text);transition:border-color .2s,box-shadow .2s}
+.generate-form input:focus,.generate-form select:focus,.generate-form textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,168,112,.12)}
+.generate-form textarea{min-height:96px;resize:vertical;grid-column:1 / -1;line-height:1.5}
+.generate-form .prompt-field{grid-column:1 / -1}
+.generate-form .reference-field{grid-column:1 / -1}
+.generate-form input[type=file]{padding:8px;background:#fff}
+.image-preview{display:flex;flex-wrap:wrap;gap:8px;margin-top:5px;min-height:0}
+.image-preview:empty{display:none}
+.image-preview figure{position:relative;width:74px;height:74px;margin:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#eef4f1}
+.image-preview img{width:100%;height:100%;object-fit:cover}
+.image-preview figcaption{position:absolute;right:3px;bottom:3px;max-width:90%;padding:2px 4px;border-radius:4px;background:rgba(20,35,30,.72);color:#fff;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.image-preview button{position:absolute;top:3px;right:3px;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:rgba(180,45,45,.9);color:#fff;cursor:pointer;font-size:15px;line-height:18px}
+.form-note{color:var(--sub);font-size:12px;line-height:1.4}
+.generate-form .actions{display:flex;justify-content:flex-end;gap:8px;grid-column:1 / -1}
+@media (max-width:760px){.generate-form{grid-template-columns:1fr 1fr}.generate-form .prompt-field,.generate-form textarea,.generate-form .actions{grid-column:1 / -1}}
 </style>
 </head>
 <body>
@@ -84,7 +102,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 </div>
 
 <header>
-  <div class="brand"><span class="dot"></span>Dola Pool Dashboard</div>
+  <div class="brand"><span class="dot"></span>Video Rendering Dashboard</div>
   <div class="head-r">
     <label><input type="checkbox" id="autoCk" checked onchange="autoRefresh=this.checked">Auto Refresh</label>
     <span id="lastUpdate"></span>
@@ -96,7 +114,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 <nav>
   <button class="on" data-tab="dash" onclick="switchTab('dash')">Dashboard</button>
   <button data-tab="accounts" onclick="switchTab('accounts')">Accounts</button>
-  <button data-tab="tasks" onclick="switchTab('tasks')">Task Queue</button>
+  <button data-tab="tasks" onclick="switchTab('tasks')">Video Tasks</button>
   <button data-tab="keys" onclick="switchTab('keys')">API Keys</button>
 </nav>
 
@@ -118,7 +136,39 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
   </section>
 
   <section id="tab-tasks" style="display:none">
-    <div class="card"><h3>Task Queue (Last 50)</h3><div id="tasksTable"></div></div>
+    <div class="card">
+      <div class="toolbar"><h3 style="margin:0">Generate Video</h3><span class="hint">Create a task and track it below</span></div>
+      <div class="generate-form">
+        <div class="field prompt-field">
+          <label for="videoPrompt">Prompt</label>
+          <textarea id="videoPrompt" placeholder="Describe the video you want to create..."></textarea>
+        </div>
+        <div class="field reference-field">
+          <label for="referenceImages">Reference Images (optional)</label>
+          <input id="referenceImages" type="file" accept="image/jpeg,image/png,image/webp" multiple onchange="previewReferenceImages()">
+          <span class="form-note">Choose JPG, PNG, or WEBP files. Images are uploaded only when you submit the task.</span>
+          <div id="imagePreview" class="image-preview"></div>
+        </div>
+        <div class="field">
+          <label for="videoModel">Model</label>
+          <select id="videoModel"><option value="seedance-2.0">Seedance 2.0</option><option value="seedance-2.5">Seedance 2.5</option></select>
+        </div>
+        <div class="field">
+          <label for="videoRatio">Ratio</label>
+          <select id="videoRatio"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="3:4">3:4</option></select>
+        </div>
+        <div class="field">
+          <label for="videoDuration">Duration</label>
+          <select id="videoDuration"><option value="10">10s</option><option value="15">15s</option><option value="30">30s</option></select>
+        </div>
+        <div class="field">
+          <label for="videoApiKey">Gateway API Key (optional)</label>
+          <input id="videoApiKey" type="password" placeholder="Only if API auth is enabled">
+        </div>
+        <div class="actions"><button class="btn btn-p" id="generateBtn" onclick="submitVideoTask()">Generate Video</button></div>
+      </div>
+    </div>
+    <div class="card"><h3>Recent Video Tasks (Last 50)</h3><div id="tasksTable"></div></div>
   </section>
 
   <section id="tab-keys" style="display:none">
@@ -210,8 +260,9 @@ async function loadDash(){
       <div class="lbl">${d.day}</div>
     </div>`).join('');
   q('#perAccount').innerHTML=table(
-    ['Account','Status','Dispatch','Remaining Today','Total Generated','Last Used'],
+    ['Account ID','Email','Current Status','Dispatch','Remaining Today','Total Generated','Last Used'],
     st.per_account.map(a=>[
+      `<span class="account-id">${esc(a.name)}</span>`,
       accLabel(a),
       statusBadge(a),
       `<label class="sw"><input type="checkbox" ${a.scheduling?'checked':''} onchange="setSched('${a.name}',this.checked)"><i></i></label>`,
@@ -242,16 +293,24 @@ async function setSched(name,on){
   try{await api('/api/admin/accounts/'+name,{method:'PATCH',body:{scheduling:on}});}catch(e){alert(e.message);}refresh();
 }
 
+async function openWeb(name,btn){
+  btn.disabled=true;const old=btn.textContent;btn.textContent='Opening...';
+  try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/open-web',{method:'POST'});}
+  catch(e){alert(e.message);}
+  btn.disabled=false;btn.textContent=old;
+}
+
 /* ---- Accounts ---- */
 async function loadAccounts(){
   const [a,j]=await Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs')]);
   const jobs=j.jobs||{};
   const rows=a.accounts.map(x=>{
     const jb=jobs[x.name];
+    const addFailed=jb&&jb.kind==='add'&&jb.status==='failed'&&x.login_ok!==1;
     const badge=(jb&&jb.kind==='add'&&jb.status==='running')?'<span class="badge b-blue">Adding</span>'
-      :(jb&&jb.kind==='add'&&jb.status==='failed')?'<span class="badge b-red">Add Failed</span>'
+      :addFailed?'<span class="badge b-red">Add Failed</span>'
       :statusBadge(x);
-    const warn=(jb&&jb.status==='failed')?' <span class="tiny" title="'+esc(jb.error)+'">⚠</span>':'';
+    const warn=(jb&&jb.status==='failed'&&(jb.kind!=='add'||addFailed))?' <span class="tiny" title="'+esc(jb.error)+'">⚠</span>':'';
     return [
       `<span class="account-id">${esc(x.name)}</span>`,
       accLabel(x)+warn,
@@ -260,7 +319,7 @@ async function loadAccounts(){
       `<b>${x.used_today}</b> / ${x.limit}`,
       fmt(x.last_used_at),
       fmt(x.created_at),
-      `<button class="btn" style="margin-right:6px" onclick="verify('${x.name}',this)">Verify</button><button class="btn btn-danger" onclick="delAccount('${x.name}')">Delete</button>`
+      `<button class="btn" style="margin-right:6px" onclick="openWeb('${esc(x.name)}',this)">Open Web</button><button class="btn" style="margin-right:6px" onclick="verify('${esc(x.name)}',this)">Verify</button><button class="btn btn-danger" onclick="delAccount('${esc(x.name)}')">Delete</button>`
     ];
   });
   q('#accountsTable').innerHTML=table(['Account ID','Name','Status','Dispatch','Remaining','Last Used','Created At','Actions'],rows);
@@ -296,6 +355,73 @@ async function submitAddAccount(){
 }
 
 /* ---- Task Queue ---- */
+async function submitVideoTask(){
+  const prompt=q('#videoPrompt').value.trim();
+  if(!prompt)return alert('Please enter a video prompt');
+  const files=q('#referenceImages').files;
+  const apiKey=q('#videoApiKey').value.trim();
+  const headers=apiKey?{Authorization:'Bearer '+apiKey}:{};
+  const btn=q('#generateBtn');
+  btn.disabled=true;btn.textContent='Submitting...';
+  try{
+    let referenceImages=[];
+    if(files.length){
+      const form=new FormData();
+      for(const file of files)form.append('files',file);
+      const uploadResponse=await fetch('/api/admin/reference-images',{
+        method:'POST',headers:{'X-Admin-Key':adminKey},body:form
+      });
+      const uploadText=await uploadResponse.text();
+      let uploadData={};try{uploadData=uploadText?JSON.parse(uploadText):{};}catch(e){}
+      if(!uploadResponse.ok)throw new Error(uploadData.detail||'Reference image upload failed');
+      referenceImages=uploadData.reference_images||[];
+    }
+    const body={
+      model:q('#videoModel').value,
+      prompt,
+      ratio:q('#videoRatio').value,
+      duration:Number(q('#videoDuration').value),
+      reference_images:referenceImages
+    };
+    const task=await api('/v1/videos/generations',{method:'POST',headers,body});
+    q('#videoPrompt').value='';
+    q('#referenceImages').value='';
+    q('#imagePreview').innerHTML='';
+    alert('Task created: '+task.id);
+    await loadTasks();
+  }catch(e){alert(e.message);}
+  finally{btn.disabled=false;btn.textContent='Generate Video';}
+}
+
+function previewReferenceImages(){
+  const preview=q('#imagePreview');
+  preview.innerHTML='';
+  [...q('#referenceImages').files].forEach((file,index)=>{
+    const figure=document.createElement('figure');
+    const image=document.createElement('img');
+    const caption=document.createElement('figcaption');
+    const remove=document.createElement('button');
+    image.src=URL.createObjectURL(file);
+    image.onload=()=>URL.revokeObjectURL(image.src);
+    caption.textContent=file.name;
+    remove.type='button';
+    remove.title='Remove image';
+    remove.setAttribute('aria-label','Remove '+file.name);
+    remove.textContent='×';
+    remove.onclick=()=>removeReferenceImage(index);
+    figure.append(image,caption,remove);
+    preview.appendChild(figure);
+  });
+}
+
+function removeReferenceImage(index){
+  const input=q('#referenceImages');
+  const transfer=new DataTransfer();
+  [...input.files].forEach((file,fileIndex)=>{if(fileIndex!==index)transfer.items.add(file);});
+  input.files=transfer.files;
+  previewReferenceImages();
+}
+
 async function loadTasks(){
   const r=await api('/api/admin/tasks?limit=50');
   const sb={'queued':'<span class="badge b-gray">Queued</span>','processing':'<span class="badge b-blue">Processing</span>','completed':'<span class="badge b-green">Completed</span>','failed':'<span class="badge b-red">Failed</span>'};

@@ -31,3 +31,6 @@ dl_now.py
 __pycache__/
 .venv/
 *.pyc
+
+# Local diagnostic browser sessions
+diagnostic_profile/

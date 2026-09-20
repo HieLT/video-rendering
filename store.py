@@ -249,6 +249,17 @@ class TaskStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def fail_orphaned_processing_tasks(self) -> int:
+        """Marks processing tasks without an assigned account/session as failed."""
+        with _LOCK:
+            cur = self._conn.execute(
+                "UPDATE tasks SET status='failed', error=?, finished_at=?, updated_at=? "
+                "WHERE status='processing' AND (account IS NULL OR conversation_id IS NULL)",
+                ("Worker stopped before assigning an account/conversation", time.time(), time.time()),
+            )
+            self._conn.commit()
+            return cur.rowcount
+
     def pending_task_count(self) -> int:
         with _LOCK:
             return self._conn.execute(
