@@ -28,7 +28,7 @@ main{padding:20px;max-width:1180px;margin:0 auto}
 .s3{background:linear-gradient(135deg,#3b82f6,#2563eb)}.s4{background:linear-gradient(135deg,#f59e0b,#d97706)}
 table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13px}
-th{color:var(--sub);font-weight:500;white-space:nowrap}
+th{text-align:center;color:var(--sub);font-weight:500;white-space:nowrap}
 td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;white-space:nowrap}
 .b-green{background:#e6f7f0;color:#00945f}.b-red{background:#fdeaea;color:#c03237}
@@ -69,6 +69,25 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .chart .lbl{font-size:11px;color:var(--sub)}
 .empty{padding:34px;text-align:center;color:var(--sub)}
 .video-wrap{display:flex;gap:8px;align-items:center}
+#tasksTable{overflow-x:auto}
+#tasksTable table{table-layout:fixed;min-width:960px}
+#tasksTable th,#tasksTable td{padding:10px 6px;overflow-wrap:anywhere}
+#tasksTable th:nth-child(1){width:82px}
+#tasksTable th:nth-child(3){width:60px}
+#tasksTable th:nth-child(4){width:90px}
+#tasksTable td:nth-child(4){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tasksTable th:nth-child(5){width:66px}
+#tasksTable th:nth-child(6){width:112px}
+#tasksTable th:nth-child(7){width:80px}
+#tasksTable th:nth-child(8){width:128px}
+#tasksTable th:last-child{width:222px}
+#tasksTable td .prompt{max-width:100%;min-width:0}
+#tasksTable th:last-child,#tasksTable td:last-child{position:sticky;right:0;background:var(--card);z-index:1;box-shadow:-1px 0 var(--line)}
+#tasksTable .video-wrap{gap:5px}
+#tasksTable .video-wrap .btn{padding:7px 9px}
+.task-actions{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;width:max-content}
+.task-actions .btn{flex:none;white-space:nowrap;padding:7px 10px}
+
 .tiny{font-size:12px;color:var(--sub)}
 .account-id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#52615d;font-weight:600}
 .generate-form{display:grid;grid-template-columns:minmax(260px,1fr) 150px 120px 120px;gap:14px;align-items:end}
@@ -273,8 +292,11 @@ async function loadDash(){
   );
 }
 
-function accLabel(x){return x.email?`<div>${esc(x.email)}</div>`:'<span class="tiny">No Email</span>';}
+function accLabel(x){return `<div>${esc(x.display_name||x.email||x.name)}</div>`;}
 function statusBadge(a){
+  const auth={adding:'Adding',failed:'Add failed',duplicate:'Duplicate',check_error:'Check unavailable',expired:'Expired'};
+  if(auth[a.auth_state])return '<span class="badge b-orange" title="'+esc(a.auth_error||'')+'">'+auth[a.auth_state]+'</span>';
+
   if(a.busy)return '<span class="badge b-blue">Generating</span>';
   if(a.rate_limited)return '<span class="badge b-orange">Rate limited until '+fmt(a.rate_limited_until)+'</span>';
   if(a.quota_blocked)return '<span class="badge b-orange">Quota blocked until '+fmt(a.quota_blocked_until)+'</span>';
@@ -314,15 +336,16 @@ async function loadAccounts(){
     return [
       `<span class="account-id">${esc(x.name)}</span>`,
       accLabel(x)+warn,
+      esc(({google:"Google",facebook:"Facebook",cookies:"Cookies imported",unknown:"Unknown"})[x.account_type]||"Unknown"),
       badge,
       `<label class="sw"><input type="checkbox" ${x.scheduling?'checked':''} onchange="setSched('${x.name}',this.checked)"><i></i></label>`,
       `<b>${x.used_today}</b> / ${x.limit}`,
       fmt(x.last_used_at),
       fmt(x.created_at),
-      `<button class="btn" style="margin-right:6px" onclick="openWeb('${esc(x.name)}',this)">Open Web</button><button class="btn" style="margin-right:6px" onclick="verify('${esc(x.name)}',this)">Verify</button><button class="btn btn-danger" onclick="delAccount('${esc(x.name)}')">Delete</button>`
+      `<button class="btn" style="margin-right:6px" onclick="openWeb('${esc(x.name)}',this)">Open Web</button><button class="btn" style="margin-right:6px" onclick="verify('${esc(x.name)}',this)">Verify</button><button class="btn" onclick="openAddAccount('${esc(x.name)}')">Retry</button><button class="btn btn-danger" onclick="delAccount('${esc(x.name)}')">Delete</button>`
     ];
   });
-  q('#accountsTable').innerHTML=table(['Account ID','Name','Status','Dispatch','Remaining','Last Used','Created At','Actions'],rows);
+  q('#accountsTable').innerHTML=table(['Account ID','Name','Type','Status','Dispatch','Remaining','Last Used','Created At','Actions'],rows);
 }
 
 async function verify(name,btn){
@@ -338,20 +361,43 @@ async function delAccount(name){
   try{await api('/api/admin/accounts/'+name,{method:'DELETE'});}catch(e){alert(e.message);}refresh();
 }
 
-function openAddAccount(){
-  let def='acc2';try{const n=document.querySelectorAll('#accountsTable tbody tr').length;def='acc'+(n+1);}catch(e){}
-  showDlg(`<h2>Add Account</h2>
-    <label>Account Name</label><input id="f_name" value="${def}">
-    <label>Google Email</label><input id="f_email" placeholder="xxx@yy.asia">
-    <label>Password</label><input id="f_pass" type="password">
-    <label>TOTP Secret (2FA)</label><input id="f_totp" placeholder="2FA secret">
-    <div class="row"><button class="btn" onclick="hide('dlg')">Cancel</button><button class="btn btn-p" onclick="submitAddAccount()">Start Login</button></div>`);
+function openAddAccount(retryName=null){
+  let def='acc2';try{def='acc'+(document.querySelectorAll('#accountsTable tbody tr').length+1);}catch(e){}
+  if(retryName)def=retryName;
+  showDlg(`<h2>${retryName?"Retry Account":"Add Account"}</h2>
+    <label>Account Name</label><input id="f_name" value="${esc(def)}" ${retryName?'readonly data-retry="true"':''}>
+    <label>Display name (optional)</label><input id="f_display_name">
+    <label>Login method</label><select id="f_method" onchange="accountMethodChanged()"><option value="cookies">Import cookies</option><option value="google">Google</option><option value="facebook">Facebook</option></select>
+    <div id="f_google" hidden><label>Google Email</label><input id="f_email" autocomplete="off"><label>Password</label><input id="f_pass" type="password" autocomplete="new-password"><label>TOTP Secret (optional)</label><input id="f_totp" type="password"></div>
+    <div id="f_cookies"><label>Netscape cookie file (.txt)</label><input id="f_cookie_file" type="file" accept=".txt"><p class="tiny">Choose the original cookie export for one Dola account. The session will be checked before enabling the account.</p></div>
+    <div id="f_facebook" hidden><label>Facebook email or phone number</label><input id="f_fb_account" autocomplete="off"><label>Facebook password</label><input id="f_fb_password" type="password" autocomplete="new-password"><p class="tiny">Login is submitted once. Complete any verification in the browser within 5 minutes.</p></div>
+    <div class="row"><button class="btn" onclick="hide('dlg')">Cancel</button><button id="f_submit" class="btn btn-p" onclick="submitAddAccount()">Add Account</button></div>`);
+}
+function accountMethodChanged(){
+  const method=q('#f_method').value;
+  q('#f_google').hidden=method!=='google';q('#f_cookies').hidden=method!=='cookies';q('#f_facebook').hidden=method!=='facebook';
 }
 async function submitAddAccount(){
-  const body={name:q('#f_name').value.trim(),email:q('#f_email').value.trim(),password:q('#f_pass').value,totp:q('#f_totp').value.trim()};
-  if(!body.name||!body.email||!body.password)return alert('Please enter account name, email and password');
-  try{await api('/api/admin/accounts',{method:'POST',body});}catch(e){return alert(e.message);}
-  hide('dlg');refresh();
+  const body={name:q('#f_name').value.trim(),method:q('#f_method').value,display_name:q('#f_display_name').value.trim()};
+  if(!body.name)return alert('Please enter account name');
+  const button=q('#f_submit');button.disabled=true;
+  try{
+    if(body.method==='google'){
+      Object.assign(body,{email:q('#f_email').value.trim(),password:q('#f_pass').value,totp:q('#f_totp').value.trim()});
+      if(!body.email||!body.password)throw new Error('Please enter Google email and password');
+    }else if(body.method==='facebook'){
+      body.email=q('#f_fb_account').value.trim();body.password=q('#f_fb_password').value;
+      if(!body.email||!body.password)throw new Error('Please enter Facebook account and password');
+    }else if(body.method==='cookies'){
+      const file=q('#f_cookie_file').files[0];
+      if(!file)throw new Error('Choose a Netscape cookie file');
+      if(file.size>1000000)throw new Error('Cookie file exceeds 1 MB');
+      body.cookie_text=await file.text();
+    }
+    await api(q('#f_name').dataset.retry?'/api/admin/accounts/'+encodeURIComponent(body.name)+'/retry':'/api/admin/accounts',{method:'POST',body});
+    q('#dlg').querySelectorAll('input').forEach(input=>input.value='');
+    hide('dlg');refresh();
+  }catch(e){alert(e.message);}finally{button.disabled=false;}
 }
 
 /* ---- Task Queue ---- */
@@ -422,6 +468,16 @@ function removeReferenceImage(index){
   previewReferenceImages();
 }
 
+async function taskAction(id,action){
+  if(action==='stop'&&!confirm('Stop monitoring this task? This does not cancel generation on Dola.'))return;
+  try{await api('/api/admin/tasks/'+encodeURIComponent(id)+'/'+action,{method:'POST'});await loadTasks();}
+  catch(e){alert(e.message);}
+}
+function taskControls(t){
+  if(!t.account||!t.conversation_id||t.status==='completed')return '';
+  const hints=['Show the conversation; restart monitoring if stopped','Resume monitoring the saved conversation without submitting a new video','Stop local monitoring; generation on Dola is not cancelled'];
+  return '<div class="task-actions">'+['open','resume','stop'].map((action,i)=>'<button class="btn'+(action==='stop'?' btn-danger':'')+'" title="'+hints[i]+'" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;'+action+'&quot;)">'+['Open chat','Continue','Stop'][i]+'</button>').join('')+'</div>';
+}
 async function loadTasks(){
   const r=await api('/api/admin/tasks?limit=50');
   const sb={'queued':'<span class="badge b-gray">Queued</span>','processing':'<span class="badge b-blue">Processing</span>','completed':'<span class="badge b-green">Completed</span>','failed':'<span class="badge b-red">Failed</span>'};
@@ -431,13 +487,14 @@ async function loadTasks(){
     t.account||'-',
     t.api_key_name||'—',
     (t.duration||10)+'s',
-    sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
+    ({needs_recovery:'<span class="badge b-red">Needs recovery</span>',stopped:'<span class="badge b-gray">Stopped</span>'})[t.status]||sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
     fmt(t.created_at),
     t.video_url
       ?'<div class="video-wrap"><a href="'+esc(t.video_url)+'" target="_blank">Open</a><button class="btn" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">Preview</button></div>'
-      :(t.status==='failed'?'<span class="tiny" title="'+esc(t.error||'')+'">'+esc((t.error||'').slice(0,30))+'</span>':'—')
+      :(['failed','needs_recovery','stopped'].includes(t.status)?'<span class="tiny" title="'+esc(t.error||'')+'">'+esc((t.error||'').slice(0,30))+'</span>':'—')
+    ,taskControls(t)
   ]);
-  q('#tasksTable').innerHTML=table(['Task ID','Prompt','Account','Client','Duration','Status','Created At','Video'],rows);
+  q('#tasksTable').innerHTML=table(['Task ID','Prompt','Account','Client','Duration','Status','Created At','Video','Actions'],rows);
 }
 
 function playVideo(url){q('#videoEl').src=url;show('videoModal');}

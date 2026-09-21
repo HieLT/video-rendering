@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from PIL import Image
 
 import config
+from account_import import parse_netscape, imported_account_flow, cookie_identity
 from add_account import add_account_flow
 from browser_pool import AllAccountsLimitedError, AllAccountsQuotaBlockedError, BrowserPool
 from media import download_reference_images, validate_reference_urls
@@ -218,7 +219,11 @@ def _resolve_ratio(size, ratio):
     return ratio
 
 
+TASK_RUNNERS = {}
+
+
 async def _run_task(task_id, model, prompt, ratio, duration, reference_images, client):
+    TASK_RUNNERS[task_id] = asyncio.current_task()
     api_key_hash = client.get("api_key_hash")
     acquired = False
     reference_roots = []
@@ -266,9 +271,12 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         print(f"[task:{task_id}] failed type={type(e).__name__}: "
               f"{str(e).encode('ascii', 'backslashreplace').decode('ascii')}", flush=True)
         print(traceback.format_exc().encode('ascii', 'backslashreplace').decode('ascii'), flush=True)
-        store.update(task_id, status="failed", error=str(e)[:500],
-                     finished_at=time.time())
+        row = store.get(task_id)
+        status = "needs_recovery" if row.get("conversation_id") else "failed"
+        store.update(task_id, status=status, error=str(e)[:500], finished_at=time.time())
     finally:
+        if TASK_RUNNERS.get(task_id) is asyncio.current_task():
+            TASK_RUNNERS.pop(task_id, None)
         for reference_root in reference_roots:
             shutil.rmtree(reference_root, ignore_errors=True)
         if acquired:
@@ -277,6 +285,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
 
 async def _resume_task(row: dict):
     task_id = row["id"]
+    TASK_RUNNERS[task_id] = asyncio.current_task()
     deadline = row.get("deadline_at") or (
         time.time() + (1800 if row.get("duration") == 30 else config.VIDEO_TIMEOUT)
     )
@@ -301,9 +310,11 @@ async def _resume_task(row: dict):
                      account=result.get("account"), last_poll_at=time.time(),
                      finished_at=time.time())
     except Exception as e:
-        store.update(task_id, status="failed", error=str(e)[:500],
+        store.update(task_id, status="needs_recovery", error=str(e)[:500],
                      finished_at=time.time())
     finally:
+        if TASK_RUNNERS.get(task_id) is asyncio.current_task():
+            TASK_RUNNERS.pop(task_id, None)
         if acquired:
             await key_limiter.release(api_key_hash)
 
@@ -440,9 +451,13 @@ class AccountPatch(BaseModel):
 
 class AccountAdd(BaseModel):
     name: str
-    email: str
-    password: str
-    totp: str
+    email: str = ""
+    password: str = ""
+    totp: str = ""
+    method: str = "google"
+    account_type: str = "unknown"
+    display_name: str = ""
+    cookie_text: str = Field(default="", max_length=1_000_000)
 
 
 class KeyCreate(BaseModel):
@@ -496,6 +511,8 @@ async def admin_account_patch(name: str, body: AccountPatch,
 async def admin_account_delete(name: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
     logger = logging.getLogger("uvicorn.error")
+    if JOBS.get(name, {}).get("status") == "running":
+        raise HTTPException(409, "Account login job is running")
     session = WEB_SESSIONS.get(name)
     lock = pool._locks.get(name)
     logger.info("[account-delete] account=%r stage=request web_session=%s busy=%s",
@@ -526,24 +543,28 @@ async def admin_account_delete(name: str, x_admin_key: str | None = Header(defau
 @app.post("/api/admin/accounts/{name}/verify")
 async def admin_account_verify(name: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
+    if name in WEB_SESSIONS or JOBS.get(name, {}).get("status") == "running":
+        raise HTTPException(409, "Account browser or login job is active")
     try:
         ok = await pool.verify_account(name)
     except RuntimeError as e:
         raise HTTPException(409, str(e))
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
-    if ok:
-        job = JOBS.get(name)
-        if job and job.get("kind") == "add" and job.get("status") == "failed":
-            JOBS[name] = {**job, "status": "success", "error": "", "verified_at": time.time()}
-            logging.getLogger("uvicorn.error").info(
-                "[account-verify] account=%r recovered previous add failure", name)
+    if ok and name in JOBS:
+        JOBS[name] = {**JOBS[name], "status":"success", "error":""}
     return {"ok": ok}
 
 
 async def _run_open_web(name: str):
     session = WEB_SESSIONS[name]
+    lock = pool._locks.setdefault(name, asyncio.Lock())
+    acquired = False
     try:
+        if lock.locked():
+            raise RuntimeError("Account is busy")
+        await lock.acquire()
+        acquired = True
         from browser import launch_account_context
 
         async with async_playwright() as playwright:
@@ -560,6 +581,8 @@ async def _run_open_web(name: str):
         session["error"] = f"{type(exc).__name__}: {exc}"[:500]
         print(f"[open-web:{name}] {session['error']}", flush=True)
     finally:
+        if acquired:
+            lock.release()
         WEB_SESSIONS.pop(name, None)
 
 
@@ -568,9 +591,21 @@ async def admin_account_open_web(name: str, x_admin_key: str | None = Header(def
     _admin_auth(x_admin_key)
     if name not in pool.accounts:
         raise HTTPException(404, "account not found")
+    if JOBS.get(name, {}).get("status") == "running":
+        raise HTTPException(409, "Account login window is already open")
+    from browser import focus_account_context
+    try:
+        if await focus_account_context(name):
+            logging.getLogger("uvicorn.error").info(
+                "[open-web] account=%r focused existing browser", name)
+            return {"ok": True, "status": "open", "reused": True}
+    except Exception as exc:
+        logging.getLogger("uvicorn.error").exception(
+            "[open-web] account=%r failed to focus existing browser", name)
+        raise HTTPException(409, "Existing browser could not be displayed; please retry shortly.") from exc
     lock = pool._locks.get(name)
     if lock and lock.locked():
-        raise HTTPException(409, "Account is generating video, please open it later")
+        raise HTTPException(409, "Account browser is starting or closing; please retry shortly")
     if name in WEB_SESSIONS:
         raise HTTPException(409, "Account web session is already open")
     WEB_SESSIONS[name] = {"status": "starting", "started_at": time.time()}
@@ -578,17 +613,96 @@ async def admin_account_open_web(name: str, x_admin_key: str | None = Header(def
     return {"ok": True, "status": "starting"}
 
 
-async def _run_add_job(name: str, email: str, password: str, totp: str):
-    JOBS[name] = {"kind": "add", "status": "running", "error": "", "started_at": time.time()}
+def find_duplicate_account(name, identity_hash):
+    if not identity_hash:
+        return None
+    for other in pool.accounts:
+        if other == name:
+            continue
+        meta = pool._meta(other)
+        other_hash = meta["identity_hash"] if meta else ""
+        file = pool.accounts_dir / other / "gateway_identity.json"
+        if file.exists():
+            other_hash = json.loads(file.read_text(encoding="utf-8")).get("identity_hash", other_hash)
+        if other_hash == identity_hash:
+            return other
+    return None
+
+
+def find_duplicate_login(name, email, account_type):
+    normalized = (email or "").strip().casefold()
+    if not normalized:
+        return None
+    for account in pool.list_accounts():
+        if (account["name"] != name
+                and (account.get("email") or "").strip().casefold() == normalized
+                and (account.get("account_type") or "unknown") == account_type):
+            return account["name"]
+    return None
+
+
+async def _run_add_job(name: str, email: str, password: str, totp: str, method="google", cookies=None):
+    lock = pool._locks.setdefault(name, asyncio.Lock())
     try:
-        await add_account_flow(name, email, password, totp)
-        pool.set_email(name, email)
-        pool.set_login_status(name, True)
-        JOBS[name] = {**JOBS[name], "status": "success"}
-    except Exception as e:
-        error = f"{type(e).__name__}: {e}"
-        print(f"[account-add:{name}] {error}", flush=True)
-        JOBS[name] = {**JOBS[name], "status": "failed", "error": error[:500]}
+        async with lock:
+            pool.auth_result(name, "adding")
+            if method == "google":
+                await add_account_flow(name, email, password, totp)
+            else:
+                await imported_account_flow(name, method, cookies, username=email, password=password)
+            from browser import inspect_account_session
+            result = await inspect_account_session(name)
+            state = pool.auth_result(name, result["state"], result.get("error", ""), result)
+            if state != "active":
+                raise RuntimeError("Login not activated: " + state)
+            JOBS[name] = {**JOBS[name], "status":"success", "error":""}
+    except Exception as exc:
+        state = pool._meta(name)["auth_state"]
+        error = "Login incomplete; use Verify if login succeeded in browser, or Retry"
+        if state not in ("duplicate", "expired"):
+            pool.auth_result(name, "failed", error)
+        JOBS[name] = {**JOBS[name], "status":"failed", "error":pool._meta(name)["auth_error"]}
+        logging.getLogger("uvicorn.error").warning("[account-add] account=%s failed type=%s", name, type(exc).__name__)
+
+
+@app.post("/api/admin/accounts/{name}/retry", status_code=202)
+async def retry_account(name: str, body: AccountAdd, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if name not in pool.accounts:
+        raise HTTPException(404, "Account not found")
+    lock = pool._locks.get(name)
+    if name in WEB_SESSIONS or (lock and lock.locked()) or JOBS.get(name, {}).get("status") == "running":
+        raise HTTPException(409, "Account is busy")
+    if pool._meta(name)["auth_state"] == "active":
+        raise HTTPException(409, "Account is already active")
+    if body.method not in ("google", "facebook", "cookies"):
+        raise HTTPException(400, "Invalid login method")
+    cookies = None
+    if body.method == "cookies":
+        try:
+            cookies = parse_netscape(body.cookie_text)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        duplicate = find_duplicate_account(name, cookie_identity(cookies))
+        if duplicate:
+            raise HTTPException(409, f"Duplicate account: {duplicate}")
+    elif not body.email or not body.password:
+        raise HTTPException(400, "Account and password required")
+    if body.account_type not in ("unknown", "google", "facebook", "cookies"):
+        raise HTTPException(400, "Invalid account type")
+    account_type = body.method
+    effective_email = body.email.strip() or pool._meta(name)["email"]
+    duplicate = find_duplicate_login(name, effective_email, account_type)
+    if duplicate:
+        raise HTTPException(409, f"Login account already registered for {account_type}: {duplicate}")
+    if body.email.strip():
+        pool.set_email(name, body.email.strip())
+    pool._conn.execute("UPDATE accounts_meta SET account_type=?, display_name=CASE WHEN ?<>'' THEN ? ELSE display_name END WHERE name=?",
+                       (body.method, body.display_name.strip(), body.display_name.strip(), name))
+    pool._conn.commit()
+    JOBS[name] = {"kind":"add", "status":"running", "error":"", "started_at":time.time()}
+    asyncio.create_task(_run_add_job(name, body.email, body.password, body.totp, body.method, cookies))
+    return {"ok":True}
 
 
 @app.post("/api/admin/accounts", status_code=202)
@@ -600,7 +714,40 @@ async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(d
         raise HTTPException(409, "account exists")
     if JOBS.get(body.name, {}).get("status") == "running":
         raise HTTPException(409, "add job running")
-    asyncio.create_task(_run_add_job(body.name, body.email, body.password, body.totp))
+    if body.method not in ("google", "facebook", "cookies"):
+        raise HTTPException(400, "Unsupported login method")
+    if body.method in ("google", "facebook") and (not body.email or not body.password):
+        raise HTTPException(400, "Login account and password are required")
+    cookies = None
+    if body.method == "cookies":
+        try:
+            cookies = parse_netscape(body.cookie_text)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    if body.account_type not in ("unknown", "google", "facebook", "cookies"):
+        raise HTTPException(400, "Invalid account type")
+    if body.method == "cookies":
+        unknown = [a for a in pool.list_accounts() if a.get("login_ok") == 1
+                   and not pool._meta(a["name"])["identity_hash"]
+                   and not (pool.accounts_dir / a["name"] / "gateway_identity.json").exists()]
+        if unknown:
+            raise HTTPException(409, "Verify existing accounts first to check duplicate identities: " + ", ".join(a["name"] for a in unknown))
+    duplicate = find_duplicate_account(body.name, cookie_identity(cookies or []))
+    if duplicate:
+        raise HTTPException(409, f"Duplicate Dola account: already registered as {duplicate}")
+    account_type = body.method
+    duplicate = find_duplicate_login(body.name, body.email, account_type)
+    if duplicate:
+        raise HTTPException(409, f"Login account already registered for {account_type}: {duplicate}")
+    (pool.accounts_dir / body.name).mkdir(parents=True, exist_ok=False)
+    pool._ensure_meta(body.name)
+    pool.set_scheduling(body.name, False, manual=False)
+    pool._conn.execute("UPDATE accounts_meta SET account_type=?, display_name=?, email=?, identity_hash=? WHERE name=?",
+                       (body.method,
+                        body.display_name.strip(), body.email.strip(), cookie_identity(cookies or []), body.name))
+    pool._conn.commit()
+    JOBS[body.name] = {"kind": "add", "status": "running", "error": "", "started_at": time.time()}
+    asyncio.create_task(_run_add_job(body.name, body.email, body.password, body.totp, body.method, cookies))
     return {"ok": True, "job": "running"}
 
 
@@ -614,6 +761,57 @@ async def admin_jobs(x_admin_key: str | None = Header(default=None)):
 async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
     return {"tasks": store.recent_tasks(min(max(limit, 1), 200))}
+
+
+TASK_ACTION_LOCKS = {}
+
+
+@app.post("/api/admin/tasks/{task_id}/{action}")
+async def admin_task_action(task_id: str, action: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if action not in ("open", "resume", "stop"):
+        raise HTTPException(404, "Unknown task action")
+    async with TASK_ACTION_LOCKS.setdefault(task_id, asyncio.Lock()):
+        row = store.get(task_id)
+        if not row:
+            raise HTTPException(404, "Task not found")
+        if not row.get("account") or not row.get("conversation_id"):
+            raise HTTPException(409, "Task has no saved conversation")
+        if row["status"] == "completed":
+            raise HTTPException(409, "Task already completed")
+        runner = TASK_RUNNERS.get(task_id)
+        if action == "stop":
+            if runner and not runner.done():
+                runner.cancel()
+                try:
+                    await runner
+                except asyncio.CancelledError:
+                    pass
+            store.update(task_id, status="stopped", error="Monitoring stopped by user; Dola generation is not cancelled",
+                         finished_at=time.time())
+            return {"ok": True, "status": "stopped"}
+        if runner and not runner.done():
+            if action == "open":
+                from browser import focus_account_context
+                if await focus_account_context(row["account"]):
+                    return {"ok": True, "status": "processing"}
+                raise HTTPException(409, "Browser is recovering; retry shortly")
+            raise HTTPException(409, "Task is already being monitored")
+        for other_id, other_runner in TASK_RUNNERS.items():
+            if other_id != task_id and not other_runner.done():
+                other = store.get(other_id)
+                if other and other.get("account") == row["account"]:
+                    raise HTTPException(409, "Another task is using this account")
+        lock = pool._locks.get(row["account"])
+        if (lock and lock.locked()) or row["account"] in WEB_SESSIONS:
+            raise HTTPException(409, "Account is busy in another browser session")
+        # Only reopen the saved conversation. Never repeat generation submission.
+        store.update(task_id, status="processing", error=None, finished_at=None,
+                     deadline_at=time.time() + max(1800, config.VIDEO_TIMEOUT))
+        TASK_RUNNERS[task_id] = asyncio.create_task(_resume_task(store.get(task_id)))
+        logging.getLogger("uvicorn.error").info(
+            "[task-recovery] task=%s action=%s conversation=%s", task_id, action, row["conversation_id"])
+        return {"ok": True, "status": "processing"}
 
 
 @app.get("/api/admin/stats")

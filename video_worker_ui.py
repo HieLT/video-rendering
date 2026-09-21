@@ -308,14 +308,28 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
     start = time.time()
     last_callback = 0.0
+    poll_failures = 0
+    tab_recoveries = 0
     while time.time() - start < timeout:
         await asyncio.sleep(5)
         try:
+            if page.is_closed():
+                if tab_recoveries >= 1:
+                    raise RuntimeError("Browser tab closed again; manual recovery required")
+                tab_recoveries += 1
+                page = await context.new_page()
+                await page.goto(f"https://www.dola.com/chat/{conversation_id}",
+                                timeout=30000, wait_until="domcontentloaded")
+                _log(f"[{account}] restored conversation tab {conversation_id}")
             poll = await asyncio.wait_for(page.evaluate(
                 POLL_JS, {"conversationId": conversation_id, "msToken": ms_token, "fp": fp}), timeout=30)
         except Exception as e:
-            _log(f"  Polling exception: {e}")
+            poll_failures += 1
+            _log(f"  Polling exception attempt={poll_failures}/3: {e}")
+            if poll_failures >= 3:
+                raise RuntimeError("Conversation monitoring interrupted; open conversation to recover") from e
             continue
+        poll_failures = 0
         now = time.time()
         if on_poll and now - last_callback >= 30:
             on_poll(now)

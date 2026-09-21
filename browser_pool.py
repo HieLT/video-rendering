@@ -66,7 +66,14 @@ class BrowserPool:
         self._conn.commit()
         # Legacy migration: add metadata columns
         for column, definition in (
+            ("auth_state", "TEXT DEFAULT 'unverified'"),
+            ("auth_error", "TEXT DEFAULT ''"),
+            ("dispatch_manual", "INTEGER DEFAULT 0"),
             ("email", "TEXT DEFAULT ''"),
+            ("account_type", "TEXT DEFAULT 'unknown'"),
+            ("display_name", "TEXT DEFAULT ''"),
+            ("identity_hash", "TEXT DEFAULT ''"),
+            ("dola_user_id", "TEXT DEFAULT ''"),
             ("rate_limited_until", "REAL DEFAULT 0"),
             ("limit_reason", "TEXT DEFAULT ''"),
             ("quota_blocked_until", "REAL DEFAULT 0"),
@@ -76,6 +83,8 @@ class BrowserPool:
         ):
             try:
                 self._conn.execute(f"ALTER TABLE accounts_meta ADD COLUMN {column} {definition}")
+                if column == "dispatch_manual":
+                    self._conn.execute("UPDATE accounts_meta SET dispatch_manual=1 WHERE scheduling=0")
                 self._conn.commit()
             except sqlite3.OperationalError:
                 pass
@@ -171,6 +180,10 @@ class BrowserPool:
             lock = self._locks.get(a)
             out.append({
                 "name": a,
+                "auth_state": m["auth_state"],
+                "auth_error": m["auth_error"],
+                "account_type": m["account_type"] if m else "unknown",
+                "display_name": m["display_name"] if m else "",
                 "scheduling": bool(m["scheduling"]) if m else True,
                 "note": m["note"] if m else "",
                 "email": m["email"] if m else "",
@@ -195,9 +208,9 @@ class BrowserPool:
             })
         return out
 
-    def set_scheduling(self, name: str, on: bool):
+    def set_scheduling(self, name: str, on: bool, manual: bool = True):
         self._conn.execute(
-            "UPDATE accounts_meta SET scheduling=? WHERE name=?", (1 if on else 0, name))
+            "UPDATE accounts_meta SET scheduling=?, dispatch_manual=? WHERE name=?", (1 if on else 0, int(manual), name))
         self._conn.commit()
 
     def set_email(self, name: str, email: str):
@@ -239,21 +252,56 @@ class BrowserPool:
         self._conn.commit()
         _log(f"[account-delete] account={name!r} stage=metadata_removed")
 
+    def auth_result(self, name, state, error="", identity=None):
+        identity = identity or {}
+        if state == "active":
+            key = identity.get("identity_hash", "")
+            uid = identity.get("dola_user_id", "")
+            if not key and not uid:
+                raise RuntimeError("Verified account identity missing")
+            duplicate = self._conn.execute(
+                "SELECT name FROM accounts_meta WHERE name<>? AND auth_state<>'duplicate' "
+                "AND ((?<>'' AND dola_user_id=?) OR (?<>'' AND identity_hash=?))",
+                (name, uid, uid, key, key)).fetchone()
+            if duplicate:
+                state, error = "duplicate", f"Duplicate account: {duplicate['name']}"
+        meta = self._meta(name)
+        scheduling = meta["scheduling"]
+        login_ok = meta["login_ok"]
+        if state == "active":
+            login_ok = 1
+            if not meta["dispatch_manual"]:
+                scheduling = 1
+        elif state in ("expired", "duplicate", "failed", "adding"):
+            login_ok, scheduling = 0, 0
+        self._conn.execute(
+            "UPDATE accounts_meta SET auth_state=?, auth_error=?, login_ok=?, scheduling=?, login_checked_at=?, "
+            "dola_user_id=CASE WHEN ?<>'' THEN ? ELSE dola_user_id END, "
+            "identity_hash=CASE WHEN ?<>'' THEN ? ELSE identity_hash END, "
+            "display_name=CASE WHEN display_name='' THEN ? ELSE display_name END WHERE name=?",
+            (state, error, login_ok, scheduling, time.time(),
+             identity.get("dola_user_id", ""), identity.get("dola_user_id", ""), identity.get("identity_hash", ""),
+             identity.get("identity_hash", ""), identity.get("display_name", ""), name))
+        self._conn.commit()
+        return state
+
     async def verify_account(self, name: str) -> bool:
-        """Verifies login state in headless mode and updates cache."""
         if name not in self.accounts:
-            raise FileNotFoundError(f"Profile does not exist: {name}")
+            raise FileNotFoundError("Account does not exist")
         lock = self._locks.setdefault(name, asyncio.Lock())
         if lock.locked():
-            raise RuntimeError("Account is generating video, please verify later")
-        from browser import check_login_state
-        ok = await check_login_state(name)
-        self._conn.execute(
-            "UPDATE accounts_meta SET login_ok=?, login_checked_at=? WHERE name=?",
-            (1 if ok else 0, time.time(), name),
-        )
-        self._conn.commit()
-        return ok
+            raise RuntimeError("Account is busy")
+        from browser import inspect_account_session
+        async with lock:
+            try:
+                result = await inspect_account_session(name)
+                state = self.auth_result(name, result["state"], result.get("error", ""), result)
+            except Exception as exc:
+                self.auth_result(name, "check_error", "Could not check session; retry when connection is available")
+                raise RuntimeError("Could not check session; account was not marked expired") from exc
+        if state == "duplicate":
+            raise RuntimeError(self._meta(name)["auth_error"])
+        return state == "active"
 
     # ===== Scheduling =====
 
@@ -274,7 +322,7 @@ class BrowserPool:
         return not row or row["credit_balance"] is None or row["credit_balance"] >= required
 
     def _schedulable(self, a: dict) -> bool:
-        return (a["scheduling"] and not a["cooling"] and not a["rate_limited"]
+        return (a["scheduling"] and a.get("login_ok") == 1 and a.get("auth_state") == "active" and not a["cooling"] and not a["rate_limited"]
                 and not a["quota_blocked"] and a["used_today"] < DAILY_LIMIT
                 and (a["credit_balance"] is None or a["credit_balance"] >= 2))
 

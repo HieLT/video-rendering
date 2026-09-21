@@ -16,6 +16,7 @@ from patchright.async_api import async_playwright
 
 from browser import LAUNCH_ARGS
 import config
+from account_import import capture_identity
 
 
 LOG_FILE = Path(__file__).with_name("account_add.log")
@@ -192,6 +193,7 @@ async def add_account_flow(account: str, email: str, password: str, secret: str)
             log(f"[{account}] initial cookies sessionid={any(c['name'] == 'sessionid' and c['value'] for c in cookies)}")
             if any(c["name"] == "sessionid" and c["value"] for c in cookies):
                 log(f"[{account}] Active session exists, login not required")
+                await capture_identity(context, page, account)
                 return True
 
             ui_snapshot = await page.evaluate("""() => ({
@@ -263,6 +265,7 @@ async def add_account_flow(account: str, email: str, password: str, secret: str)
                 await asyncio.sleep(3)
                 cookies = await context.cookies("https://www.dola.com")
                 if any(c["name"] == "sessionid" and c["value"] for c in cookies):
+                    await capture_identity(context, page, account)
                     log(f"[{account}] Login successful, sessionid saved to {profile_dir}")
                     await asyncio.sleep(3)
                     return True
