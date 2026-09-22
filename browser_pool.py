@@ -1,5 +1,6 @@
 """Browser Account Pool: Manages accounts/ profiles with concurrency control and daily limits."""
 import asyncio
+from contextlib import asynccontextmanager
 import shutil
 import sqlite3
 import time
@@ -36,6 +37,7 @@ class BrowserPool:
         self.accounts_dir = Path(accounts_dir)
         self.semaphore = asyncio.Semaphore(max_concurrency)
         self._locks: dict[str, asyncio.Lock] = {}
+        self._activities: dict[str, str] = {}
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(
@@ -88,6 +90,16 @@ class BrowserPool:
                 self._conn.commit()
             except sqlite3.OperationalError:
                 pass
+
+    @asynccontextmanager
+    async def account_activity(self, account: str, activity: str):
+        lock = self._locks.setdefault(account, asyncio.Lock())
+        async with lock:
+            self._activities[account] = activity
+            try:
+                yield
+            finally:
+                self._activities.pop(account, None)
 
     # ===== Account Discovery & Metadata =====
 
@@ -205,6 +217,7 @@ class BrowserPool:
                 "limit": DAILY_LIMIT,
                 "remaining": max(0, DAILY_LIMIT - used),
                 "busy": bool(lock and lock.locked()),
+                "activity": self._activities.get(a) if lock and lock.locked() else None,
             })
         return out
 
@@ -292,7 +305,7 @@ class BrowserPool:
         if lock.locked():
             raise RuntimeError("Account is busy")
         from browser import inspect_account_session
-        async with lock:
+        async with self.account_activity(name, "verifying"):
             try:
                 result = await inspect_account_session(name)
                 state = self.auth_result(name, result["state"], result.get("error", ""), result)
@@ -362,7 +375,7 @@ class BrowserPool:
         """Resumes an accepted session without re-scheduling."""
         async with self.semaphore:
             lock = self._locks.setdefault(account, asyncio.Lock())
-            async with lock:
+            async with self.account_activity(account, "generating"):
                 def on_balance(balance, source=""):
                     self._set_credit_balance(account, balance, source)
                 try:
@@ -395,7 +408,7 @@ class BrowserPool:
                 # Skip busy accounts to prevent concurrent collisions on same profile.
                 if lock.locked():
                     continue
-                async with lock:
+                async with self.account_activity(account, "generating"):
                     if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
                         continue  # State changed while waiting
                     submit_attempted = False

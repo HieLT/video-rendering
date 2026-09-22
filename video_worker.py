@@ -14,6 +14,10 @@ from browser import cookie_value, launch_account_context
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
 from video_probe import SUBMIT_JS
 
+class GenerationRejectedError(RuntimeError):
+    pass
+
+
 # Poll /im/chain/single for video status
 POLL_JS = r"""
 async ({conversationId, msToken, fp}) => {
@@ -60,6 +64,15 @@ async ({conversationId, msToken, fp}) => {
   const messages =
     (((data.downlink_body || {}).pull_singe_chain_downlink_body) || {}).messages || [];
   const texts = [];
+  let rejection = null;
+  for (const msg of messages) {
+    if (String((msg.ext || {}).ai_creation_res_code) === "710082031") {
+      let blocks = msg.content_block || [];
+      try { blocks = JSON.parse(msg.content); } catch (_) {}
+      const reason = blocks.map(b => (((b.content || {}).text_block || {}).text || "")).filter(Boolean).join("\n");
+      rejection = {code: "710082031", reason: reason || "Dola rejected generation for privacy protection"};
+    }
+  }
   const videos = [];
   const videoModels = [];
   for (const msg of messages) {
@@ -70,7 +83,7 @@ async ({conversationId, msToken, fp}) => {
     if (!Array.isArray(content)) continue;
     for (const block of content) {
       const text = (((block.content || {}).text_block) || {}).text || "";
-      if (text) texts.push(text.slice(0, 120));
+      if (text) texts.push(text);
       if (block.block_type !== 2074) continue;
       const creations = (((block.content || {}).creation_block) || {}).creations || [];
       for (const cre of creations) {
@@ -83,7 +96,7 @@ async ({conversationId, msToken, fp}) => {
       }
     }
   }
-  return {ok: true, status: resp.status, texts, videos, videoModels};
+  return {ok: true, status: resp.status, texts, videos, videoModels, rejection};
 }
 """
 

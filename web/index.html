@@ -279,7 +279,7 @@ async function loadDash(){
       <div class="lbl">${d.day}</div>
     </div>`).join('');
   q('#perAccount').innerHTML=table(
-    ['Account ID','Email','Current Status','Dispatch','Remaining Today','Total Generated','Last Used'],
+    ['Account ID','Email','Current Status','Dispatch','Used Today','Total Generated','Last Used'],
     st.per_account.map(a=>[
       `<span class="account-id">${esc(a.name)}</span>`,
       accLabel(a),
@@ -294,16 +294,19 @@ async function loadDash(){
 
 function accLabel(x){return `<div>${esc(x.display_name||x.email||x.name)}</div>`;}
 function statusBadge(a){
+  if(a.busy){
+    const labels={verifying:'Verifying',browser_open:'Browser open',generating:'Generating',adding:'Adding'};
+    return '<span class="badge b-blue">'+(labels[a.activity]||'Busy')+'</span>';
+  }
   const auth={adding:'Adding',failed:'Add failed',duplicate:'Duplicate',check_error:'Check unavailable',expired:'Expired'};
   if(auth[a.auth_state])return '<span class="badge b-orange" title="'+esc(a.auth_error||'')+'">'+auth[a.auth_state]+'</span>';
 
-  if(a.busy)return '<span class="badge b-blue">Generating</span>';
   if(a.rate_limited)return '<span class="badge b-orange">Rate limited until '+fmt(a.rate_limited_until)+'</span>';
   if(a.quota_blocked)return '<span class="badge b-orange">Quota blocked until '+fmt(a.quota_blocked_until)+'</span>';
   if(a.cooling)return '<span class="badge b-orange">Cooldown until '+fmtHM(a.cooldown_until)+'</span>';
   if(a.login_ok===0)return '<span class="badge b-red">Expired</span>';
-  if(a.login_ok===1)return '<span class="badge b-green">Active</span>';
-  return '<span class="badge b-gray">Unverified</span>';
+  if(a.login_ok===1 && a.auth_state==='active')return '<span class="badge b-green">Active</span>';
+  return '<span class="badge b-gray" title="Session is not verified for dispatch. Use Verify in Accounts.">Unverified</span>';
 }
 
 function table(heads,rows){
@@ -345,7 +348,7 @@ async function loadAccounts(){
       `<button class="btn" style="margin-right:6px" onclick="openWeb('${esc(x.name)}',this)">Open Web</button><button class="btn" style="margin-right:6px" onclick="verify('${esc(x.name)}',this)">Verify</button><button class="btn" onclick="openAddAccount('${esc(x.name)}')">Retry</button><button class="btn btn-danger" onclick="delAccount('${esc(x.name)}')">Delete</button>`
     ];
   });
-  q('#accountsTable').innerHTML=table(['Account ID','Name','Type','Status','Dispatch','Remaining','Last Used','Created At','Actions'],rows);
+  q('#accountsTable').innerHTML=table(['Account ID','Name','Type','Status','Dispatch','Used Today','Last Used','Created At','Actions'],rows);
 }
 
 async function verify(name,btn){
@@ -491,7 +494,7 @@ async function loadTasks(){
     fmt(t.created_at),
     t.video_url
       ?'<div class="video-wrap"><a href="'+esc(t.video_url)+'" target="_blank">Open</a><button class="btn" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">Preview</button></div>'
-      :(['failed','needs_recovery','stopped'].includes(t.status)?'<span class="tiny" title="'+esc(t.error||'')+'">'+esc((t.error||'').slice(0,30))+'</span>':'—')
+      :(['failed','needs_recovery','stopped'].includes(t.status)?'<details><summary class="tiny" style="cursor:pointer">'+esc((t.error||'').slice(0,30))+' ? Details</summary><div style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto">'+esc(t.error||'')+'</div></details>':'—')
     ,taskControls(t)
   ]);
   q('#tasksTable').innerHTML=table(['Task ID','Prompt','Account','Client','Duration','Status','Created At','Video','Actions'],rows);

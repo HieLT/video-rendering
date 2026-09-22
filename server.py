@@ -1,3 +1,4 @@
+from video_worker import GenerationRejectedError
 """Video Rendering: OpenAI-compatible Video API (FastAPI) and Admin Dashboard.
 
 Endpoints (Asynchronous 2-stage):
@@ -265,15 +266,15 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                      account=result.get("account"), last_poll_at=time.time(),
                      finished_at=time.time())
     except (AllAccountsLimitedError, AllAccountsQuotaBlockedError) as e:
-        store.update(task_id, status="failed", error=str(e)[:500],
+        store.update(task_id, status="failed", error=str(e),
                      failure_code="429", finished_at=time.time())
     except Exception as e:
         print(f"[task:{task_id}] failed type={type(e).__name__}: "
               f"{str(e).encode('ascii', 'backslashreplace').decode('ascii')}", flush=True)
         print(traceback.format_exc().encode('ascii', 'backslashreplace').decode('ascii'), flush=True)
         row = store.get(task_id)
-        status = "needs_recovery" if row.get("conversation_id") else "failed"
-        store.update(task_id, status=status, error=str(e)[:500], finished_at=time.time())
+        status = "failed" if isinstance(e, GenerationRejectedError) else ("needs_recovery" if row.get("conversation_id") else "failed")
+        store.update(task_id, status=status, error=str(e), finished_at=time.time())
     finally:
         if TASK_RUNNERS.get(task_id) is asyncio.current_task():
             TASK_RUNNERS.pop(task_id, None)
@@ -310,7 +311,7 @@ async def _resume_task(row: dict):
                      account=result.get("account"), last_poll_at=time.time(),
                      finished_at=time.time())
     except Exception as e:
-        store.update(task_id, status="needs_recovery", error=str(e)[:500],
+        store.update(task_id, status="failed" if isinstance(e, GenerationRejectedError) else "needs_recovery", error=str(e),
                      finished_at=time.time())
     finally:
         if TASK_RUNNERS.get(task_id) is asyncio.current_task():
@@ -565,6 +566,7 @@ async def _run_open_web(name: str):
             raise RuntimeError("Account is busy")
         await lock.acquire()
         acquired = True
+        pool._activities[name] = "browser_open"
         from browser import launch_account_context
 
         async with async_playwright() as playwright:
@@ -582,6 +584,7 @@ async def _run_open_web(name: str):
         print(f"[open-web:{name}] {session['error']}", flush=True)
     finally:
         if acquired:
+            pool._activities.pop(name, None)
             lock.release()
         WEB_SESSIONS.pop(name, None)
 
@@ -644,7 +647,7 @@ def find_duplicate_login(name, email, account_type):
 async def _run_add_job(name: str, email: str, password: str, totp: str, method="google", cookies=None):
     lock = pool._locks.setdefault(name, asyncio.Lock())
     try:
-        async with lock:
+        async with pool.account_activity(name, "adding"):
             pool.auth_result(name, "adding")
             if method == "google":
                 await add_account_flow(name, email, password, totp)
@@ -819,9 +822,9 @@ async def admin_stats(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
     st = store.stats()
     accs = pool.list_accounts()
-    sched = [a for a in accs if a["scheduling"] and not a["cooling"]]
+    sched = [a for a in accs if pool._schedulable(a)]
     st["total_accounts"] = len(accs)
-    st["available_accounts"] = sum(1 for a in sched if a["remaining"] > 0)
+    st["available_accounts"] = sum(1 for a in sched if not a["busy"])
     st["total_remaining"] = sum(a["remaining"] for a in sched)
     totals = st.pop("per_account_total", {})
     st["per_account"] = [{**a, "completed_total": totals.get(a["name"], 0)} for a in accs]

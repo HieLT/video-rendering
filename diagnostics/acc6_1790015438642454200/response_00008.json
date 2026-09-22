@@ -1,0 +1,1 @@
+{"time": 1790015447.3247144, "path": "/alice/resource/prepare_upload", "status": 200, "body": {"code": 0, "msg": "", "data": {"service_id": "uo7y4d541q", "upload_path_prefix": "rc_file_pc", "upload_host": "imagex-ap-southeast-1.bytevcloudapi.com", "upload_auth_token": "[redacted]"}}}

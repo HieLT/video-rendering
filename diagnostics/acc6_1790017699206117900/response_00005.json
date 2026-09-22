@@ -1,0 +1,1 @@
+{"time": 1790017701.6973956, "path": "/im/message/send_rate_limit", "status": 200, "body": {"cmd": 2260, "sequence_id": "df854831-32a6-4388-bea2-b35114a93579", "downlink_body": {"check_message_send_rate_limit_downlink_body": {"is_limit": false, "limit_time": 0, "limit_tips": ""}}, "version": "1", "status_code": 0, "status_desc": "OK", "ext": {"tt_stable": "1"}}}

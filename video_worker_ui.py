@@ -15,7 +15,7 @@ from gap import find_gap_x
 import config
 from browser import cookie_value, launch_account_context
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
-from video_worker import POLL_JS, RiskControlError, _download, extract_unwatermarked_url
+from video_worker import GenerationRejectedError, POLL_JS, RiskControlError, _download, extract_unwatermarked_url
 
 
 def _log(message: str):
@@ -134,11 +134,123 @@ async def _fetch_bytes(url: str) -> bytes:
 
 
 
+def start_generation_capture(context, account):
+    from urllib.parse import urlsplit
+    root = Path("diagnostics") / f"{account}_{time.time_ns()}"
+    root.mkdir(parents=True, exist_ok=True)
+    pending = set()
+    counter = 0
+    def redact(value):
+        if isinstance(value, dict):
+            return {k: ("[redacted]" if any(x in k.lower() for x in ("token", "cookie", "authorization")) else redact(v)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [redact(v) for v in value]
+        if isinstance(value, str):
+            try:
+                decoded = json.loads(value)
+                if isinstance(decoded, (dict, list)):
+                    return redact(decoded)
+            except (ValueError, TypeError):
+                pass
+            if value.startswith(("https://", "http://")):
+                u = urlsplit(value)
+                return u.scheme + "://" + u.netloc + u.path
+        return value
+    async def capture(response):
+        nonlocal counter
+        u = urlsplit(response.url)
+        if not ((u.hostname or "").endswith((".dola.com", ".bytevcloudapi.com", ".byteimg.com", ".ibytedtos.com")) or u.hostname == "dola.com" or "/upload/v1/" in u.path):
+            return
+        if not any(x in u.path for x in ("/im/", "/alice/resource/", "review", "creation", "generate", "/upload/")) and (u.hostname or "").endswith("dola.com"):
+            return
+        try:
+            body = await response.json()
+            counter += 1
+            record = {"time": time.time(), "host": u.hostname, "path": u.path, "status": response.status, "body": redact(body)}
+            (root / f"response_{counter:05d}.json").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+        except Exception as exc:
+            _log(f"[capture] path={u.path} unavailable={type(exc).__name__}")
+    def listener(response):
+        task = asyncio.create_task(capture(response))
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+    context.on("response", listener)
+    _log(f"[capture] account={account} directory={root}")
+    async def finish():
+        context.remove_listener("response", listener)
+        if pending:
+            await asyncio.gather(*list(pending), return_exceptions=True)
+    return finish
+
+
 async def attach_reference_images(page, image_paths: list[str]) -> None:
+    """Upload once; preserve attachments for manual recovery on failure."""
+    if not image_paths:
+        return
+    root = page.locator('.guidance-input-surface:visible').filter(has=page.locator('[contenteditable="true"]')).last
+    try:
+        _log(f"[upload] single attempt files={json.dumps([Path(p).name for p in image_paths])}")
+        await _upload_reference_attempt(page, image_paths, len(image_paths))
+        names = await root.locator('[data-kind="image"] img').evaluate_all("imgs => imgs.map(e => e.alt)")
+        expected = [Path(path).name for path in image_paths]
+        if names != expected:
+            raise RuntimeError(f"Attachment order/name mismatch: expected={expected}, actual={names}")
+        _log(f"[upload] batch complete count={len(names)}")
+    except Exception as exc:
+        if page.is_closed():
+            raise
+        _log(f"[upload] manual recovery required; no retry or deletion; reason={type(exc).__name__}: {exc}")
+        await _wait_for_manual_reference_upload(page, len(image_paths))
+
+
+async def _wait_for_manual_reference_upload(page, expected: int) -> None:
+    """Require explicit user confirmation, with a bounded browser wait."""
+    panel_id = "dola-manual-upload-recovery"
+    await page.evaluate("""({id, expected}) => {
+        document.getElementById(id)?.remove();
+        const panel = document.createElement('div');
+        panel.id = id;
+        panel.style.cssText = 'position:fixed;top:12px;right:12px;z-index:2147483647;background:#fff;color:#111;padding:16px;border:2px solid #e99b20;border-radius:10px;max-width:360px;font:14px sans-serif;box-shadow:0 4px 20px #0004';
+        const message = document.createElement('p');
+        message.textContent = `Upload t? ??ng g?p l?i. H?y upload ?? ${expected} ?nh theo ??ng th? t? r?i b?m ti?p t?c. Th?i gian ch?: 15 ph?t.`;
+        const button = document.createElement('button');
+        button.textContent = '?? upload xong ? ti?p t?c';
+        button.style.cssText = 'padding:10px;cursor:pointer;background:#2463eb;color:white;border:0;border-radius:6px';
+        button.onclick = () => {
+            const roots = [...document.querySelectorAll('.guidance-input-surface')].filter(r => r.getClientRects().length && r.querySelector('[contenteditable="true"]'));
+            const root = roots.at(-1);
+            const cards = root ? [...root.querySelectorAll('[data-kind="image"]')] : [];
+            const images = cards.map(c => c.querySelector('img'));
+            const busy = cards.some(c => [...c.querySelectorAll('[role="progressbar"],[aria-label],[title]')].some(e => e.getAttribute('role') === 'progressbar' || /upload progress|upload failed|failed to upload|upload error/i.test((e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || ''))));
+            if (cards.length !== expected || !images.every(i => i && i.complete && i.naturalWidth > 0) || busy) {
+                message.textContent = `?nh ch?a s?n s?ng. C?n ?? ${expected} ?nh, ho?n t?t upload r?i b?m ti?p t?c.`;
+                return;
+            }
+            panel.dataset.confirmed = 'true';
+            button.disabled = true;
+        };
+        panel.append(message, button);
+        document.body.append(panel);
+    }""", {"id": panel_id, "expected": expected})
+    _log(f"[upload] waiting for manual confirmation expected={expected} timeout=900s")
+    try:
+        await page.wait_for_function("id => document.getElementById(id)?.dataset.confirmed === 'true'", arg=panel_id, timeout=900000)
+        _log("[upload] manual upload confirmed by user; continuing generation")
+    except Exception as exc:
+        raise RuntimeError("Manual image upload was not confirmed within 15 minutes or browser was closed") from exc
+    finally:
+        if not page.is_closed():
+            try:
+                await page.evaluate("id => document.getElementById(id)?.remove()", panel_id)
+            except Exception:
+                pass
+
+
+async def _upload_reference_attempt(page, image_paths: list[str], total_expected: int) -> None:
     """Uploads reference images through native file input and waits for TOS upload."""
     if not image_paths:
         return
-    file_input = page.locator('input[type="file"]').first
+    file_input = page.locator('.guidance-input-surface:visible').filter(has=page.locator('[contenteditable="true"]')).last.locator('input[type="file"]').first
     for _ in range(30):
         if await file_input.count():
             break
@@ -156,35 +268,108 @@ async def attach_reference_images(page, image_paths: list[str]) -> None:
         _log(f"[upload] file input missing after 30s: {safe[:7000]}")
         await page.screenshot(path="reference_upload_input_missing.png", full_page=True)
         raise TimeoutError("Reference image upload control did not appear")
+    composer = page.locator('.guidance-input-surface:visible').filter(has=page.locator('[contenteditable="true"]')).last
+    if not await composer.count():
+        raise RuntimeError("Cannot identify upload composer; refusing to submit")
+    input_info = await file_input.evaluate("""e => ({accept:e.accept, multiple:e.multiple,
+        inSelectedComposer:e.closest('.guidance-input-surface') ===
+            [...document.querySelectorAll('.guidance-input-surface')].filter(r => r.getClientRects().length && r.querySelector('[contenteditable="true"]')).at(-1)})""")
+    _log(f"[upload] input={json.dumps(input_info)} page_inputs={await page.locator('input[type=file]').count()}")
     events = []
+    failures = []
+    snapshot_state = {}
+    manifest = [{"index": i + 1, "file": Path(path).name, "bytes": Path(path).stat().st_size} for i, path in enumerate(image_paths)]
 
     def on_response(response):
         url = response.url
-        if "/alice/resource/prepare_upload" in url or "/upload/v1/" in url:
+        tracked = "/alice/resource/prepare_upload" in url or "/upload/v1/" in url
+        if tracked:
             events.append((response.status, url))
+        if tracked or "bytevcloudapi.com" in url:
+            from urllib.parse import urlsplit, parse_qs
+            endpoint = urlsplit(url)
+            action = parse_qs(endpoint.query).get("Action", [])
+            _log(f"[upload] response status={response.status} method={response.request.method} host={endpoint.hostname} path={endpoint.path} action={json.dumps(action)} counted={tracked}")
+
+    def on_request_failed(request):
+        if any(part in request.url for part in ("/alice/resource/", "/upload/v1/", "bytevcloudapi.com")):
+            from urllib.parse import urlsplit
+            endpoint = urlsplit(request.url)
+            failures.append({"host": endpoint.hostname, "path": endpoint.path,
+                             "method": request.method, "resource_type": request.resource_type,
+                             "error": request.failure or "unknown network failure"})
 
     page.on("response", on_response)
+    page.on("requestfailed", on_request_failed)
     try:
+        _log(f"[upload] start files={json.dumps(manifest)}")
         await file_input.set_input_files(image_paths)
         expected = len(image_paths)
         deadline = time.time() + max(60, expected * 20)
+        last_progress = None
+        last_check_log = 0.0
         while time.time() < deadline:
             prepare_count = sum("/alice/resource/prepare_upload" in url and 200 <= status < 300
                                 for status, url in events)
             tos_count = sum("/upload/v1/" in url and 200 <= status < 300
                             for status, url in events)
             # Wait for thumbnails and TOS completion before sending
-            thumb_count = await page.locator('img[alt]').count()
-            if prepare_count >= expected and tos_count >= expected and thumb_count >= expected:
+            snapshot_state = await composer.evaluate("""root => ({
+                text: root.innerText,
+                images: [...root.querySelectorAll('[data-kind="image"] > img')].map(e => ({alt:e.alt, complete:e.complete, width:e.naturalWidth})),
+                indicators: [...root.querySelectorAll('[title],[aria-label],[role="alert"],[data-state]')].map(e => ({title:e.getAttribute('title'), aria:e.getAttribute('aria-label'), role:e.getAttribute('role'), state:e.getAttribute('data-state'), text:e.getAttribute('role')==='alert'?e.innerText:''}))
+            })""")
+            thumb_count = len(snapshot_state["images"])
+            labels = " ".join((v or "") for item in snapshot_state["indicators"] for v in (item['title'], item['aria'], item['text']))
+            checks = {"tos_enough": tos_count >= expected,
+                      "thumbnail_count_matches": thumb_count == total_expected,
+                      "thumbnails_loaded": all(i["complete"] and i["width"] > 0 for i in snapshot_state["images"])}
+            check_detail = {"checks": checks, "expected": expected, "total_expected": total_expected,
+                            "prepare": prepare_count, "tos": tos_count, "thumbnails": thumb_count,
+                            "images": snapshot_state["images"], "labels": labels,
+                            "statuses": [status for status, _ in events], "failures": failures}
+            check_serialized = json.dumps(check_detail)
+            if check_serialized != last_progress or time.monotonic() - last_check_log >= 5:
+                _log(f"[upload] readiness remaining_s={max(0, deadline - time.time()):.1f} {check_serialized}")
+                last_progress = check_serialized
+                last_check_log = time.monotonic()
+            if re.search(r"upload failed|failed to upload|upload error|\u30a2\u30c3\u30d7\u30ed\u30fc\u30c9.*\u5931\u6557|\u4e0a\u4f20\u5931\u8d25", labels, re.I):
+                raise RuntimeError("Reference image upload rejected by UI: " + labels)
+            if failures or any(status >= 400 for status, _ in events):
+                raise RuntimeError(f"Reference image upload network failure: failures={failures}, statuses={[status for status, _ in events]}")
+            # Preparation requests may cover multiple images; do not require one per file.
+            if tos_count >= expected and thumb_count == total_expected and all(i["complete"] and i["width"] > 0 for i in snapshot_state["images"]):
+                _log("[upload] readiness passed; settling 800ms")
                 await page.wait_for_timeout(800)
+                _log(f"[upload] settle finished statuses={[status for status, _ in events]} failures={json.dumps(failures)}")
                 _log(f"[upload] Reference images uploaded: {expected} image(s)")
                 return
             await page.wait_for_timeout(250)
+        statuses = [status for status, _ in events]
+        _log(f"[upload] timeout response_statuses={statuses} network_failures={failures}")
+        snapshot_path = f"reference_upload_timeout_{time.time_ns()}.png"
+        try:
+            await page.screenshot(path=snapshot_path, full_page=True)
+            _log(f"[upload] timeout screenshot={snapshot_path}")
+        except Exception as exc:
+            _log(f"[upload] screenshot failed: {type(exc).__name__}")
         raise TimeoutError(
-            f"Reference image upload timeout: prepare={prepare_count}/{expected}, tos={tos_count}/{expected}"
+            f"Reference image upload timeout: prepare={prepare_count}, tos={tos_count}/{expected}, thumbnails={thumb_count}"
         )
+    except Exception as exc:
+        base = Path("diagnostics") / f"upload_failure_{time.time_ns()}"
+        base.parent.mkdir(parents=True, exist_ok=True)
+        diagnostic = {"error_type": type(exc).__name__, "error": str(exc), "files": manifest, "composer": snapshot_state, "statuses": [status for status, _ in events], "network_failures": failures}
+        base.with_suffix(".json").write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            await page.screenshot(path=str(base.with_suffix(".png")), full_page=True)
+        except Exception as capture_error:
+            _log(f"[upload] screenshot unavailable={type(capture_error).__name__}")
+        _log(f"[upload] stopped before submission; diagnostic={base}.json error={type(exc).__name__}: {exc}")
+        raise
     finally:
         page.remove_listener("response", on_response)
+        page.remove_listener("requestfailed", on_request_failed)
 
 
 def _gen_track(distance: float):
@@ -330,6 +515,10 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 raise RuntimeError("Conversation monitoring interrupted; open conversation to recover") from e
             continue
         poll_failures = 0
+        if poll.get("rejection"):
+            rejection = poll["rejection"]
+            _log(f"[{account}] generation rejected code={rejection['code']} reason={rejection['reason']}")
+            raise GenerationRejectedError(f"Dola rejection ({rejection['code']}): {rejection['reason']}")
         now = time.time()
         if on_poll and now - last_callback >= 30:
             on_poll(now)
@@ -575,6 +764,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
         context = await launch_account_context(
             p, account, headless=False if use_extension else None,
             use_extension=use_extension)
+        finish_capture = start_generation_capture(context, account)
         try:
             page = context.pages[0] if context.pages else await context.new_page()
             _log(f"[{account}] Playwright context opened for generation")
@@ -703,6 +893,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
         finally:
             _log(f"[{account}] Playwright context closing")
             await context.close()
+            await finish_capture()
 
 
 async def _main():
