@@ -73,7 +73,7 @@ export DOLA_PROXY="http://127.0.0.1:7890"
 export DOLA_API_KEYS="sk-your-secret-key"
 
 # Concurrency limits
-export DOLA_MAX_CONCURRENCY=3
+export DOLA_MAX_CONCURRENCY=5
 ```
 
 ### 4. Start Server

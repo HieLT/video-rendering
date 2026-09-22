@@ -1,0 +1,155 @@
+{
+  "error_type": "RuntimeError",
+  "error": "Reference image upload network failure: failures=[{'host': 'imagex-ap-southeast-1.bytevcloudapi.com', 'path': '/', 'method': 'GET', 'resource_type': 'xhr', 'error': 'net::ERR_FAILED'}, {'host': 'imagex-ap-southeast-1.bytevcloudapi.com', 'path': '/', 'method': 'GET', 'resource_type': 'xhr', 'error': 'net::ERR_FAILED'}], statuses=[200, 200, 200, 200]",
+  "files": [
+    {
+      "index": 1,
+      "file": "image_0.png",
+      "bytes": 3198107
+    },
+    {
+      "index": 2,
+      "file": "image_1.png",
+      "bytes": 2510041
+    },
+    {
+      "index": 3,
+      "file": "image_2.png",
+      "bytes": 1197245
+    },
+    {
+      "index": 4,
+      "file": "image_3.png",
+      "bytes": 5103262
+    },
+    {
+      "index": 5,
+      "file": "image_4.png",
+      "bytes": 2445521
+    }
+  ],
+  "composer": {
+    "text": "0%\n0%\n0%\n0%\n0%\n動画を作成\nモデル\n2.5\n10s\n比率\n\n\n",
+    "images": [
+      {
+        "alt": "image_0.png",
+        "complete": true,
+        "width": 1672
+      },
+      {
+        "alt": "image_1.png",
+        "complete": true,
+        "width": 1536
+      },
+      {
+        "alt": "image_2.png",
+        "complete": true,
+        "width": 1279
+      },
+      {
+        "alt": "image_3.png",
+        "complete": true,
+        "width": 2304
+      },
+      {
+        "alt": "image_4.png",
+        "complete": true,
+        "width": 1536
+      }
+    ],
+    "indicators": [
+      {
+        "title": null,
+        "aria": "upload progress percent",
+        "role": "progressbar",
+        "state": null,
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": "upload progress percent",
+        "role": "progressbar",
+        "state": null,
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": "upload progress percent",
+        "role": "progressbar",
+        "state": null,
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": "upload progress percent",
+        "role": "progressbar",
+        "state": null,
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": "upload progress percent",
+        "role": "progressbar",
+        "state": null,
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": null,
+        "role": null,
+        "state": "closed",
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": null,
+        "role": null,
+        "state": "closed",
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": null,
+        "role": null,
+        "state": "closed",
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": null,
+        "role": null,
+        "state": "closed",
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": "",
+        "role": null,
+        "state": null,
+        "text": ""
+      }
+    ]
+  },
+  "statuses": [
+    200,
+    200,
+    200,
+    200
+  ],
+  "network_failures": [
+    {
+      "host": "imagex-ap-southeast-1.bytevcloudapi.com",
+      "path": "/",
+      "method": "GET",
+      "resource_type": "xhr",
+      "error": "net::ERR_FAILED"
+    },
+    {
+      "host": "imagex-ap-southeast-1.bytevcloudapi.com",
+      "path": "/",
+      "method": "GET",
+      "resource_type": "xhr",
+      "error": "net::ERR_FAILED"
+    }
+  ]
+}

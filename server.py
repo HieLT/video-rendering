@@ -570,7 +570,9 @@ async def _run_open_web(name: str):
         from browser import launch_account_context
 
         async with async_playwright() as playwright:
-            context = await launch_account_context(playwright, name, headless=False)
+            context = await launch_account_context(
+                playwright, name, headless=False,
+                use_extension=config.EXTENSION_ENABLED)
             session["status"] = "open"
             session["started_at"] = time.time()
             page = context.pages[0] if context.pages else await context.new_page()
