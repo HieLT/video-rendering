@@ -162,6 +162,7 @@ def _normalize_allowed_durations(values) -> list[int]:
 
 
 class VideoGenRequest(BaseModel):
+    name: str | None = Field(None, max_length=200)
     model: str = "seedance-2.0"
     prompt: str = Field(..., min_length=1)
     size: str | None = None
@@ -173,6 +174,7 @@ class VideoGenRequest(BaseModel):
 
 class TaskResponse(BaseModel):
     id: str
+    name: str | None = None
     status: str
     model: str | None = None
     prompt: str | None = None
@@ -403,6 +405,7 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
             daily_limit=client["daily_limit"],
             concurrency_limit=client["concurrency_limit"],
             max_pending=config.MAX_PENDING_TASKS,
+            name=req.name,
         )
     except TaskQuotaExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
@@ -411,7 +414,7 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
     asyncio.create_task(_run_task(
         task_id, req.model, req.prompt, ratio, duration, reference_images, client
     ))
-    return TaskResponse(id=task_id, status="queued", model=req.model, prompt=req.prompt)
+    return TaskResponse(id=task_id, name=(req.name or "").strip(), status="queued", model=req.model, prompt=req.prompt)
 
 
 @app.get("/v1/videos/{task_id}", response_model=TaskResponse)
@@ -421,7 +424,7 @@ async def get_video(task_id: str, authorization: str | None = Header(default=Non
     if not row:
         raise HTTPException(404, "task not found")
     return TaskResponse(
-        id=row["id"], status=row["status"], model=row["model"],
+        id=row["id"], name=row.get("name") or "", status=row["status"], model=row["model"],
         prompt=row["prompt"], video_url=row["video_url"], error=row["error"],
     )
 
@@ -618,6 +621,60 @@ async def admin_account_open_web(name: str, x_admin_key: str | None = Header(def
     return {"ok": True, "status": "starting"}
 
 
+class Try30Request(BaseModel):
+    prompt: str = Field(min_length=1)
+    model: str = "seedance-2.0"
+    ratio: str = "16:9"
+    reference_images: list[str] = Field(default_factory=list)
+
+
+async def _run_try_30s(name, body, uploads, lock):
+    job = JOBS[name]
+    try:
+        from try_30s import run_preview
+        await run_preview(name, body.prompt, body.model, body.ratio,
+                          [path for _, paths in uploads for path in paths], job)
+    except Exception as exc:
+        job["result"] = "failed"
+        job["error"] = str(exc)[:1000]
+    finally:
+        job["status"] = job.get("result", "failed")
+        job["browser_closed"] = True
+        pool._activities.pop(name, None)
+        WEB_SESSIONS.pop(name, None)
+        lock.release()
+        for root, _ in uploads:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+@app.post("/api/admin/accounts/{name}/try-30s", status_code=202)
+async def admin_try_30s(name: str, body: Try30Request,
+                       x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if name not in pool.accounts:
+        raise HTTPException(404, "account not found")
+    if not body.prompt.strip():
+        raise HTTPException(422, "Please enter a prompt")
+    if body.model not in ("seedance-2.0", "seedance-2.5") or body.ratio not in SIZE_TO_RATIO.values():
+        raise HTTPException(422, "Unsupported model or ratio")
+    if not config.EXTENSION_ENABLED:
+        raise HTTPException(409, "Enable the Dola extension before trying 30s")
+    lock = pool._locks.setdefault(name, asyncio.Lock())
+    if lock.locked() or name in WEB_SESSIONS or JOBS.get(name, {}).get("status") == "running":
+        raise HTTPException(409, "Account is busy. Close its browser or choose another account.")
+    tokens = list(dict.fromkeys(body.reference_images))
+    if any(token not in UPLOADED_REFERENCES for token in tokens):
+        raise HTTPException(422, "Reference images expired; please try again")
+    await lock.acquire()
+    uploads = [UPLOADED_REFERENCES.pop(token) for token in tokens]
+    pool._activities[name] = "try_30s"
+    JOBS[name] = {"kind": "try_30s", "status": "running", "result": None,
+                  "message": "Opening Chrome...", "error": "", "browser_closed": False}
+    WEB_SESSIONS[name] = {"status": "starting"}
+    WEB_SESSIONS[name]["task"] = asyncio.create_task(_run_try_30s(name, body, uploads, lock))
+    return {"ok": True, "account": name}
+
+
 def find_duplicate_account(name, identity_hash):
     if not identity_hash:
         return None
@@ -763,9 +820,9 @@ async def admin_jobs(x_admin_key: str | None = Header(default=None)):
 
 
 @app.get("/api/admin/tasks")
-async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None)):
+async def admin_tasks(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"tasks": store.recent_tasks(min(max(limit, 1), 200))}
+    return {"tasks": store.recent_tasks(limit=-1)}
 
 
 TASK_ACTION_LOCKS = {}

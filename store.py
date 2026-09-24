@@ -58,6 +58,7 @@ class TaskStore:
             )
             # Legacy migration: add missing columns for task recovery, client usage, and timing stats.
             for column, definition in (
+                ("name", "TEXT DEFAULT ''"),
                 ("account", "TEXT"),
                 ("conversation_id", "TEXT"),
                 ("deadline_at", "REAL"),
@@ -153,6 +154,7 @@ class TaskStore:
         daily_limit=0,
         concurrency_limit=0,
         max_pending=0,
+        name=None,
     ):
         now = time.time()
         with _LOCK:
@@ -179,8 +181,8 @@ class TaskStore:
                 "INSERT INTO tasks ("
                 "id,model,prompt,ratio,duration,status,account,created_at,updated_at,"
                 "conversation_id,deadline_at,last_poll_at,failure_code,reference_images,"
-                "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit"
-                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?)",
+                "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,name"
+                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?)",
                 (
                     task_id,
                     model,
@@ -196,6 +198,7 @@ class TaskStore:
                     None,
                     None,
                     max(0, int(concurrency_limit or 0)),
+                    (name or "").strip(),
                 ),
             )
             self._conn.commit()
