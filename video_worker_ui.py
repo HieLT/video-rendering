@@ -747,6 +747,98 @@ async def _fill_video_prompt(page, prompt: str, account: str):
     )
 
 
+async def _start_composer_trace(page, account: str):
+    """Keep bounded UI evidence without recording prompts or image contents."""
+    events = []
+
+    def record(source, event):
+        events.append(event)
+        del events[:-300]
+
+    await page.context.expose_binding("__dolaComposerTrace", record)
+    await page.context.add_init_script(r"""(() => {
+        const state = () => {
+            const roots = [...document.querySelectorAll('.guidance-input-surface')]
+                .filter(e => e.getClientRects().length && e.querySelector('[contenteditable="true"]'));
+            const root = roots.at(-1);
+            const controls = root ? [...root.querySelectorAll('button')]
+                .map(e => (e.innerText || '').trim().slice(0, 80)) : [];
+            return {path: location.pathname, controls,
+                images: root?.querySelectorAll('[data-kind="image"]').length || 0,
+                video: controls.some(t => /(?:^|\s)\d+\s*(?:s|?)(?:$|\s)/.test(t))};
+        };
+        const emit = event => window.__dolaComposerTrace({time: Date.now(), ...event}).catch(() => {});
+        document.addEventListener('click', e => {
+            const target = e.target.closest('button, [role="button"], [role="menuitem"], [role="option"], a, svg') || e.target;
+            // Never collect editor text, HTML, URLs or attachment contents.
+            const named = target.matches('button, [role="button"], [role="menuitem"], [role="option"]');
+            emit({type: 'click', trusted: e.isTrusted, target: {
+                tag: target.tagName, role: target.getAttribute('role'),
+                text: named ? (target.innerText || '').slice(0, 80) : '',
+                icon: target.getAttribute('data-dbx-name'),
+                classes: typeof target.className === 'string' ? target.className.slice(0, 160) : ''
+            }, state: state()});
+        }, true);
+        document.addEventListener('keydown', e => {
+            if (['Escape', 'Enter'].includes(e.key)) emit({type: 'key', key: e.key, state: state()});
+        }, true);
+        let previous = '';
+        setInterval(() => {
+            const current = state(), key = JSON.stringify(current);
+            if (key !== previous) {
+                previous = key;
+                emit({type: 'state', state: current});
+            }
+        }, 100);
+    })()""")
+
+    def finish():
+        destination = Path("diagnostics") / f"composer_trace_{account}_{time.time_ns()}.json"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(events, ensure_ascii=True, indent=2), encoding="utf-8")
+        _log(f"[{account}] composer interaction trace: {destination}")
+
+    return finish
+
+
+async def _select_video_duration(page, duration: int, account: str):
+    expected = re.compile(rf"^{duration}\s*(?:s|\u79d2)$", re.I)
+    try:
+        _, root = await _composer(page)
+        control = root.get_by_role("button", name=VIDEO_DURATION_RE).first
+        # Ratio selection may leave the shared settings popup open.
+        # Only consider visible exact matches, never hidden or historical text.
+        options = page.get_by_text(expected).locator("visible=true")
+        if not await options.count():
+            await control.click(timeout=5000)
+        await options.first.wait_for(state="visible", timeout=10000)
+        if await options.count() != 1:
+            raise RuntimeError("Multiple visible duration options match the request")
+        await options.first.click(timeout=5000)
+        # A successful click alone does not prove React retained the selection.
+        for _ in range(20):
+            _, root = await _composer(page)
+            control = root.get_by_role("button", name=VIDEO_DURATION_RE).first
+            selected = (await control.inner_text()).strip()
+            if expected.fullmatch(selected):
+                await page.keyboard.press("Escape")
+                _log(f"[{account}] duration verified: {selected}")
+                return
+            await page.wait_for_timeout(250)
+        raise RuntimeError(f"Duration control still shows {selected!r}")
+    except Exception as exc:
+        _log(f"[{account}] duration selection failed type={type(exc).__name__}: {exc}")
+        await _composer_snapshot(page, account, "duration_failed")
+        try:
+            await page.screenshot(path=f"dbg_duration_{account}_error.png", full_page=True)
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"Failed to preserve requested duration: {duration}: "
+            f"{type(exc).__name__}: {str(exc)[:500]}"
+        ) from exc
+
+
 async def generate_video(account: str, prompt: str, ratio: str = None,
                          duration: int = None, timeout: int = None,
                          model: str = "seedance_v2.0", use_extension: bool = True,
@@ -776,8 +868,10 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             p, account, headless=False if use_extension else None,
             use_extension=use_extension)
         finish_capture = start_generation_capture(context, account)
+        finish_composer_trace = None
         try:
             page = context.pages[0] if context.pages else await context.new_page()
+            finish_composer_trace = await _start_composer_trace(page, account)
             _log(f"[{account}] Playwright context opened for generation")
             await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
             await page.wait_for_timeout(5000)
@@ -788,97 +882,108 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             after_index = 0
             for retry in range(6):
                 # ---- UI Submission ----
-                await _prepare_video_composer(page, account, bool(reference_image_paths))
-                if reference_image_paths:
-                    await attach_reference_images(page, reference_image_paths)
-                # Select model in UI
-                try:
-                    async def model_ui_snapshot(stage):
-                        snapshot = await page.evaluate("""() => ({
-                            url: location.href,
-                            text: (document.body?.innerText || '').slice(0, 5000),
-                            candidates: [...document.querySelectorAll('button, [role="button"], [role="option"], li, div, span')]
-                                .map(e => ({text: (e.innerText || '').trim(), role: e.getAttribute('role')}))
-                                .filter(e => e.text && /model|seedance|2\\.0|2\\.5|高速|モデル/i.test(e.text))
-                                .slice(0, 120)
-                        })""")
-                        safe = json.dumps(snapshot, ensure_ascii=False).encode("ascii", "backslashreplace").decode("ascii")
-                        _log(f"[{account}] model UI snapshot stage={stage}: {safe[:8000]}")
-                        await page.screenshot(path=f"dbg_model_{account}_{stage}.png", full_page=True)
+                for setup_attempt in range(3):
+                    try:
+                        await _prepare_video_composer(page, account, bool(reference_image_paths))
+                        if reference_image_paths:
+                            await attach_reference_images(page, reference_image_paths)
+                        # Select model in UI
+                        try:
+                            async def model_ui_snapshot(stage):
+                                snapshot = await page.evaluate("""() => ({
+                                    url: location.href,
+                                    text: (document.body?.innerText || '').slice(0, 5000),
+                                    candidates: [...document.querySelectorAll('button, [role="button"], [role="option"], li, div, span')]
+                                        .map(e => ({text: (e.innerText || '').trim(), role: e.getAttribute('role')}))
+                                        .filter(e => e.text && /model|seedance|2\\.0|2\\.5|高速|モデル/i.test(e.text))
+                                        .slice(0, 120)
+                                })""")
+                                safe = json.dumps(snapshot, ensure_ascii=False).encode("ascii", "backslashreplace").decode("ascii")
+                                _log(f"[{account}] model UI snapshot stage={stage}: {safe[:8000]}")
+                                await page.screenshot(path=f"dbg_model_{account}_{stage}.png", full_page=True)
 
-                    await model_ui_snapshot("before")
-                    _, root = await _composer(page)
-                    current_model = root.get_by_role(
-                        "button", name=re.compile(r"\u30e2\u30c7\u30eb\s|Model\b|Seedance", re.I)
-                    )
-                    await current_model.click(timeout=5000)
-                    await page.wait_for_timeout(500)
-                    await model_ui_snapshot("menu")
-                    options = (("Dreamina Seedance 2.5",)
-                               if model_key == "seedance_v2.5"
-                               else ("Dreamina Seedance 2.0高速", "Dreamina Seedance 2.0", "Seedance2.0Fast"))
-                    # Conversation titles can exactly match a model name.
-                    # Only select entries inside the currently open model menu.
-                    menu = page.locator('[role="menu"][data-state="open"]:visible')
-                    await menu.wait_for(state="visible", timeout=5000)
-                    selected = False
-                    for option_text in options:
-                        loc = menu.get_by_role("menuitem").filter(
-                            has=page.get_by_text(option_text, exact=True)
-                        )
-                        if await loc.count() and await loc.is_visible():
-                            await loc.click(timeout=5000)
-                            selected = True
-                            break
-                    if not selected:
-                        raise RuntimeError("Model option not found in open model menu")
-                    await menu.wait_for(state="hidden", timeout=5000)
-                    expected_version = "2.5" if model_key == "seedance_v2.5" else "2.0"
-                    for _ in range(20):
-                        _, root = await _composer(page)
-                        control = root.get_by_role(
-                            "button", name=re.compile(r"\u30e2\u30c7\u30eb|Model|Seedance", re.I)
-                        )
-                        if (await _video_composer_ready(root, bool(reference_image_paths))
-                                and expected_version in await control.inner_text()):
-                            break
-                        await page.wait_for_timeout(250)
-                    else:
-                        raise RuntimeError("Video composer did not preserve selected model")
-                except Exception as e:
-                    try:
-                        await page.screenshot(path=f"dbg_model_{account}_error.png", full_page=True)
-                    except Exception:
-                        pass
-                    _log(f"[{account}] model selection failed type={type(e).__name__}: {e}")
-                    raise RuntimeError(f"Failed to set model ({model_key}): {str(e)[:120]}") from e
-                if ratio:
-                    try:
-                        _, root = await _composer(page)
-                        ratio_control = root.get_by_text(re.compile(r"^(?:\u6bd4\u7387|(?:Aspect )?ratio)$", re.I)).first
-                        if await ratio_control.is_visible():
-                            await ratio_control.click(timeout=3000)
-                        else:
-                            await root.get_by_role("button", name=VIDEO_DURATION_RE).first.click(timeout=3000)
-                        await page.wait_for_timeout(500)
-                        await page.click(f"text={ratio}", timeout=3000)
-                    except Exception as e:
-                        _log(f"[{account}] ratio selection failed type={type(e).__name__}: {e}")
-                        await _composer_snapshot(page, account, "ratio_failed")
-                        raise RuntimeError(
-                            f"Failed to preserve requested ratio: {ratio}: {type(e).__name__}: {str(e)[:300]}"
-                        ) from e
-                if duration:
-                    try:
-                        await page.get_by_text(re.compile(rf"^{duration}\s*(?:s|\u79d2)$")).first.click(timeout=3000)
-                    except Exception:
-                        try:  # Open duration dropdown
+                            await model_ui_snapshot("before")
                             _, root = await _composer(page)
-                            await root.get_by_text(VIDEO_DURATION_RE).first.click(timeout=3000)
+                            current_model = root.get_by_role(
+                                "button", name=re.compile(r"\u30e2\u30c7\u30eb\s|Model\b|Seedance", re.I)
+                            )
+                            await current_model.click(timeout=5000)
                             await page.wait_for_timeout(500)
-                            await page.get_by_text(re.compile(rf"^{duration}\s*(?:s|\u79d2)$")).first.click(timeout=3000)
+                            await model_ui_snapshot("menu")
+                            options = (("Dreamina Seedance 2.5",)
+                                       if model_key == "seedance_v2.5"
+                                       else ("Dreamina Seedance 2.0高速", "Dreamina Seedance 2.0", "Seedance2.0Fast"))
+                            # Conversation titles can exactly match a model name.
+                            # Only select entries inside the currently open model menu.
+                            menu = page.locator('[role="menu"][data-state="open"]:visible')
+                            await menu.wait_for(state="visible", timeout=5000)
+                            selected = False
+                            for option_text in options:
+                                loc = menu.get_by_role("menuitem").filter(
+                                    has=page.get_by_text(option_text, exact=True)
+                                )
+                                if await loc.count() and await loc.is_visible():
+                                    await loc.click(timeout=5000)
+                                    selected = True
+                                    break
+                            if not selected:
+                                raise RuntimeError("Model option not found in open model menu")
+                            await menu.wait_for(state="hidden", timeout=5000)
+                            expected_version = "2.5" if model_key == "seedance_v2.5" else "2.0"
+                            for _ in range(20):
+                                _, root = await _composer(page)
+                                control = root.get_by_role(
+                                    "button", name=re.compile(r"\u30e2\u30c7\u30eb|Model|Seedance", re.I)
+                                )
+                                if (await _video_composer_ready(root, bool(reference_image_paths))
+                                        and expected_version in await control.inner_text()):
+                                    break
+                                await page.wait_for_timeout(250)
+                            else:
+                                raise RuntimeError("Video composer did not preserve selected model")
                         except Exception as e:
-                            raise RuntimeError(f"Failed to preserve requested duration: {duration}") from e
+                            try:
+                                await page.screenshot(path=f"dbg_model_{account}_error.png", full_page=True)
+                            except Exception:
+                                pass
+                            _log(f"[{account}] model selection failed type={type(e).__name__}: {e}")
+                            raise RuntimeError(f"Failed to set model ({model_key}): {str(e)[:120]}") from e
+                        if ratio:
+                            try:
+                                _, root = await _composer(page)
+                                ratio_control = root.get_by_text(re.compile(r"^(?:\u6bd4\u7387|(?:Aspect )?ratio)$", re.I)).first
+                                if await ratio_control.is_visible():
+                                    await ratio_control.click(timeout=3000)
+                                else:
+                                    await root.get_by_role("button", name=VIDEO_DURATION_RE).first.click(timeout=3000)
+                                await page.wait_for_timeout(500)
+                                await page.click(f"text={ratio}", timeout=3000)
+                            except Exception as e:
+                                _log(f"[{account}] ratio selection failed type={type(e).__name__}: {e}")
+                                await _composer_snapshot(page, account, "ratio_failed")
+                                raise RuntimeError(
+                                    f"Failed to preserve requested ratio: {ratio}: {type(e).__name__}: {str(e)[:300]}"
+                                ) from e
+                        if duration:
+                            await _select_video_duration(page, duration, account)
+                        # Upload/model changes can asynchronously reset Dola to chat mode.
+                        await page.wait_for_timeout(500)
+                        _, root = await _composer(page)
+                        if not await _video_composer_ready(root, bool(reference_image_paths)):
+                            raise RuntimeError("Video composer reset while applying settings")
+                        break
+                    except Exception:
+                        # Retry only a lost video composer, before any submission.
+                        # Rebuild all settings and attachments together on the next attempt.
+                        try:
+                            _, root = await _composer(page)
+                            composer_lost = not await _video_composer_ready(root, bool(reference_image_paths))
+                        except Exception:
+                            composer_lost = False
+                        if not composer_lost or setup_attempt == 2:
+                            raise
+                        _log(f"[{account}] video composer reset; rebuilding setup attempt={setup_attempt + 2}/3")
+                        await _composer_snapshot(page, account, "setup_reset")
                 box = await _fill_video_prompt(page, prompt, account)
                 # Mark the attempt before Enter: a timeout may occur after dispatch.
                 if on_submit:
@@ -938,6 +1043,11 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                     _log(f"[{account}] Dola {exc.code}: retry {retry + 1}/5 in conversation {conv_id}; preserving request parameters")
                     await page.wait_for_timeout(5000)
         finally:
+            if finish_composer_trace:
+                try:
+                    finish_composer_trace()
+                except Exception as exc:
+                    _log(f"[{account}] composer trace save failed: {exc}")
             _log(f"[{account}] Playwright context closing")
             await context.close()
             await finish_capture()

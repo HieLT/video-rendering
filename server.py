@@ -638,6 +638,7 @@ async def admin_account_open_web(name: str, x_admin_key: str | None = Header(def
 
 
 class Try30Request(BaseModel):
+    start_end: bool = False
     prompt: str = Field(min_length=1)
     model: str = "seedance-2.0"
     ratio: str = "16:9"
@@ -648,7 +649,12 @@ async def _run_try_30s(name, body, uploads, lock):
     job = JOBS[name]
     try:
         from try_30s import run_preview
-        await run_preview(name, body.prompt, body.model, body.ratio,
+        prompt = body.prompt
+        if body.start_end:
+            prompt += ("\n\nUse the first uploaded image as the opening frame and the second "
+                       "uploaded image as the ending frame. Create continuous motion between "
+                       "these two frames, preserving their composition and subjects.")
+        await run_preview(name, prompt, body.model, body.ratio,
                           [path for _, paths in uploads for path in paths], job)
     except Exception as exc:
         job["result"] = "failed"
@@ -681,6 +687,8 @@ async def admin_try_30s(name: str, body: Try30Request,
     tokens = list(dict.fromkeys(body.reference_images))
     if any(token not in UPLOADED_REFERENCES for token in tokens):
         raise HTTPException(422, "Reference images expired; please try again")
+    if body.start_end and sum(len(UPLOADED_REFERENCES[token][1]) for token in tokens) != 2:
+        raise HTTPException(422, "Start / End requires exactly two images: start first, end second")
     await lock.acquire()
     uploads = [UPLOADED_REFERENCES.pop(token) for token in tokens]
     pool._activities[name] = "try_30s"

@@ -167,6 +167,19 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
           <textarea id="videoPrompt" placeholder="Describe the video you want to create..."></textarea>
         </div>
         <div class="field reference-field">
+          <label for="imageMode">Image mode</label>
+          <select id="imageMode" onchange="toggleImageMode()"><option value="reference">Reference images</option><option value="start_end">Start / End</option></select>
+        </div>
+        <div id="frameFields" class="field reference-field" style="display:none">
+          <label for="startImage">Start image (opening frame)</label>
+          <input id="startImage" type="file" accept="image/jpeg,image/png,image/webp" onchange="previewReferenceImages('startImage','startPreview')">
+          <div id="startPreview" class="image-preview"></div>
+          <label for="endImage">End image (ending frame)</label>
+          <input id="endImage" type="file" accept="image/jpeg,image/png,image/webp" onchange="previewReferenceImages('endImage','endPreview')">
+          <div id="endPreview" class="image-preview"></div>
+          <span class="form-note">Both images are required. Guides Dola using image order and prompt instructions; exact first/last frames are not guaranteed.</span>
+        </div>
+        <div id="referenceFields" class="field reference-field">
           <label for="referenceImages">Reference Images (optional)</label>
           <input id="referenceImages" type="file" accept="image/jpeg,image/png,image/webp" multiple onchange="previewReferenceImages()">
           <span class="form-note">Choose JPG, PNG, or WEBP files. Images are uploaded only when you submit the task.</span>
@@ -421,8 +434,10 @@ async function openTry30(){
 
 async function startTry30(){
   const name=q('#try30Account').value;
-  const body={prompt:q('#videoPrompt').value.trim(),model:q('#videoModel').value,ratio:q('#videoRatio').value,reference_images:[]};
-  const files=[...q('#referenceImages').files];
+  const startEnd=q('#imageMode').value==='start_end';
+  if(startEnd&&(!q('#startImage').files.length||!q('#endImage').files.length))return alert('Please choose both Start and End images');
+  const body={prompt:q('#videoPrompt').value.trim(),model:q('#videoModel').value,ratio:q('#videoRatio').value,reference_images:[],start_end:startEnd};
+  const files=startEnd?[q('#startImage').files[0],q('#endImage').files[0]]:[...q('#referenceImages').files];
   q('#startTry30Btn').disabled=true;
   q('#try30Btn').disabled=true;
   const status=q('#try30Status');
@@ -452,7 +467,9 @@ async function startTry30(){
 async function submitVideoTask(){
   const prompt=q('#videoPrompt').value.trim();
   if(!prompt)return alert('Please enter a video prompt');
-  const files=q('#referenceImages').files;
+  const startEnd=q('#imageMode').value==='start_end';
+  if(startEnd&&(!q('#startImage').files.length||!q('#endImage').files.length))return alert('Please choose both Start and End images');
+  const files=startEnd?[q('#startImage').files[0],q('#endImage').files[0]]:[...q('#referenceImages').files];
   const apiKey=q('#videoApiKey').value.trim();
   const headers=apiKey?{Authorization:'Bearer '+apiKey}:{};
   const btn=q('#generateBtn');
@@ -476,23 +493,31 @@ async function submitVideoTask(){
       prompt,
       ratio:q('#videoRatio').value,
       duration:Number(q('#videoDuration').value),
-      reference_images:referenceImages
+      reference_images:referenceImages,
+      start_end:startEnd
     };
     const task=await api('/v1/videos/generations',{method:'POST',headers,body});
     q('#videoName').value='';
     q('#videoPrompt').value='';
     q('#referenceImages').value='';
     q('#imagePreview').innerHTML='';
+    for(const id of ['startImage','endImage'])q('#'+id).value='';
+    for(const id of ['startPreview','endPreview'])q('#'+id).innerHTML='';
     alert('Task created: '+task.id);
     await loadTasks();
   }catch(e){alert(e.message);}
   finally{btn.disabled=false;btn.textContent='Generate Video';}
 }
 
-function previewReferenceImages(){
-  const preview=q('#imagePreview');
+function toggleImageMode(){
+  const frames=q('#imageMode').value==='start_end';
+  q('#frameFields').style.display=frames?'':'none';
+  q('#referenceFields').style.display=frames?'none':'';
+}
+function previewReferenceImages(inputId='referenceImages',previewId='imagePreview'){
+  const preview=q('#'+previewId);
   preview.innerHTML='';
-  [...q('#referenceImages').files].forEach((file,index)=>{
+  [...q('#'+inputId).files].forEach((file,index)=>{
     const figure=document.createElement('figure');
     const image=document.createElement('img');
     const caption=document.createElement('figcaption');
@@ -504,18 +529,18 @@ function previewReferenceImages(){
     remove.title='Remove image';
     remove.setAttribute('aria-label','Remove '+file.name);
     remove.textContent='×';
-    remove.onclick=()=>removeReferenceImage(index);
+    remove.onclick=()=>removeReferenceImage(index,inputId,previewId);
     figure.append(image,caption,remove);
     preview.appendChild(figure);
   });
 }
 
-function removeReferenceImage(index){
-  const input=q('#referenceImages');
+function removeReferenceImage(index,inputId='referenceImages',previewId='imagePreview'){
+  const input=q('#'+inputId);
   const transfer=new DataTransfer();
   [...input.files].forEach((file,fileIndex)=>{if(fileIndex!==index)transfer.items.add(file);});
   input.files=transfer.files;
-  previewReferenceImages();
+  previewReferenceImages(inputId,previewId);
 }
 
 async function taskAction(id,action){
@@ -523,10 +548,21 @@ async function taskAction(id,action){
   try{await api('/api/admin/tasks/'+encodeURIComponent(id)+'/'+action,{method:'POST'});await loadTasks();}
   catch(e){alert(e.message);}
 }
+async function deleteTask(id){
+  if(!confirm('Delete this record from Video Generated? The video file will be kept.'))return;
+  try{await api('/api/admin/tasks/'+encodeURIComponent(id),{method:'DELETE'});await loadTasks();}
+  catch(e){alert(e.message);}
+}
 function taskControls(t){
-  if(!t.account||!t.conversation_id||t.status==='completed')return '';
-  const hints=['Show the conversation; restart monitoring if stopped','Resume monitoring the saved conversation without submitting a new video','Stop local monitoring; generation on Dola is not cancelled'];
-  return '<div class="task-actions">'+['open','resume','stop'].map((action,i)=>'<button class="btn'+(action==='stop'?' btn-danger':'')+'" title="'+hints[i]+'" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;'+action+'&quot;)">'+['Open chat','Continue','Stop'][i]+'</button>').join('')+'</div>';
+  const controls=[];
+  if(t.account&&t.conversation_id&&t.status!=='completed'){
+    const hints=['Show the conversation; restart monitoring if stopped','Resume monitoring the saved conversation without submitting a new video','Stop local monitoring; generation on Dola is not cancelled'];
+    controls.push(...['open','resume','stop'].map((action,i)=>'<button class="btn'+(action==='stop'?' btn-danger':'')+'" title="'+hints[i]+'" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;'+action+'&quot;)">'+['Open chat','Continue','Stop'][i]+'</button>'));
+  }
+  if(['completed','failed','stopped','needs_recovery'].includes(t.status)){
+    controls.push('<button class="btn btn-danger" title="Delete this record" onclick="deleteTask(&quot;'+esc(t.id)+'&quot;)">Delete</button>');
+  }
+  return controls.length?'<div class="task-actions">'+controls.join('')+'</div>':'';
 }
 async function loadTasks(){
   const r=await api('/api/admin/tasks');
@@ -534,7 +570,7 @@ async function loadTasks(){
   const rows=r.tasks.map(t=>[
     '<span class="tiny" title="'+esc(t.id)+'">'+t.id.replace('video_','').slice(0,10)+'</span>',
     '<span title="'+esc(t.name||'')+'" style="display:inline-block;max-width:180px;overflow-wrap:anywhere">'+esc(t.name||'—')+'</span>',
-    '<span class="prompt" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>',
+    (t.start_end?'<span class="badge b-blue">Start / End</span> ':'')+'<span class="prompt" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>',
     t.account||'-',
     t.api_key_name||'—',
     (t.duration||10)+'s',
