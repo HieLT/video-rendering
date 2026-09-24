@@ -34,3 +34,4 @@ __pycache__/
 
 # Local diagnostic browser sessions
 diagnostic_profile/
+diagnostics/
