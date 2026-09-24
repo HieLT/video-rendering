@@ -60,6 +60,8 @@ class TaskStore:
             for column, definition in (
                 ("name", "TEXT DEFAULT ''"),
                 ("account", "TEXT"),
+                ("deleted_at", "REAL"),
+                ("start_end", "INTEGER DEFAULT 0"),
                 ("conversation_id", "TEXT"),
                 ("deadline_at", "REAL"),
                 ("last_poll_at", "REAL"),
@@ -155,6 +157,7 @@ class TaskStore:
         concurrency_limit=0,
         max_pending=0,
         name=None,
+        start_end=False,
     ):
         now = time.time()
         with _LOCK:
@@ -181,8 +184,8 @@ class TaskStore:
                 "INSERT INTO tasks ("
                 "id,model,prompt,ratio,duration,status,account,created_at,updated_at,"
                 "conversation_id,deadline_at,last_poll_at,failure_code,reference_images,"
-                "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,name"
-                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?)",
+                "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,name,start_end"
+                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?,?)",
                 (
                     task_id,
                     model,
@@ -199,6 +202,7 @@ class TaskStore:
                     None,
                     max(0, int(concurrency_limit or 0)),
                     (name or "").strip(),
+                    int(start_end),
                 ),
             )
             self._conn.commit()
@@ -278,9 +282,20 @@ class TaskStore:
                 ).fetchall()
             else:
                 rows = self._conn.execute(
-                    "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)
+                    "SELECT * FROM tasks WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?", (limit,)
                 ).fetchall()
         return [dict(r) for r in rows]
+
+    def delete_task(self, task_id: str) -> bool:
+        """Hide a finished record while preserving usage accounting and media."""
+        with _LOCK:
+            cur = self._conn.execute(
+                "UPDATE tasks SET deleted_at=?, updated_at=? WHERE id=? "
+                "AND deleted_at IS NULL AND status IN ('completed','failed','stopped','needs_recovery')",
+                (time.time(), time.time(), task_id),
+            )
+            self._conn.commit()
+            return cur.rowcount == 1
 
     def key_usage(self, api_key_hash: str, day: str | None = None) -> dict:
         day = day or datetime.date.today().isoformat()

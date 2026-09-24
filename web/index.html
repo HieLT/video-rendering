@@ -159,6 +159,10 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
       <div class="toolbar"><h3 style="margin:0">Generate Video</h3><span class="hint">Create a task and track it below</span></div>
       <div class="generate-form">
         <div class="field prompt-field">
+          <label for="videoName">Name (optional)</label>
+          <input id="videoName" type="text" maxlength="200" placeholder="e.g. scene 2, scene 3">
+        </div>
+        <div class="field prompt-field">
           <label for="videoPrompt">Prompt</label>
           <textarea id="videoPrompt" placeholder="Describe the video you want to create..."></textarea>
         </div>
@@ -167,6 +171,8 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
           <input id="referenceImages" type="file" accept="image/jpeg,image/png,image/webp" multiple onchange="previewReferenceImages()">
           <span class="form-note">Choose JPG, PNG, or WEBP files. Images are uploaded only when you submit the task.</span>
           <div id="imagePreview" class="image-preview"></div>
+          <label style="display:flex;gap:8px;align-items:center"><input id="videoStartEnd" type="checkbox" style="width:auto">Start / End (Generate Video)</label>
+          <span class="form-note">Use exactly two images: first = opening frame, second = ending frame.</span>
         </div>
         <div class="field">
           <label for="videoModel">Model</label>
@@ -184,10 +190,11 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
           <label for="videoApiKey">Gateway API Key (optional)</label>
           <input id="videoApiKey" type="password" placeholder="Only if API auth is enabled">
         </div>
-        <div class="actions"><button class="btn btn-p" id="generateBtn" onclick="submitVideoTask()">Generate Video</button></div>
+        <div class="actions"><button class="btn" id="try30Btn" onclick="openTry30()">Try 30s</button><button class="btn btn-p" id="generateBtn" onclick="submitVideoTask()">Generate Video</button></div>
+        <div class="form-note" id="try30Status" role="status" style="grid-column:1 / -1"></div>
       </div>
     </div>
-    <div class="card"><h3>Recent Video Tasks (Last 50)</h3><div id="tasksTable"></div></div>
+    <div class="card"><h3>All Video Tasks</h3><div id="tasksTable"></div></div>
   </section>
 
   <section id="tab-keys" style="display:none">
@@ -404,10 +411,52 @@ async function submitAddAccount(){
 }
 
 /* ---- Task Queue ---- */
+async function openTry30(){
+  if(!q('#videoPrompt').value.trim())return alert('Please enter a video prompt');
+  try{
+    const data=await api('/api/admin/accounts');
+    const accounts=data.accounts.filter(a=>!a.busy);
+    if(!accounts.length)return alert('No idle account. Close an account browser or wait for it to finish.');
+    showDlg(`<h2>Try 30s</h2><p>Upload the selected images, fill the prompt, and try selecting 30s. No video will be submitted. Chrome stays open until you close it.</p><label>Account</label><select id="try30Account">${accounts.map(a=>`<option value="${esc(a.name)}">${esc(a.name)} — ${esc(a.display_name||a.email||'')}</option>`).join('')}</select><div class="row"><button class="btn" onclick="hide('dlg')">Cancel</button><button class="btn btn-p" id="startTry30Btn" onclick="startTry30()">Open Chrome and test</button></div>`);
+  }catch(e){alert(e.message);}
+}
+
+async function startTry30(){
+  const name=q('#try30Account').value;
+  const body={prompt:q('#videoPrompt').value.trim(),model:q('#videoModel').value,ratio:q('#videoRatio').value,reference_images:[]};
+  const files=[...q('#referenceImages').files];
+  q('#startTry30Btn').disabled=true;
+  q('#try30Btn').disabled=true;
+  const status=q('#try30Status');
+  try{
+    if(files.length){
+      const form=new FormData();files.forEach(file=>form.append('files',file));
+      const response=await fetch('/api/admin/reference-images',{method:'POST',headers:{'X-Admin-Key':adminKey},body:form});
+      const data=await response.json();
+      if(!response.ok)throw new Error(data.detail||'Image upload failed');
+      body.reference_images=data.reference_images;
+    }
+    await api('/api/admin/accounts/'+encodeURIComponent(name)+'/try-30s',{method:'POST',body});
+    hide('dlg');
+    status.textContent=name+': Opening Chrome...';
+    while(true){
+      await new Promise(resolve=>setTimeout(resolve,1500));
+      const data=await api('/api/admin/jobs');
+      const job=data.jobs[name];
+      if(!job||job.kind!=='try_30s')break;
+      status.textContent=name+': '+(job.message||job.error||job.status)+(job.browser_closed?' Browser closed.':'');
+      if(job.status!=='running')break;
+    }
+  }catch(e){status.textContent='Try 30s: '+e.message;}
+  finally{q('#try30Btn').disabled=false;const start=q('#startTry30Btn');if(start)start.disabled=false;}
+}
+
 async function submitVideoTask(){
   const prompt=q('#videoPrompt').value.trim();
   if(!prompt)return alert('Please enter a video prompt');
   const files=q('#referenceImages').files;
+  const startEnd=q('#videoStartEnd').checked;
+  if(startEnd&&files.length!==2)return alert('Start / End requires exactly two images: start first, end second');
   const apiKey=q('#videoApiKey').value.trim();
   const headers=apiKey?{Authorization:'Bearer '+apiKey}:{};
   const btn=q('#generateBtn');
@@ -426,6 +475,8 @@ async function submitVideoTask(){
       referenceImages=uploadData.reference_images||[];
     }
     const body={
+      name:q('#videoName').value.trim(),
+      start_end:startEnd,
       model:q('#videoModel').value,
       prompt,
       ratio:q('#videoRatio').value,
@@ -433,6 +484,8 @@ async function submitVideoTask(){
       reference_images:referenceImages
     };
     const task=await api('/v1/videos/generations',{method:'POST',headers,body});
+    q('#videoName').value='';
+    q('#videoStartEnd').checked=false;
     q('#videoPrompt').value='';
     q('#referenceImages').value='';
     q('#imagePreview').innerHTML='';
@@ -482,10 +535,11 @@ function taskControls(t){
   return '<div class="task-actions">'+['open','resume','stop'].map((action,i)=>'<button class="btn'+(action==='stop'?' btn-danger':'')+'" title="'+hints[i]+'" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;'+action+'&quot;)">'+['Open chat','Continue','Stop'][i]+'</button>').join('')+'</div>';
 }
 async function loadTasks(){
-  const r=await api('/api/admin/tasks?limit=50');
+  const r=await api('/api/admin/tasks');
   const sb={'queued':'<span class="badge b-gray">Queued</span>','processing':'<span class="badge b-blue">Processing</span>','completed':'<span class="badge b-green">Completed</span>','failed':'<span class="badge b-red">Failed</span>'};
   const rows=r.tasks.map(t=>[
     '<span class="tiny" title="'+esc(t.id)+'">'+t.id.replace('video_','').slice(0,10)+'</span>',
+    '<span title="'+esc(t.name||'')+'" style="display:inline-block;max-width:180px;overflow-wrap:anywhere">'+esc(t.name||'—')+'</span>',
     '<span class="prompt" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>',
     t.account||'-',
     t.api_key_name||'—',
@@ -497,7 +551,7 @@ async function loadTasks(){
       :(['failed','needs_recovery','stopped'].includes(t.status)?'<details><summary class="tiny" style="cursor:pointer">'+esc((t.error||'').slice(0,30))+' ? Details</summary><div style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto">'+esc(t.error||'')+'</div></details>':'—')
     ,taskControls(t)
   ]);
-  q('#tasksTable').innerHTML=table(['Task ID','Prompt','Account','Client','Duration','Status','Created At','Video','Actions'],rows);
+  q('#tasksTable').innerHTML=table(['Task ID','Name','Prompt','Account','Client','Duration','Status','Created At','Video','Actions'],rows);
 }
 
 function playVideo(url){q('#videoEl').src=url;show('videoModal');}
