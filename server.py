@@ -169,6 +169,7 @@ class VideoGenRequest(BaseModel):
     duration: int | None = Field(None, ge=10, le=30)
     # Accepts durations: 10, 15, 30 seconds.
     reference_images: list[str] = Field(default_factory=list)
+    start_end: bool = False
 
 
 class TaskResponse(BaseModel):
@@ -242,7 +243,7 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
             store.update(task_id, last_poll_at=now)
 
         reference_paths = []
-        remote_references = []
+        # Resolve in submission order, including mixed uploaded and remote images.
         for reference in reference_images or []:
             uploaded = UPLOADED_REFERENCES.pop(reference, None)
             if uploaded:
@@ -250,13 +251,11 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                 reference_roots.append(root)
                 reference_paths.extend(paths)
             else:
-                remote_references.append(reference)
-        if remote_references:
-            reference_root, downloaded = await download_reference_images(
-                remote_references, task_id)
-            if reference_root:
-                reference_roots.append(reference_root)
-            reference_paths.extend(downloaded)
+                reference_root, downloaded = await download_reference_images(
+                    [reference], task_id)
+                if reference_root:
+                    reference_roots.append(reference_root)
+                reference_paths.extend(downloaded)
         result = await pool.generate_video(
             prompt, ratio, duration, model,
             on_conversation_id=on_conversation_id, on_poll=on_poll,
@@ -372,13 +371,24 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
     ):
         raise HTTPException(422, "Supported models are seedance-2.0 and seedance-2.5")
     try:
-        uploaded_references = [
-            value for value in req.reference_images if value.startswith("uploaded://")
-        ]
-        remote_references = [
-            value for value in req.reference_images if not value.startswith("uploaded://")
-        ]
-        reference_images = uploaded_references + await validate_reference_urls(remote_references)
+        reference_images = []
+        image_count = 0
+        for reference in req.reference_images:
+            if reference.startswith("uploaded://"):
+                uploaded = UPLOADED_REFERENCES.get(reference)
+                if not uploaded:
+                    raise ValueError("Uploaded images expired; please upload them again")
+                image_count += len(uploaded[1])
+                reference_images.append(reference)
+            else:
+                reference_images.extend(await validate_reference_urls([reference]))
+                image_count += 1
+        if image_count > config.REFERENCE_IMAGE_MAX_COUNT:
+            raise ValueError("Too many reference images")
+        if len(set(reference_images)) != len(reference_images):
+            raise ValueError("Duplicate reference entries are not supported")
+        if req.start_end and image_count != 2:
+            raise ValueError("Start / End requires exactly two images: start first, end second")
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     # Queue task when accounts are busy; reject only when pool is fully exhausted.
@@ -390,14 +400,20 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
         raise HTTPException(503, "no account in pool")
     task_id = "video_" + uuid.uuid4().hex
     ratio = _resolve_ratio(req.size, req.ratio)
+    prompt = req.prompt
+    if req.start_end:
+        prompt += ("\n\nUse the first uploaded image as the opening frame and the second "
+                   "uploaded image as the ending frame. Create continuous motion between "
+                   "these two frames, preserving their composition and subjects.")
     try:
         store.create(
             task_id,
             req.model,
-            req.prompt,
+            prompt,
             ratio or "default",
             duration,
             reference_images=json.dumps(reference_images, ensure_ascii=False),
+            start_end=req.start_end,
             api_key_hash=client["api_key_hash"],
             api_key_name=client["api_key_name"],
             daily_limit=client["daily_limit"],
@@ -409,9 +425,9 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
     except PendingTaskLimitExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
     asyncio.create_task(_run_task(
-        task_id, req.model, req.prompt, ratio, duration, reference_images, client
+        task_id, req.model, prompt, ratio, duration, reference_images, client
     ))
-    return TaskResponse(id=task_id, status="queued", model=req.model, prompt=req.prompt)
+    return TaskResponse(id=task_id, status="queued", model=req.model, prompt=prompt)
 
 
 @app.get("/v1/videos/{task_id}", response_model=TaskResponse)
@@ -771,6 +787,21 @@ async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=
 TASK_ACTION_LOCKS = {}
 
 
+@app.delete("/api/admin/tasks/{task_id}")
+async def admin_task_delete(task_id: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    async with TASK_ACTION_LOCKS.setdefault(task_id, asyncio.Lock()):
+        row = store.get(task_id)
+        if not row or row.get("deleted_at") is not None:
+            raise HTTPException(404, "Task not found")
+        runner = TASK_RUNNERS.get(task_id)
+        if row["status"] in ("queued", "processing") or (runner and not runner.done()):
+            raise HTTPException(409, "Stop monitoring this task before deleting its record")
+        if not store.delete_task(task_id):
+            raise HTTPException(409, "Task cannot be deleted in its current state")
+        return {"ok": True}
+
+
 @app.post("/api/admin/tasks/{task_id}/{action}")
 async def admin_task_action(task_id: str, action: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
@@ -778,7 +809,7 @@ async def admin_task_action(task_id: str, action: str, x_admin_key: str | None =
         raise HTTPException(404, "Unknown task action")
     async with TASK_ACTION_LOCKS.setdefault(task_id, asyncio.Lock()):
         row = store.get(task_id)
-        if not row:
+        if not row or row.get("deleted_at") is not None:
             raise HTTPException(404, "Task not found")
         if not row.get("account") or not row.get("conversation_id"):
             raise HTTPException(409, "Task has no saved conversation")

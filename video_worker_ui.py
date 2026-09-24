@@ -487,7 +487,7 @@ async def _preflight_balance(page, ms_token: str, fp: str, required: int) -> dic
 
 
 async def poll_conversation(account: str, page, context, conversation_id: str,
-                            timeout: int, on_poll=None, on_balance=None) -> dict:
+                            timeout: int, on_poll=None, on_balance=None, after_index=0) -> dict:
     """Polls accepted conversation for video completion."""
     cookies = await context.cookies("https://www.dola.com")
     ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
@@ -507,7 +507,8 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                                 timeout=30000, wait_until="domcontentloaded")
                 _log(f"[{account}] restored conversation tab {conversation_id}")
             poll = await asyncio.wait_for(page.evaluate(
-                POLL_JS, {"conversationId": conversation_id, "msToken": ms_token, "fp": fp}), timeout=30)
+                POLL_JS, {"conversationId": conversation_id, "msToken": ms_token, "fp": fp,
+                          "afterIndex": after_index}), timeout=30)
         except Exception as e:
             poll_failures += 1
             _log(f"  Polling exception attempt={poll_failures}/3: {e}")
@@ -518,7 +519,9 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
         if poll.get("rejection"):
             rejection = poll["rejection"]
             _log(f"[{account}] generation rejected code={rejection['code']} reason={rejection['reason']}")
-            raise GenerationRejectedError(f"Dola rejection ({rejection['code']}): {rejection['reason']}")
+            raise GenerationRejectedError(
+                f"Dola rejection ({rejection['code']}): {rejection['reason']}",
+                code=rejection['code'], latest_index=poll.get("latestIndex", 0))
         now = time.time()
         if on_poll and now - last_callback >= 30:
             on_poll(now)
@@ -672,30 +675,38 @@ async def _clear_composer_draft(page, account: str):
     await _composer_snapshot(page, account, "after_cleanup")
 
 
+# Both the separate controls and the combined Japanese settings button are used.
+VIDEO_DURATION_RE = re.compile(r"(?:^|[\s\u00b7])\d+\s*(?:s|\u79d2)(?:$|\s)")
+
+
+async def _video_composer_ready(root, needs_upload: bool):
+    model = root.get_by_role("button", name=re.compile(r"\u30e2\u30c7\u30eb|Model|Seedance", re.I)).first
+    # Older layouts expose the model label outside the button's accessible name.
+    has_model = (await model.is_visible()
+                 or await root.get_by_text(re.compile(r"^(?:\u30e2\u30c7\u30eb|Model)$", re.I)).first.is_visible())
+    has_duration = await root.get_by_text(VIDEO_DURATION_RE).first.is_visible()
+    return (has_model and has_duration
+            and (not needs_upload or await root.locator('input[type="file"]').count() > 0))
+
+
 async def _prepare_video_composer(page, account: str, needs_upload: bool):
     try:
         await _clear_composer_draft(page, account)
-        for attempt in range(1, 3):
+        # Reuse the active video composer after a rejection. The entry button
+        # disappears once video mode opens; its absence is not a click failure.
+        opened = False
+        for attempt in range(1, 61):
             _, root = await _composer(page)
-            async def ready():
-                return (await root.get_by_text("\u30e2\u30c7\u30eb", exact=True).is_visible()
-                        and await root.get_by_text("\u6bd4\u7387", exact=True).is_visible()
-                        and await root.get_by_text(re.compile(r"^\d+s$")).first.is_visible()
-                        and (not needs_upload or await root.locator('input[type="file"]').count() > 0))
-            if not await ready():
-                button = page.get_by_role("button", name="\u52d5\u753b\u3092\u4f5c\u6210", exact=True)
+            if await _video_composer_ready(root, needs_upload):
+                _log(f"[{account}] video composer ready attempt={attempt}")
+                await _composer_snapshot(page, account, "video_ready")
+                return
+            button = page.get_by_role("button", name=re.compile(r"^(?:\u52d5\u753b\u3092\u4f5c\u6210|Create (?:a )?video)$", re.I))
+            if not opened and await button.is_visible() and await button.is_enabled():
                 await button.click(timeout=10000)
-            for _ in range(30):
-                _, root = await _composer(page)
-                if await ready():
-                    _log(f"[{account}] video composer ready attempt={attempt}")
-                    await _composer_snapshot(page, account, "video_ready")
-                    return
-                await page.wait_for_timeout(500)
-            await _composer_snapshot(page, account, f"video_not_ready_{attempt}")
-            if attempt == 1:
-                await _clear_composer_draft(page, account)
-        raise TimeoutError("Video composer did not open before reference upload")
+                opened = True
+            await page.wait_for_timeout(500)
+        raise TimeoutError("Video composer controls did not become ready after 60 checks")
     except Exception:
         await _composer_snapshot(page, account, "prepare_failed")
         await page.screenshot(path=f"dbg_video_composer_missing_{account}.png", full_page=True)
@@ -774,122 +785,158 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
             await _preflight_balance(page, ms_token, fp, config.VIDEO_REQUIRED_POINTS)
 
-            # ---- UI Submission ----
-            await _prepare_video_composer(page, account, bool(reference_image_paths))
-            if reference_image_paths:
-                await attach_reference_images(page, reference_image_paths)
-            # Select model in UI
-            try:
-                async def model_ui_snapshot(stage):
-                    snapshot = await page.evaluate("""() => ({
-                        url: location.href,
-                        text: (document.body?.innerText || '').slice(0, 5000),
-                        candidates: [...document.querySelectorAll('button, [role="button"], [role="option"], li, div, span')]
-                            .map(e => ({text: (e.innerText || '').trim(), role: e.getAttribute('role')}))
-                            .filter(e => e.text && /model|seedance|2\\.0|2\\.5|高速|モデル/i.test(e.text))
-                            .slice(0, 120)
-                    })""")
-                    safe = json.dumps(snapshot, ensure_ascii=False).encode("ascii", "backslashreplace").decode("ascii")
-                    _log(f"[{account}] model UI snapshot stage={stage}: {safe[:8000]}")
-                    await page.screenshot(path=f"dbg_model_{account}_{stage}.png", full_page=True)
+            after_index = 0
+            for retry in range(6):
+                # ---- UI Submission ----
+                await _prepare_video_composer(page, account, bool(reference_image_paths))
+                if reference_image_paths:
+                    await attach_reference_images(page, reference_image_paths)
+                # Select model in UI
+                try:
+                    async def model_ui_snapshot(stage):
+                        snapshot = await page.evaluate("""() => ({
+                            url: location.href,
+                            text: (document.body?.innerText || '').slice(0, 5000),
+                            candidates: [...document.querySelectorAll('button, [role="button"], [role="option"], li, div, span')]
+                                .map(e => ({text: (e.innerText || '').trim(), role: e.getAttribute('role')}))
+                                .filter(e => e.text && /model|seedance|2\\.0|2\\.5|高速|モデル/i.test(e.text))
+                                .slice(0, 120)
+                        })""")
+                        safe = json.dumps(snapshot, ensure_ascii=False).encode("ascii", "backslashreplace").decode("ascii")
+                        _log(f"[{account}] model UI snapshot stage={stage}: {safe[:8000]}")
+                        await page.screenshot(path=f"dbg_model_{account}_{stage}.png", full_page=True)
 
-                await model_ui_snapshot("before")
-                current_model = None
-                for label in ("モデル 2.0高速", "モデル 2.5"):
-                    loc = page.get_by_text(label, exact=True).first
-                    if await loc.count() and await loc.is_visible():
-                        current_model = loc
-                        break
-                if current_model is None:
-                    _log(f"[{account}] model selector labels not found; trying generic model selector")
-                    current_model = page.get_by_text(re.compile(r"^モデル "), exact=False).first
-                await current_model.click(timeout=5000)
-                await page.wait_for_timeout(500)
-                await model_ui_snapshot("menu")
-                options = (("Dreamina Seedance 2.5",)
-                           if model_key == "seedance_v2.5"
-                           else ("Dreamina Seedance 2.0高速", "Dreamina Seedance 2.0", "Seedance2.0Fast"))
-                selected = False
-                for option_text in options:
-                    loc = page.get_by_text(option_text, exact=False).first
-                    if await loc.count() and await loc.is_visible():
-                        await loc.click(timeout=5000)
-                        selected = True
-                        break
-                if not selected:
-                    raise RuntimeError("Model option not found")
-                await page.wait_for_timeout(500)
-            except Exception as e:
-                try:
-                    await page.screenshot(path=f"dbg_model_{account}_error.png", full_page=True)
-                except Exception:
-                    pass
-                _log(f"[{account}] model selection failed type={type(e).__name__}: {e}")
-                raise RuntimeError(f"Failed to set model ({model_key}): {str(e)[:120]}") from e
-            if ratio:
-                try:
-                    await page.click("text=比率", timeout=3000)
+                    await model_ui_snapshot("before")
+                    _, root = await _composer(page)
+                    current_model = root.get_by_role(
+                        "button", name=re.compile(r"\u30e2\u30c7\u30eb\s|Model\b|Seedance", re.I)
+                    )
+                    await current_model.click(timeout=5000)
                     await page.wait_for_timeout(500)
-                    await page.click(f"text={ratio}", timeout=3000)
+                    await model_ui_snapshot("menu")
+                    options = (("Dreamina Seedance 2.5",)
+                               if model_key == "seedance_v2.5"
+                               else ("Dreamina Seedance 2.0高速", "Dreamina Seedance 2.0", "Seedance2.0Fast"))
+                    # Conversation titles can exactly match a model name.
+                    # Only select entries inside the currently open model menu.
+                    menu = page.locator('[role="menu"][data-state="open"]:visible')
+                    await menu.wait_for(state="visible", timeout=5000)
+                    selected = False
+                    for option_text in options:
+                        loc = menu.get_by_role("menuitem").filter(
+                            has=page.get_by_text(option_text, exact=True)
+                        )
+                        if await loc.count() and await loc.is_visible():
+                            await loc.click(timeout=5000)
+                            selected = True
+                            break
+                    if not selected:
+                        raise RuntimeError("Model option not found in open model menu")
+                    await menu.wait_for(state="hidden", timeout=5000)
+                    expected_version = "2.5" if model_key == "seedance_v2.5" else "2.0"
+                    for _ in range(20):
+                        _, root = await _composer(page)
+                        control = root.get_by_role(
+                            "button", name=re.compile(r"\u30e2\u30c7\u30eb|Model|Seedance", re.I)
+                        )
+                        if (await _video_composer_ready(root, bool(reference_image_paths))
+                                and expected_version in await control.inner_text()):
+                            break
+                        await page.wait_for_timeout(250)
+                    else:
+                        raise RuntimeError("Video composer did not preserve selected model")
                 except Exception as e:
-                    _log(f"  (Failed to set ratio, using default: {str(e)[:80]})")
-            if duration:
-                try:
-                    await page.click(f"text={duration}s", timeout=3000)
-                except Exception:
-                    try:  # Open duration dropdown
-                        await page.get_by_text(re.compile(r"^\d+s$")).first.click(timeout=3000)
+                    try:
+                        await page.screenshot(path=f"dbg_model_{account}_error.png", full_page=True)
+                    except Exception:
+                        pass
+                    _log(f"[{account}] model selection failed type={type(e).__name__}: {e}")
+                    raise RuntimeError(f"Failed to set model ({model_key}): {str(e)[:120]}") from e
+                if ratio:
+                    try:
+                        _, root = await _composer(page)
+                        ratio_control = root.get_by_text(re.compile(r"^(?:\u6bd4\u7387|(?:Aspect )?ratio)$", re.I)).first
+                        if await ratio_control.is_visible():
+                            await ratio_control.click(timeout=3000)
+                        else:
+                            await root.get_by_role("button", name=VIDEO_DURATION_RE).first.click(timeout=3000)
                         await page.wait_for_timeout(500)
-                        await page.click(f"text={duration}s", timeout=3000)
+                        await page.click(f"text={ratio}", timeout=3000)
                     except Exception as e:
-                        _log(f"  (Failed to set duration, using default: {str(e)[:80]})")
-            box = await _fill_video_prompt(page, prompt, account)
-            # Mark the attempt before Enter: a timeout may occur after dispatch.
-            if on_submit:
-                on_submit()
-            await box.press("Enter")
-            _log(f"[{account}] UI submitted prompt: {prompt[:40]}")
+                        _log(f"[{account}] ratio selection failed type={type(e).__name__}: {e}")
+                        await _composer_snapshot(page, account, "ratio_failed")
+                        raise RuntimeError(
+                            f"Failed to preserve requested ratio: {ratio}: {type(e).__name__}: {str(e)[:300]}"
+                        ) from e
+                if duration:
+                    try:
+                        await page.get_by_text(re.compile(rf"^{duration}\s*(?:s|\u79d2)$")).first.click(timeout=3000)
+                    except Exception:
+                        try:  # Open duration dropdown
+                            _, root = await _composer(page)
+                            await root.get_by_text(VIDEO_DURATION_RE).first.click(timeout=3000)
+                            await page.wait_for_timeout(500)
+                            await page.get_by_text(re.compile(rf"^{duration}\s*(?:s|\u79d2)$")).first.click(timeout=3000)
+                        except Exception as e:
+                            raise RuntimeError(f"Failed to preserve requested duration: {duration}") from e
+                box = await _fill_video_prompt(page, prompt, account)
+                # Mark the attempt before Enter: a timeout may occur after dispatch.
+                if on_submit:
+                    on_submit()
+                await box.press("Enter")
+                _log(f"[{account}] UI submitted prompt: {prompt[:40]}")
 
-            # ---- Captcha Solver (up to 3 attempts) ----
-            solved_or_absent = False
-            for attempt in range(1, 4):
-                frame = None
-                for _ in range(20):
-                    await page.wait_for_timeout(1000)
-                    frame = find_captcha_frame(page)
-                    if frame:
+                # ---- Captcha Solver (up to 3 attempts) ----
+                solved_or_absent = False
+                for attempt in range(1, 4):
+                    frame = None
+                    for _ in range(20):
+                        await page.wait_for_timeout(1000)
+                        frame = find_captcha_frame(page)
+                        if frame:
+                            break
+                    if not frame:
+                        solved_or_absent = True
                         break
-                if not frame:
-                    solved_or_absent = True
-                    break
-                _log(f"[{account}] Captcha detected, attempt {attempt} solving...")
-                if await solve_slider(page, frame, attempt):
-                    _log(f"[{account}] Captcha passed")
-                    await page.wait_for_timeout(3000)  # Wait for frontend auto-retry
-                    solved_or_absent = True
-                    break
-                _log(f"[{account}] Captcha not passed, retrying...")
-            if not solved_or_absent:
-                await page.screenshot(path="solve_fail.png")
-                raise RiskControlError("Captcha failed 3 times")
+                    _log(f"[{account}] Captcha detected, attempt {attempt} solving...")
+                    if await solve_slider(page, frame, attempt):
+                        _log(f"[{account}] Captcha passed")
+                        await page.wait_for_timeout(3000)  # Wait for frontend auto-retry
+                        solved_or_absent = True
+                        break
+                    _log(f"[{account}] Captcha not passed, retrying...")
+                if not solved_or_absent:
+                    await page.screenshot(path="solve_fail.png")
+                    raise RiskControlError("Captcha failed 3 times")
 
-            # ---- Wait for real conversation_id ----
-            conv_id = ""
-            for _ in range(30):
-                await page.wait_for_timeout(1000)
-                tail = page.url.rstrip("/").split("/")[-1]
-                if tail.isdigit():
-                    conv_id = tail
-                    break
-            if not conv_id:
-                await page.screenshot(path="no_conv.png")
-                raise TimeoutError("conversation_id not acquired within 30s")
-            _log(f"[{account}] conversation_id={conv_id}, polling for video...")
+                # ---- Wait for real conversation_id ----
+                conv_id = ""
+                for _ in range(30):
+                    await page.wait_for_timeout(1000)
+                    tail = page.url.rstrip("/").split("/")[-1]
+                    if tail.isdigit():
+                        conv_id = tail
+                        break
+                if not conv_id:
+                    await page.screenshot(path="no_conv.png")
+                    raise TimeoutError("conversation_id not acquired within 30s")
+                _log(f"[{account}] conversation_id={conv_id}, polling for video...")
 
-            deadline = time.time() + timeout
-            if on_conversation_id:
-                on_conversation_id(account, conv_id, deadline)
-            return await poll_conversation(account, page, context, conv_id, timeout, on_poll, on_balance)
+                deadline = time.time() + timeout
+                if on_conversation_id:
+                    on_conversation_id(account, conv_id, deadline)
+                try:
+                    return await poll_conversation(
+                        account, page, context, conv_id, timeout, on_poll, on_balance,
+                        after_index=after_index)
+                except GenerationRejectedError as exc:
+                    if  retry >= 5:
+                        raise
+                    if exc.latest_index <= after_index:
+                        raise RuntimeError("Cannot safely identify the rejected submission for retry") from exc
+                    after_index = exc.latest_index
+                    _log(f"[{account}] Dola {exc.code}: retry {retry + 1}/5 in conversation {conv_id}; preserving request parameters")
+                    await page.wait_for_timeout(5000)
         finally:
             _log(f"[{account}] Playwright context closing")
             await context.close()

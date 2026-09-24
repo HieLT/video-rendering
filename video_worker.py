@@ -15,12 +15,15 @@ from dola_client import CREDIT_FAIL_PATTERN, CreditError
 from video_probe import SUBMIT_JS
 
 class GenerationRejectedError(RuntimeError):
-    pass
+    def __init__(self, message, *, code=None, latest_index=0):
+        super().__init__(message)
+        self.code = code
+        self.latest_index = latest_index
 
 
 # Poll /im/chain/single for video status
 POLL_JS = r"""
-async ({conversationId, msToken, fp}) => {
+async ({conversationId, msToken, fp, afterIndex = 0}) => {
   // Current protocol: uplink_body.pull_singe_chain_uplink_body
   const params = new URLSearchParams({
     version_code: "20800", language: "ja", device_platform: "web",
@@ -61,16 +64,27 @@ async ({conversationId, msToken, fp}) => {
   if (!resp.ok) return {ok: false, status: resp.status, texts: [], videos: []};
 
   const data = await resp.json();
-  const messages =
+  const allMessages =
     (((data.downlink_body || {}).pull_singe_chain_downlink_body) || {}).messages || [];
+  const latestIndex = Math.max(afterIndex, ...allMessages.map(m => Number(m.index_in_conv) || 0));
+  const latestUserIndex = Math.max(0, ...allMessages
+    .filter(m => Number(m.user_type) === 1).map(m => Number(m.index_in_conv) || 0));
+  // Ignore previous submissions, including while the new message is in flight.
+  const boundary = Math.max(afterIndex, latestUserIndex);
+  const messages = allMessages.filter(m => !boundary || Number(m.index_in_conv) > boundary);
   const texts = [];
   let rejection = null;
   for (const msg of messages) {
-    if (String((msg.ext || {}).ai_creation_res_code) === "710082031") {
-      let blocks = msg.content_block || [];
+    const code = String((msg.ext || {}).ai_creation_res_code);
+    if (["710082031", "710082041"].includes(code)) {
+      let blocks = Array.isArray(msg.content) ? msg.content : (msg.content_block || []);
       try { blocks = JSON.parse(msg.content); } catch (_) {}
+      if (!Array.isArray(blocks)) blocks = [];
       const reason = blocks.map(b => (((b.content || {}).text_block || {}).text || "")).filter(Boolean).join("\n");
-      rejection = {code: "710082031", reason: reason || "Dola rejected generation for privacy protection"};
+      // A privacy rejection must never be replaced by a retryable response.
+      if (!rejection || code === "710082031") {
+        rejection = {code, reason: reason || "Dola rejected generation"};
+      }
     }
   }
   const videos = [];
@@ -96,7 +110,7 @@ async ({conversationId, msToken, fp}) => {
       }
     }
   }
-  return {ok: true, status: resp.status, texts, videos, videoModels, rejection};
+  return {ok: true, status: resp.status, texts, videos, videoModels, rejection, latestIndex};
 }
 """
 
