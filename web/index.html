@@ -171,8 +171,6 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
           <input id="referenceImages" type="file" accept="image/jpeg,image/png,image/webp" multiple onchange="previewReferenceImages()">
           <span class="form-note">Choose JPG, PNG, or WEBP files. Images are uploaded only when you submit the task.</span>
           <div id="imagePreview" class="image-preview"></div>
-          <label style="display:flex;gap:8px;align-items:center"><input id="videoStartEnd" type="checkbox" style="width:auto">Start / End (Generate Video)</label>
-          <span class="form-note">Use exactly two images: first = opening frame, second = ending frame.</span>
         </div>
         <div class="field">
           <label for="videoModel">Model</label>
@@ -455,8 +453,6 @@ async function submitVideoTask(){
   const prompt=q('#videoPrompt').value.trim();
   if(!prompt)return alert('Please enter a video prompt');
   const files=q('#referenceImages').files;
-  const startEnd=q('#videoStartEnd').checked;
-  if(startEnd&&files.length!==2)return alert('Start / End requires exactly two images: start first, end second');
   const apiKey=q('#videoApiKey').value.trim();
   const headers=apiKey?{Authorization:'Bearer '+apiKey}:{};
   const btn=q('#generateBtn');
@@ -476,7 +472,6 @@ async function submitVideoTask(){
     }
     const body={
       name:q('#videoName').value.trim(),
-      start_end:startEnd,
       model:q('#videoModel').value,
       prompt,
       ratio:q('#videoRatio').value,
@@ -485,7 +480,6 @@ async function submitVideoTask(){
     };
     const task=await api('/v1/videos/generations',{method:'POST',headers,body});
     q('#videoName').value='';
-    q('#videoStartEnd').checked=false;
     q('#videoPrompt').value='';
     q('#referenceImages').value='';
     q('#imagePreview').innerHTML='';
