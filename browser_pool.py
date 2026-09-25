@@ -1,5 +1,6 @@
 """Browser Account Pool: Manages accounts/ profiles with concurrency control and daily limits."""
 import asyncio
+import json
 from contextlib import asynccontextmanager
 import shutil
 import sqlite3
@@ -91,6 +92,44 @@ class BrowserPool:
             except sqlite3.OperationalError:
                 pass
 
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS identity_usage (account TEXT, day TEXT, used INTEGER, "
+            "PRIMARY KEY(account, day))"
+        )
+        self._conn.commit()
+        # Move legacy profile counters once, while their metadata is available.
+        for row in self._conn.execute("SELECT name FROM accounts_meta").fetchall():
+            self._usage_key(row["name"])
+
+    def _usage_key(self, account: str) -> str:
+        meta = self._meta(account)
+        email = (meta["email"] or "").strip().lower() if meta else ""
+        account_type = (meta["account_type"] or "unknown").strip().lower() if meta else "unknown"
+        fallback = json.dumps(["profile", account], ensure_ascii=True)
+        key = json.dumps(["identity", email, account_type], ensure_ascii=True) if email else fallback
+        # Transfer and delete in one transaction so restarts cannot double count.
+        with self._conn:
+            for row in self._conn.execute(
+                "SELECT day, used FROM usage WHERE account=?", (account,)
+            ).fetchall():
+                self._conn.execute(
+                    "INSERT INTO identity_usage(account, day, used) VALUES (?,?,?) "
+                    "ON CONFLICT(account, day) DO UPDATE SET used=used+excluded.used",
+                    (key, row["day"], row["used"]),
+                )
+            self._conn.execute("DELETE FROM usage WHERE account=?", (account,))
+            if key != fallback:
+                for row in self._conn.execute(
+                    "SELECT day, used FROM identity_usage WHERE account=?", (fallback,)
+                ).fetchall():
+                    self._conn.execute(
+                        "INSERT INTO identity_usage(account, day, used) VALUES (?,?,?) "
+                        "ON CONFLICT(account, day) DO UPDATE SET used=used+excluded.used",
+                        (key, row["day"], row["used"]),
+                    )
+                self._conn.execute("DELETE FROM identity_usage WHERE account=?", (fallback,))
+        return key
+
     @asynccontextmanager
     async def account_activity(self, account: str, activity: str):
         lock = self._locks.setdefault(account, asyncio.Lock())
@@ -126,16 +165,16 @@ class BrowserPool:
 
     def used_today(self, account: str) -> int:
         row = self._conn.execute(
-            "SELECT used FROM usage WHERE account=? AND day=?",
-            (account, date.today().isoformat()),
+            "SELECT used FROM identity_usage WHERE account=? AND day=?",
+            (self._usage_key(account), date.today().isoformat()),
         ).fetchone()
         return row[0] if row else 0
 
     def _claim(self, account: str):
         self._conn.execute(
-            "INSERT INTO usage(account, day, used) VALUES (?,?,1) "
+            "INSERT INTO identity_usage(account, day, used) VALUES (?,?,1) "
             "ON CONFLICT(account, day) DO UPDATE SET used=used+1",
-            (account, date.today().isoformat()),
+            (self._usage_key(account), date.today().isoformat()),
         )
         self._conn.commit()
 
@@ -171,9 +210,9 @@ class BrowserPool:
     def _mark_daily_limit(self, account: str, reason: str = ""):
         """Marks account as reaching daily limit until next reset."""
         self._conn.execute(
-            "INSERT INTO usage(account, day, used) VALUES (?,?,?) "
+            "INSERT INTO identity_usage(account, day, used) VALUES (?,?,?) "
             "ON CONFLICT(account, day) DO UPDATE SET used=MAX(used, excluded.used)",
-            (account, date.today().isoformat(), DAILY_LIMIT),
+            (self._usage_key(account), date.today().isoformat(), DAILY_LIMIT),
         )
         self._conn.execute(
             "UPDATE accounts_meta SET last_used_at=?, rate_limited_until=?, limit_reason=? WHERE name=?",

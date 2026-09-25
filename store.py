@@ -31,6 +31,9 @@ class TaskStore:
     def _init(self):
         with _LOCK:
             self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS generated_reset_tasks (task_id TEXT PRIMARY KEY)"
+            )
+            self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY,
@@ -331,7 +334,8 @@ class TaskStore:
             t = per_day[-1]
             per_account = self._conn.execute(
                 "SELECT account, sum(status='completed') FROM tasks "
-                "WHERE account IS NOT NULL GROUP BY account"
+                "WHERE account IS NOT NULL "
+                "AND id NOT IN (SELECT task_id FROM generated_reset_tasks) GROUP BY account"
             ).fetchall()
         completed, failed = t["completed"], t["failed"]
         total = completed + failed
