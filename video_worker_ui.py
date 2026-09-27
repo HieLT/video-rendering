@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import aiohttp
-from patchright.async_api import async_playwright
+from patchright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 from gap import find_gap_x
 
@@ -471,9 +471,11 @@ async def _preflight_balance(page, ms_token: str, fp: str, required: int) -> dic
     try:
         result = await asyncio.wait_for(page.evaluate(
             BALANCE_JS, {"msToken": ms_token, "fp": fp}), timeout=30)
-        balance, daily_limited, source = _parse_balance_texts(result.get("texts", []))
-        if daily_limited:
-            raise AccountLimitedError(f"Account daily generation limit: {source[:120]}")
+        # Historical limit notices do not describe the current request's quota.
+        # Only poll_conversation may mark a daily limit from a new response.
+        texts = [text for text in result.get("texts", [])
+                 if not DAILY_LIMIT_PATTERN.search(text)]
+        balance, _, source = _parse_balance_texts(texts)
         if balance is not None and balance < required:
             raise CreditInsufficientError(
                 f"Insufficient points: current {balance}, required {required} (source: {source[:120]})"
@@ -804,28 +806,58 @@ async def _start_composer_trace(page, account: str):
 async def _select_video_duration(page, duration: int, account: str):
     expected = re.compile(rf"^{duration}\s*(?:s|\u79d2)$", re.I)
     try:
-        _, root = await _composer(page)
-        control = root.get_by_role("button", name=VIDEO_DURATION_RE).first
-        # Ratio selection may leave the shared settings popup open.
-        # Only consider visible exact matches, never hidden or historical text.
-        options = page.get_by_text(expected).locator("visible=true")
-        if not await options.count():
-            await control.click(timeout=5000)
-        await options.first.wait_for(state="visible", timeout=10000)
-        if await options.count() != 1:
-            raise RuntimeError("Multiple visible duration options match the request")
-        await options.first.click(timeout=5000)
-        # A successful click alone does not prove React retained the selection.
-        for _ in range(20):
-            _, root = await _composer(page)
-            control = root.get_by_role("button", name=VIDEO_DURATION_RE).first
-            selected = (await control.inner_text()).strip()
-            if expected.fullmatch(selected):
+        for attempt in range(1, 4):
+            try:
+                _, root = await _composer(page)
+                control = root.get_by_role("button", name=VIDEO_DURATION_RE).first
+                selected = (await control.inner_text()).strip()
+                if not expected.fullmatch(selected):
+                    # Reopen on every attempt: React can replace the popup and its id.
+                    await page.keyboard.press("Escape")
+                    await control.click(timeout=5000)
+                    popup_id = await control.get_attribute("aria-controls")
+                    if popup_id:
+                        popup = page.locator('[id=' + json.dumps(popup_id) + ']').locator("visible=true")
+                    else:
+                        popup = page.locator(
+                            '[role="menu"]:visible, [role="listbox"]:visible, '
+                            '[role="dialog"]:visible, [data-slot="popover-content"]:visible'
+                        ).filter(has=page.get_by_text(expected))
+                    await popup.first.wait_for(state="visible", timeout=5000)
+                    # Opening animations can still be running after visibility changes.
+                    await page.wait_for_timeout(350)
+                    if await popup.count() > 1:
+                        raise RuntimeError("Could not identify a unique duration popup")
+                    options = popup.get_by_text(expected).locator("visible=true")
+                    await options.first.wait_for(state="visible", timeout=5000)
+                    if await options.count() > 1:
+                        raise RuntimeError("Multiple visible duration options in duration popup")
+                    # Click the interactive row instead of its animated text span.
+                    row = options.locator(
+                        'xpath=ancestor-or-self::*[self::button or @role="menuitem" '
+                        'or @role="menuitemradio" or @role="option"][1]'
+                    )
+                    target = row if await row.count() == 1 else options
+                    await target.click(timeout=5000)
                 await page.keyboard.press("Escape")
-                _log(f"[{account}] duration verified: {selected}")
-                return
-            await page.wait_for_timeout(250)
-        raise RuntimeError(f"Duration control still shows {selected!r}")
+                # Require several retained readings, including after the popup closes.
+                stable = 0
+                for _ in range(20):
+                    await page.wait_for_timeout(250)
+                    _, root = await _composer(page)
+                    control = root.get_by_role("button", name=VIDEO_DURATION_RE).first
+                    selected = (await control.inner_text()).strip()
+                    stable = stable + 1 if expected.fullmatch(selected) else 0
+                    if stable >= 3:
+                        _log(f"[{account}] duration verified: {selected} attempt={attempt}")
+                        return
+                raise PlaywrightTimeoutError(f"Duration control did not retain selection: {selected!r}")
+            except PlaywrightTimeoutError:
+                if attempt == 3:
+                    raise
+                _log(f"[{account}] duration UI changed or timed out; reopening attempt={attempt + 1}")
+                await page.keyboard.press("Escape")
+                await page.wait_for_timeout(500)
     except Exception as exc:
         _log(f"[{account}] duration selection failed type={type(exc).__name__}: {exc}")
         await _composer_snapshot(page, account, "duration_failed")

@@ -28,7 +28,7 @@ main{padding:20px;max-width:1180px;margin:0 auto}
 .s3{background:linear-gradient(135deg,#3b82f6,#2563eb)}.s4{background:linear-gradient(135deg,#f59e0b,#d97706)}
 table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13px}
-th{text-align:center;color:var(--sub);font-weight:500;white-space:nowrap}
+th{text-align:left;color:var(--sub);font-weight:500;white-space:nowrap}
 td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;white-space:nowrap}
 .b-green{background:#e6f7f0;color:#00945f}.b-red{background:#fdeaea;color:#c03237}
@@ -41,6 +41,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .btn-danger{color:#c03237}
 .btn-danger:hover{border-color:#e5484d;color:#e5484d}
 .btn:disabled{opacity:.5;cursor:not-allowed}
+#deleteSelectedAccounts,#deleteSelectedTasks{margin-bottom:12px}
 .toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
 .toolbar .hint{color:var(--sub);font-size:12px}
 .sw{position:relative;display:inline-block;width:36px;height:20px}
@@ -70,18 +71,25 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .empty{padding:34px;text-align:center;color:var(--sub)}
 .video-wrap{display:flex;gap:8px;align-items:center}
 #tasksTable{overflow-x:auto}
-#tasksTable table{table-layout:fixed;min-width:960px}
+#tasksTable table{table-layout:fixed;min-width:1000px}
 #tasksTable th,#tasksTable td{padding:10px 6px;overflow-wrap:anywhere}
-#tasksTable th:nth-child(1){width:82px}
-#tasksTable th:nth-child(3){width:60px}
-#tasksTable th:nth-child(4){width:90px}
-#tasksTable td:nth-child(4){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#tasksTable th:nth-child(5){width:66px}
-#tasksTable th:nth-child(6){width:112px}
-#tasksTable th:nth-child(7){width:80px}
-#tasksTable th:nth-child(8){width:128px}
+#tasksTable th:nth-child(2){width:82px}
+#tasksTable th:nth-child(4){width:100px}
+#tasksTable th:nth-child(5){width:90px}
+#tasksTable td:nth-child(5){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tasksTable th:nth-child(6){width:66px}
+#tasksTable th:nth-child(7){width:112px}
+#tasksTable th:nth-child(8){width:80px}
+#tasksTable th:nth-child(9){width:128px}
+#tasksTable th:first-child{width:32px}
 #tasksTable th:last-child{width:222px}
 #tasksTable td .prompt{max-width:100%;min-width:0}
+.prompt-copy-wrap{position:relative;padding-right:30px}
+.prompt-copy{position:absolute;right:0;top:0;border:0;background:var(--card);color:var(--sub);cursor:pointer;padding:3px;opacity:0;border-radius:4px}
+.prompt-copy-wrap:hover .prompt-copy,.prompt-copy-wrap:focus-within .prompt-copy{opacity:1}
+.prompt-copy:hover{color:var(--accent)}
+@media (hover:none){.prompt-copy{opacity:1}}
+
 #tasksTable th:last-child,#tasksTable td:last-child{position:sticky;right:0;background:var(--card);z-index:1;box-shadow:-1px 0 var(--line)}
 #tasksTable .video-wrap{gap:5px}
 #tasksTable .video-wrap .btn{padding:7px 9px}
@@ -103,6 +111,10 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .image-preview:empty{display:none}
 .image-preview figure{position:relative;width:74px;height:74px;margin:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#eef4f1}
 .image-preview figure[draggable="true"]{cursor:grab}
+#imagePreview figure{width:140px;height:auto;padding:6px}
+#imagePreview img{height:100px;display:block;border-radius:5px}
+#imagePreview figcaption{position:static;max-width:100%;margin-top:4px}
+#imagePreview small{display:block;padding:3px;color:var(--muted)}
 .image-preview figure.dragging{opacity:.4}
 .image-preview figure.drop-target{outline:2px solid #00b875;outline-offset:2px}
 .image-preview figure:focus-visible{outline:2px solid #00b875;outline-offset:2px}
@@ -112,6 +124,59 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .form-note{color:var(--sub);font-size:12px;line-height:1.4}
 .generate-form .actions{display:flex;justify-content:flex-end;gap:8px;grid-column:1 / -1}
 @media (max-width:760px){.generate-form{grid-template-columns:1fr 1fr}.generate-form .prompt-field,.generate-form textarea,.generate-form .actions{grid-column:1 / -1}}
+
+.ref-suggestions{position:fixed;z-index:1000;background:var(--surface,#fff);border:1px solid var(--line,#ddd);border-radius:10px;box-shadow:0 8px 24px #0002;max-height:240px;overflow:auto;padding:5px;animation:refAppear .12s ease-out}
+.ref-suggestions[hidden]{display:none}
+.ref-suggestions button{display:flex;align-items:center;gap:10px;width:100%;padding:8px;border:0;border-radius:6px;background:transparent;color:inherit;text-align:left;cursor:pointer}
+.ref-suggestions button.active{background:#dff4eb;color:#163e30}
+.ref-suggestions img{width:36px;height:36px;object-fit:cover;border-radius:5px}
+.ref-suggestions small{display:block;opacity:.65}
+@keyframes refAppear{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+
+/* Video composer */
+.studio{display:block;border:1px solid #dce6e1;border-radius:16px;overflow:hidden;background:#fff;box-shadow:0 4px 18px #203c2e04}
+.studio [hidden]{display:none!important}
+.studio .prompt-field{padding:22px 22px 8px}
+.studio .prompt-field>label{font-size:10px;letter-spacing:1.5px;font-weight:600;color:#83948c}
+.studio #videoPrompt{border:0;background:transparent;box-shadow:none;padding:10px 0;min-height:130px;font-size:15px;line-height:1.7}
+.studio .prompt-field:focus-within{box-shadow:inset 3px 0 var(--accent)}
+.image-workspace{padding:0 22px 20px}
+.mode-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.mode-tabs{display:flex;background:#f0f4f2;padding:4px;border-radius:9px;gap:3px}
+.mode-tabs button{border:0;background:transparent;border-radius:6px;padding:8px 13px;color:var(--sub);font:inherit;font-size:12px;cursor:pointer}
+.mode-tabs button[aria-pressed=true]{background:#fff;color:var(--accent-d);box-shadow:0 1px 4px #183c2514;font-weight:600}
+.reference-drop{display:flex;flex-wrap:wrap;gap:12px;border-radius:12px;transition:background .15s,outline .15s;padding:2px;margin-bottom:10px}
+.reference-drop.file-hover{background:#e6f7f0;outline:2px dashed var(--accent)}
+.studio #imagePreview{display:contents}
+.studio #imagePreview figure{width:128px;padding:0;border:1px solid #e1e9e4;border-radius:10px;background:#fff;animation:refAppear .18s ease-out;overflow:hidden}
+.studio #imagePreview img{height:104px;border-radius:0;object-fit:cover}
+.studio #imagePreview figcaption{position:absolute;left:7px;top:7px;right:auto;bottom:auto;margin:0;border-radius:5px;padding:3px 6px;font-size:10px;background:#173126a8}
+.ref-name{display:flex;align-items:center;padding:4px 8px;gap:2px;color:var(--accent-d)}
+.studio .ref-name input{min-width:0;padding:6px 2px;border:0;background:transparent;font-size:12px;box-shadow:none}
+.ref-name:focus-within{background:#eaf8f0}
+.ref-name .edit-mark{font-size:12px;color:#9baaa2}
+.studio .image-preview figure>button{width:22px;height:22px;background:#24372bbd;opacity:0;transition:opacity .15s}
+.studio .image-preview figure:hover>button,.studio .image-preview figure:focus-within>button{opacity:1}
+.add-image{width:128px;min-height:142px;border:1px dashed #c9d8cf;background:#f8fbf9;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--sub);cursor:pointer;transition:.15s}
+.add-image:hover{background:#eaf8f0;border-color:var(--accent);color:var(--accent-d)}
+.add-image .plus{font-size:26px;font-weight:300}.add-image strong{font-size:12px;color:#456153}.add-image>span:last-child{font-size:11px}
+.studio-footer{display:flex;align-items:end;gap:12px;padding:16px 22px;background:#f8faf9;border-top:1px solid var(--line)}
+.studio-footer .field:first-child{width:200px}.studio-footer .field{width:104px}
+.studio-footer select{background:#fff}.studio-footer #generateBtn{margin-left:auto;min-height:40px;padding:10px 22px;font-weight:600;white-space:nowrap}
+#generateBtn:disabled:before{content:'';display:inline-block;width:12px;height:12px;margin-right:8px;border:2px solid #ffffff70;border-top-color:white;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.advanced-settings{border-top:1px solid var(--line);padding:12px 22px;font-size:12px;color:var(--sub)}
+.advanced-settings summary{cursor:pointer;width:fit-content}.advanced-settings .field{max-width:360px;margin-top:12px}
+.frame-grid{display:grid;grid-template-columns:1fr 28px 1fr;gap:12px;align-items:center;margin-bottom:12px;max-width:650px}
+.frame-slot{border:1px dashed #cbdacf;border-radius:10px;padding:12px;background:#f8fbf9;min-width:0}
+.frame-label{display:flex;gap:8px;font-size:11px;color:#82998b}.frame-label strong{color:#435c4d;font-weight:500}
+.frame-pick{display:block;width:100%;padding:24px 4px;border:0;background:transparent;color:var(--accent-d);cursor:pointer;font:inherit;font-size:12px}
+.frame-arrow{text-align:center;color:#91a89a;font-size:22px}
+.studio .frame-slot figure{width:100%;height:130px;margin-top:8px}.frame-slot:has(figure) .frame-pick{padding:8px 4px}
+@media(hover:none){.studio .image-preview figure>button{opacity:1}}
+@media(max-width:600px){.studio .prompt-field{padding:16px 14px 6px}.image-workspace{padding:0 14px 16px}.mode-bar{align-items:start;flex-direction:column;gap:8px}.studio-footer{padding:14px;flex-wrap:wrap;gap:10px}.studio-footer .field:first-child{width:100%}.studio-footer .field{flex:1}.studio-footer #generateBtn{width:100%;margin-top:4px}.advanced-settings{padding:12px 14px}.frame-grid{gap:6px;grid-template-columns:1fr 18px 1fr}}
+@media(prefers-reduced-motion:reduce){.studio *{animation:none!important;transition:none!important}}
+
 </style>
 </head>
 <body>
@@ -154,6 +219,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
         <h3 style="margin:0">Account List</h3>
         <button class="btn btn-p" onclick="openAddAccount()">＋ Add Account</button>
       </div>
+      <button id="deleteSelectedAccounts" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('accounts')">Delete selected (0)</button>
       <div id="accountsTable"></div>
     </div>
   </section>
@@ -161,50 +227,46 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
   <section id="tab-tasks" style="display:none">
     <div class="card">
       <div class="toolbar"><h3 style="margin:0">Generate Video</h3><span class="hint">Create a task and track it below</span></div>
-      <div class="generate-form">
+      <div class="generate-form studio">
         <div class="field prompt-field">
-          <label for="videoPrompt">Prompt</label>
-          <textarea id="videoPrompt" placeholder="Describe the video you want to create..."></textarea>
+          <label for="videoPrompt">YOUR PROMPT</label>
+          <textarea id="videoPrompt" placeholder="Describe your scene, characters and motion&#8230; Type @ to reference an image." aria-autocomplete="list" aria-controls="refSuggestions" aria-expanded="false"></textarea>
+          <div id="refSuggestions" class="ref-suggestions" role="listbox" aria-label="Image references" hidden></div>
         </div>
-        <div class="field reference-field">
-          <label for="imageMode">Image mode</label>
-          <select id="imageMode" onchange="toggleImageMode()"><option value="reference">Reference images</option><option value="start_end">Start / End</option></select>
+        <div class="image-workspace">
+          <div class="mode-bar"><div class="mode-tabs" role="group" aria-label="Image mode">
+            <button type="button" data-mode="reference" aria-pressed="true" onclick="setImageMode('reference')">Reference images</button>
+            <button type="button" data-mode="start_end" aria-pressed="false" onclick="setImageMode('start_end')">Start / End</button>
+          </div><span class="tiny" id="imageCount">No images added</span></div>
+          <select id="imageMode" hidden onchange="toggleImageMode()"><option value="reference">Reference images</option><option value="start_end">Start / End</option></select>
+          <div id="referenceFields">
+            <input id="referenceImages" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
+            <input id="referencePicker" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onchange="addReferenceFiles(this.files);this.value=''">
+            <div class="reference-drop" id="referenceDrop">
+              <div id="imagePreview" class="image-preview"></div>
+              <button type="button" class="add-image" onclick="q('#referencePicker').click()"><span class="plus">+</span><strong>Add images</strong><span>or drop here</span></button>
+            </div>
+            <p class="form-note">JPG, PNG, WEBP &middot; Drag to reorder &middot; Edit a name, then mention it with @</p>
+          </div>
+          <div id="frameFields" style="display:none">
+            <div class="frame-grid">
+              <div class="frame-slot"><span class="frame-label">01 <strong>Start frame</strong></span><input id="startImage" type="file" accept="image/jpeg,image/png,image/webp" hidden onchange="previewReferenceImages('startImage','startPreview')"><div id="startPreview" class="image-preview"></div><button type="button" class="frame-pick" onclick="q('#startImage').click()">+ Choose opening image</button></div>
+              <span class="frame-arrow" aria-hidden="true">&rarr;</span>
+              <div class="frame-slot"><span class="frame-label">02 <strong>End frame</strong></span><input id="endImage" type="file" accept="image/jpeg,image/png,image/webp" hidden onchange="previewReferenceImages('endImage','endPreview')"><div id="endPreview" class="image-preview"></div><button type="button" class="frame-pick" onclick="q('#endImage').click()">+ Choose ending image</button></div>
+            </div>
+            <p class="form-note">Add both images to guide the transition. Exact opening and ending frames may vary.</p>
+          </div>
         </div>
-        <div id="frameFields" class="field reference-field" style="display:none">
-          <label for="startImage">Start image (opening frame)</label>
-          <input id="startImage" type="file" accept="image/jpeg,image/png,image/webp" onchange="previewReferenceImages('startImage','startPreview')">
-          <div id="startPreview" class="image-preview"></div>
-          <label for="endImage">End image (ending frame)</label>
-          <input id="endImage" type="file" accept="image/jpeg,image/png,image/webp" onchange="previewReferenceImages('endImage','endPreview')">
-          <div id="endPreview" class="image-preview"></div>
-          <span class="form-note">Both images are required. Guides Dola using image order and prompt instructions; exact first/last frames are not guaranteed.</span>
+        <div class="studio-footer">
+          <div class="field"><label for="videoModel">Model</label><select id="videoModel"><option value="seedance-2.0">Seedance 2.0</option><option value="seedance-2.5">Seedance 2.5</option></select></div>
+          <div class="field"><label for="videoRatio">Ratio</label><select id="videoRatio"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="3:4">3:4</option></select></div>
+          <div class="field"><label for="videoDuration">Duration</label><select id="videoDuration"><option value="10">10s</option><option value="15">15s</option><option value="30">30s</option></select></div>
+          <button class="btn btn-p" id="generateBtn" onclick="submitVideoTask()">Generate Video &rarr;</button>
         </div>
-        <div id="referenceFields" class="field reference-field">
-          <label for="referenceImages">Reference Images (optional)</label>
-          <input id="referenceImages" type="file" accept="image/jpeg,image/png,image/webp" multiple onchange="previewReferenceImages()">
-          <span class="form-note">Choose JPG, PNG, or WEBP files. Drag thumbnails to reorder, or focus a thumbnail and use the arrow keys. Images are uploaded in the displayed order when you submit.</span>
-          <div id="imagePreview" class="image-preview"></div>
-        </div>
-        <div class="field">
-          <label for="videoModel">Model</label>
-          <select id="videoModel"><option value="seedance-2.0">Seedance 2.0</option><option value="seedance-2.5">Seedance 2.5</option></select>
-        </div>
-        <div class="field">
-          <label for="videoRatio">Ratio</label>
-          <select id="videoRatio"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="3:4">3:4</option></select>
-        </div>
-        <div class="field">
-          <label for="videoDuration">Duration</label>
-          <select id="videoDuration"><option value="10">10s</option><option value="15">15s</option><option value="30">30s</option></select>
-        </div>
-        <div class="field">
-          <label for="videoApiKey">Gateway API Key (optional)</label>
-          <input id="videoApiKey" type="password" placeholder="Only if API auth is enabled">
-        </div>
-        <div class="actions"><button class="btn btn-p" id="generateBtn" onclick="submitVideoTask()">Generate Video</button></div>
+        <details class="advanced-settings"><summary>Advanced settings</summary><div class="field"><label for="videoApiKey">Gateway API Key (optional)</label><input id="videoApiKey" type="password" autocomplete="off" placeholder="Only if API auth is enabled"></div></details>
       </div>
     </div>
-    <div class="card"><h3>Recent Video Tasks (Last 50)</h3><div id="tasksTable"></div></div>
+    <div class="card"><h3>Recent Video Tasks (Last 50)</h3><button id="deleteSelectedTasks" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('tasks')">Delete selected (0)</button><div id="tasksTable"></div></div>
   </section>
 
   <section id="tab-keys" style="display:none">
@@ -296,20 +358,20 @@ async function loadDash(){
       <div class="lbl">${d.day}</div>
     </div>`).join('');
   q('#perAccount').innerHTML=table(
-    ['Account ID','Email','Current Status','Dispatch','Used Today','Total Generated','Last Used'],
-    st.per_account.map(a=>[
-      `<span class="account-id">${esc(a.name)}</span>`,
+    ['STT','Email','Current Status','Dispatch','Used Today','Total Generated','Last Used'],
+    st.per_account.map((a,index)=>[
+      index+1,
       accLabel(a),
       statusBadge(a),
       `<label class="sw"><input type="checkbox" ${a.scheduling?'checked':''} onchange="setSched('${a.name}',this.checked)"><i></i></label>`,
-      `<b>${a.used_today}</b> / ${a.limit}<span class="tiny"> (logged)</span>`,
+      `<b>${a.used_today}</b> / ${a.limit}<span class="tiny" title="Resets 24 hours after Last Used">${a.usage_reset_at?' - Reset: '+fmt(a.usage_reset_at):''}</span>`,
       a.completed_total||0,
       fmt(a.last_used_at)
     ])
   );
 }
 
-function accLabel(x){return `<div>${esc(x.display_name||x.email||x.name)}</div>`;}
+function accLabel(x){return `<div>${esc(x.display_name||x.email||'?')}</div>`;}
 function statusBadge(a){
   if(a.busy){
     const labels={verifying:'Verifying',browser_open:'Browser open',generating:'Generating',adding:'Adding'};
@@ -342,11 +404,61 @@ async function openWeb(name,btn){
   btn.disabled=false;btn.textContent=old;
 }
 
+const deleteSelection={accounts:new Set(),tasks:new Set()};
+const deleteVisible={accounts:[],tasks:[]};
+const bulkDeleting={accounts:false,tasks:false};
+function selectionBox(kind,id,enabled=true){
+  return `<input type="checkbox" aria-label="Select row for deletion" data-delete-kind="${kind}" data-delete-id="${esc(id)}" ${deleteSelection[kind].has(id)?'checked':''} ${enabled?'':'disabled'} onchange="selectDeleteRow('${kind}',this.dataset.deleteId,this.checked)">`;
+}
+function selectionHeader(kind){
+  return `<input type="checkbox" aria-label="Select all deletable rows" id="selectAll${kind}" onchange="selectAllDeleteRows('${kind}',this.checked)">`;
+}
+function updateDeleteSelection(kind){
+  const selected=deleteSelection[kind], visible=deleteVisible[kind];
+  for(const id of selected)if(!visible.includes(id))selected.delete(id);
+  const button=q(kind==='accounts'?'#deleteSelectedAccounts':'#deleteSelectedTasks');
+  button.hidden=selected.size===0;
+  button.disabled=bulkDeleting[kind]||selected.size===0;
+  button.textContent=bulkDeleting[kind]?'Deleting?':`Delete selected (${selected.size})`;
+  const all=q('#selectAll'+kind);
+  if(all){all.checked=visible.length>0&&selected.size===visible.length;all.indeterminate=selected.size>0&&selected.size<visible.length;all.disabled=bulkDeleting[kind]||!visible.length;}
+  document.querySelectorAll(`[data-delete-kind="${kind}"]`).forEach(box=>{box.checked=selected.has(box.dataset.deleteId);box.disabled=bulkDeleting[kind]||!visible.includes(box.dataset.deleteId);});
+}
+function selectDeleteRow(kind,id,on){
+  if(on)deleteSelection[kind].add(id);else deleteSelection[kind].delete(id);
+  updateDeleteSelection(kind);
+}
+function selectAllDeleteRows(kind,on){
+  deleteSelection[kind]=new Set(on?deleteVisible[kind]:[]);
+  updateDeleteSelection(kind);
+}
+async function deleteSelectedRows(kind){
+  if(bulkDeleting[kind])return;
+  const ids=[...deleteSelection[kind]];
+  if(!ids.length)return;
+  const detail=kind==='accounts'?'Their browser profiles will be removed.':'Video files will be kept.';
+  if(!confirm(`Delete ${ids.length} selected ${kind==='accounts'?'accounts':'task records'}? ${detail}`))return;
+  bulkDeleting[kind]=true;updateDeleteSelection(kind);
+  const errors=[];let deleted=0;
+  try{
+    for(const id of ids){
+      try{await api('/api/admin/'+kind+'/'+encodeURIComponent(id),{method:'DELETE'});deleteSelection[kind].delete(id);deleted++;}
+      catch(e){errors.push(e.message);}
+    }
+  }finally{
+    bulkDeleting[kind]=false;
+    if(kind==='accounts')await loadAccounts();else await loadTasks();
+  }
+  if(errors.length)alert(`Deleted ${deleted}/${ids.length}. ${errors.length} rows could not be deleted:\n`+[...new Set(errors)].join('\n'));
+}
+
 /* ---- Accounts ---- */
 async function loadAccounts(){
+  if(bulkDeleting.accounts)return;
   const [a,j]=await Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs')]);
   const jobs=j.jobs||{};
-  const rows=a.accounts.map(x=>{
+  deleteVisible.accounts=a.accounts.filter(x=>!x.busy&&jobs[x.name]?.status!=='running').map(x=>x.name);
+  const rows=a.accounts.map((x,index)=>{
     const jb=jobs[x.name];
     const addFailed=jb&&jb.kind==='add'&&jb.status==='failed'&&x.login_ok!==1;
     const badge=(jb&&jb.kind==='add'&&jb.status==='running')?'<span class="badge b-blue">Adding</span>'
@@ -354,7 +466,8 @@ async function loadAccounts(){
       :statusBadge(x);
     const warn=(jb&&jb.status==='failed'&&(jb.kind!=='add'||addFailed))?' <span class="tiny" title="'+esc(jb.error)+'">⚠</span>':'';
     return [
-      `<span class="account-id">${esc(x.name)}</span>`,
+      selectionBox('accounts',x.name,deleteVisible.accounts.includes(x.name)),
+      index+1,
       accLabel(x)+warn,
       esc(({google:"Google",facebook:"Facebook",cookies:"Cookies imported",unknown:"Unknown"})[x.account_type]||"Unknown"),
       badge,
@@ -365,28 +478,27 @@ async function loadAccounts(){
       `<button class="btn" style="margin-right:6px" onclick="openWeb('${esc(x.name)}',this)">Open Web</button><button class="btn" style="margin-right:6px" onclick="verify('${esc(x.name)}',this)">Verify</button><button class="btn" onclick="openAddAccount('${esc(x.name)}')">Retry</button><button class="btn btn-danger" onclick="delAccount('${esc(x.name)}')">Delete</button>`
     ];
   });
-  q('#accountsTable').innerHTML=table(['Account ID','Name','Type','Status','Dispatch','Used Today','Last Used','Created At','Actions'],rows);
+  q('#accountsTable').innerHTML=table([selectionHeader('accounts'),'STT','Name','Type','Status','Dispatch','Used Today','Last Used','Created At','Actions'],rows);
+  updateDeleteSelection('accounts');
 }
 
 async function verify(name,btn){
   btn.disabled=true;const old=btn.textContent;btn.textContent='Verifying…';
   try{const r=await api('/api/admin/accounts/'+name+'/verify',{method:'POST'});
-    alert(name+' Session: '+(r.ok?'Active ✓':'Expired ✗'));
+    alert('Session: '+(r.ok?'Active ✓':'Expired ✗'));
   }catch(e){alert(e.message);}
   btn.disabled=false;btn.textContent=old;refresh();
 }
 
 async function delAccount(name){
-  if(!confirm('Delete account '+name+'? This will remove its profile directory.'))return;
+  if(!confirm('Delete this account? This will remove its profile directory.'))return;
   try{await api('/api/admin/accounts/'+name,{method:'DELETE'});}catch(e){alert(e.message);}refresh();
 }
 
+let accountRetryUuid=null;
 function openAddAccount(retryName=null){
-  let def='acc2';try{def='acc'+(document.querySelectorAll('#accountsTable tbody tr').length+1);}catch(e){}
-  if(retryName)def=retryName;
+  accountRetryUuid=retryName;
   showDlg(`<h2>${retryName?"Retry Account":"Add Account"}</h2>
-    <label>Account Name</label><input id="f_name" value="${esc(def)}" ${retryName?'readonly data-retry="true"':''}>
-    <label>Display name (optional)</label><input id="f_display_name">
     <label>Login method</label><select id="f_method" onchange="accountMethodChanged()"><option value="cookies">Import cookies</option><option value="google">Google</option><option value="facebook">Facebook</option></select>
     <div id="f_google" hidden><label>Google Email</label><input id="f_email" autocomplete="off"><label>Password</label><input id="f_pass" type="password" autocomplete="new-password"><label>TOTP Secret (optional)</label><input id="f_totp" type="password"></div>
     <div id="f_cookies"><label>Netscape cookie file (.txt)</label><input id="f_cookie_file" type="file" accept=".txt"><p class="tiny">Choose the original cookie export for one Dola account. The session will be checked before enabling the account.</p></div>
@@ -398,8 +510,7 @@ function accountMethodChanged(){
   q('#f_google').hidden=method!=='google';q('#f_cookies').hidden=method!=='cookies';q('#f_facebook').hidden=method!=='facebook';
 }
 async function submitAddAccount(){
-  const body={name:q('#f_name').value.trim(),method:q('#f_method').value,display_name:q('#f_display_name').value.trim()};
-  if(!body.name)return alert('Please enter account name');
+  const body={method:q('#f_method').value};
   const button=q('#f_submit');button.disabled=true;
   try{
     if(body.method==='google'){
@@ -414,7 +525,7 @@ async function submitAddAccount(){
       if(file.size>1000000)throw new Error('Cookie file exceeds 1 MB');
       body.cookie_text=await file.text();
     }
-    await api(q('#f_name').dataset.retry?'/api/admin/accounts/'+encodeURIComponent(body.name)+'/retry':'/api/admin/accounts',{method:'POST',body});
+    await api(accountRetryUuid?'/api/admin/accounts/'+encodeURIComponent(accountRetryUuid)+'/retry':'/api/admin/accounts',{method:'POST',body});
     q('#dlg').querySelectorAll('input').forEach(input=>input.value='');
     hide('dlg');refresh();
   }catch(e){alert(e.message);}finally{button.disabled=false;}
@@ -450,30 +561,56 @@ async function submitVideoTask(){
       ratio:q('#videoRatio').value,
       duration:Number(q('#videoDuration').value),
       reference_images:referenceImages,
+      reference_aliases:startEnd?[]:files.map((_,index)=>referenceAliases[index]||''),
       start_end:startEnd
     };
     const task=await api('/v1/videos/generations',{method:'POST',headers,body});
     q('#videoPrompt').value='';
     q('#referenceImages').value='';
+    referenceAliases=[];
     q('#imagePreview').innerHTML='';
     for(const id of ['startImage','endImage'])q('#'+id).value='';
     for(const id of ['startPreview','endPreview'])q('#'+id).innerHTML='';
+    updateImageCount();
     alert('Task created: '+task.id);
     await loadTasks();
   }catch(e){alert(e.message);}
-  finally{btn.disabled=false;btn.textContent='Generate Video';}
+  finally{btn.disabled=false;btn.textContent='Generate Video \u2192';}
 }
 
+function setImageMode(mode){q('#imageMode').value=mode;toggleImageMode();closeRefSuggestions();}
+function updateImageCount(){
+  const frames=q('#imageMode').value==='start_end';
+  const n=frames?Number(!!q('#startImage').files.length)+Number(!!q('#endImage').files.length):q('#referenceImages').files.length;
+  q('#imageCount').textContent=frames?n+' / 2 frames':n?n+' reference'+(n===1?'':'s'):'No images added';
+}
+function addReferenceFiles(files){
+  const incoming=[...files];
+  if(incoming.some(file=>!['image/jpeg','image/png','image/webp'].includes(file.type))){alert('Choose JPG, PNG or WEBP images.');return;}
+  const transfer=new DataTransfer();
+  [...q('#referenceImages').files,...incoming].forEach(file=>transfer.items.add(file));
+  q('#referenceImages').files=transfer.files;previewReferenceImages();
+}
+const dropZone=q('#referenceDrop');
+dropZone.addEventListener('dragover',event=>{if([...event.dataTransfer.types].includes('Files')){event.preventDefault();dropZone.classList.add('file-hover');}});
+dropZone.addEventListener('dragleave',event=>{if(!dropZone.contains(event.relatedTarget))dropZone.classList.remove('file-hover');});
+dropZone.addEventListener('drop',event=>{dropZone.classList.remove('file-hover');if(event.dataTransfer.files.length){event.preventDefault();addReferenceFiles(event.dataTransfer.files);}});
+q('#referenceImages').addEventListener('change',()=>{referenceAliases=[];previewReferenceImages();});
 function toggleImageMode(){
   const frames=q('#imageMode').value==='start_end';
   q('#frameFields').style.display=frames?'':'none';
   q('#referenceFields').style.display=frames?'none':'';
+  document.querySelectorAll('[data-mode]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.mode===q('#imageMode').value)));
+  updateImageCount();
 }
+let referenceAliases=[];
 let draggedReferenceIndex=null;
 function reorderReferenceImages(from,to){
   const input=q('#referenceImages');
   const files=[...input.files];
   if(!Number.isInteger(from)||!Number.isInteger(to)||from<0||to<0||from>=files.length||to>=files.length||from===to)return;
+  referenceAliases=files.map((_,index)=>referenceAliases[index]||'');
+  referenceAliases.splice(to,0,referenceAliases.splice(from,1)[0]);
   files.splice(to,0,files.splice(from,1)[0]);
   const transfer=new DataTransfer();
   files.forEach(file=>transfer.items.add(file));
@@ -483,7 +620,9 @@ function reorderReferenceImages(from,to){
 }
 function previewReferenceImages(inputId='referenceImages',previewId='imagePreview'){
   const preview=q('#'+previewId);
+  closeRefSuggestions();
   preview.innerHTML='';
+  updateImageCount();
   [...q('#'+inputId).files].forEach((file,index)=>{
     const figure=document.createElement('figure');
     const image=document.createElement('img');
@@ -492,7 +631,9 @@ function previewReferenceImages(inputId='referenceImages',previewId='imagePrevie
     image.src=URL.createObjectURL(file);
     image.onload=()=>URL.revokeObjectURL(image.src);
     image.draggable=false;
-    caption.textContent=(inputId==='referenceImages'?(index+1)+'. ':'')+file.name;
+    image.alt=file.name;
+    figure.title=file.name;
+    caption.textContent=inputId==='referenceImages'?String(index+1):file.name;
     if(inputId==='referenceImages'){
       figure.draggable=true;
       figure.tabIndex=0;
@@ -536,17 +677,116 @@ function previewReferenceImages(inputId='referenceImages',previewId='imagePrevie
     remove.textContent='×';
     remove.onclick=()=>removeReferenceImage(index,inputId,previewId);
     figure.append(image,caption,remove);
+    if(inputId==='referenceImages'){
+      const alias=document.createElement('input');
+      alias.type='text';alias.placeholder='Image'+(index+1);
+      alias.autocomplete='off';
+      alias.setAttribute('data-1p-ignore','true');
+      alias.setAttribute('data-lpignore','true');
+      alias.value=referenceAliases[index]||('Image'+(index+1));
+      alias.setAttribute('aria-label','Reference name for '+file.name);
+      alias.title='Edit reference name';
+      let committedName=alias.value.trim().replace(/^@/,'');
+      const commitName=()=>{
+        const next=alias.value.trim().replace(/^@/,'')||('Image'+(index+1));
+        const duplicate=[...q('#referenceImages').files].some((_,i)=>i!==index&&(referenceAliases[i]||('Image'+(i+1))).replace(/^@/,'').toLowerCase()===next.toLowerCase());
+        if(duplicate){alias.value=committedName;return;}
+        const prompt=q('#videoPrompt');
+        const names=[...q('#referenceImages').files].map((_,i)=>(referenceAliases[i]||('Image'+(i+1))).replace(/^@/,''));
+        const escaped=names.sort((a,b)=>b.length-a.length).map(name=>name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
+        const mentions=new RegExp('(^|[^\\p{L}\\p{N}_@])@('+escaped.join('|')+')(?![\\p{L}\\p{N}_-])','giu');
+        prompt.value=prompt.value.replace(mentions,(match,prefix,name)=>name.toLowerCase()===committedName.toLowerCase()?prefix+'@'+next:match);
+        referenceAliases[index]=next.toLowerCase()===('image'+(index+1))?'':next;
+        committedName=next;alias.value=next;
+        closeRefSuggestions();
+      };
+      alias.oninput=()=>alias.setCustomValidity('');
+      alias.onblur=commitName;
+      alias.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();alias.blur();}};
+      alias.ondragstart=event=>event.stopPropagation();
+      const nameRow=document.createElement('div');nameRow.className='ref-name';
+      const prefix=document.createElement('span');prefix.textContent='@';
+      const edit=document.createElement('span');edit.className='edit-mark';edit.textContent='\u270e';edit.setAttribute('aria-hidden','true');
+      nameRow.append(prefix,alias,edit);figure.append(nameRow);
+    }
     preview.appendChild(figure);
   });
 }
 
 function removeReferenceImage(index,inputId='referenceImages',previewId='imagePreview'){
   const input=q('#'+inputId);
+  if(inputId==='referenceImages'){
+    referenceAliases=[...input.files].map((_,i)=>referenceAliases[i]||'');
+    referenceAliases.splice(index,1);
+  }
   const transfer=new DataTransfer();
   [...input.files].forEach((file,fileIndex)=>{if(fileIndex!==index)transfer.items.add(file);});
   input.files=transfer.files;
   previewReferenceImages(inputId,previewId);
 }
+
+
+const refPrompt=q('#videoPrompt'),refMenu=q('#refSuggestions');
+let refOptions=[],refSelected=0,refMatch=null,refPreviewUrls=[];
+function closeRefSuggestions(){
+  refMenu.hidden=true;refMenu.replaceChildren();
+  refPreviewUrls.forEach(url=>URL.revokeObjectURL(url));refPreviewUrls=[];
+  refPrompt.setAttribute('aria-expanded','false');
+  refPrompt.removeAttribute('aria-activedescendant');
+}
+function selectRefSuggestion(index){
+  const option=refOptions[index];
+  if(!option||!refMatch)return;
+  refPrompt.setRangeText('@'+option.name+' ',refMatch.start,refMatch.end,'end');
+  closeRefSuggestions();refPrompt.focus();
+}
+function highlightRefSuggestion(){
+  [...refMenu.children].forEach((item,i)=>{
+    item.classList.toggle('active',i===refSelected);
+    item.setAttribute('aria-selected',String(i===refSelected));
+  });
+  const active=refMenu.children[refSelected];
+  if(active){refPrompt.setAttribute('aria-activedescendant',active.id);active.scrollIntoView({block:'nearest'});}
+}
+function updateRefSuggestions(){
+  closeRefSuggestions();
+  if(q('#imageMode').value==='start_end'||refPrompt.selectionStart!==refPrompt.selectionEnd)return;
+  const end=refPrompt.selectionStart;
+  const match=refPrompt.value.slice(0,end).match(/(^|[^\p{L}\p{N}_@])@([^@\n]*)$/u);
+  if(!match)return;
+  const query=match[2].toLowerCase();
+  refOptions=[...q('#referenceImages').files].map((file,i)=>({file,index:i,name:(referenceAliases[i]||('Image'+(i+1))).trim().replace(/^@/,'')}))
+    .filter(item=>item.name.toLowerCase().startsWith(query));
+  if(!refOptions.length)return;
+  refMatch={start:end-match[2].length-1,end};refSelected=0;
+  refOptions.forEach((option,i)=>{
+    const row=document.createElement('button');row.type='button';row.role='option';row.id='ref-option-'+i;row.tabIndex=-1;
+    const img=document.createElement('img');img.alt='';img.src=URL.createObjectURL(option.file);refPreviewUrls.push(img.src);
+    const label=document.createElement('span');label.textContent='@'+option.name;
+    const detail=document.createElement('small');detail.textContent=option.file.name+' \u00b7 @Image'+(option.index+1);label.append(detail);
+    row.append(img,label);row.onmousedown=event=>event.preventDefault();row.onclick=()=>selectRefSuggestion(i);refMenu.append(row);
+  });
+  const rect=refPrompt.getBoundingClientRect();
+  refMenu.style.left=rect.left+'px';refMenu.style.width=Math.min(rect.width,360)+'px';
+  const below=innerHeight-rect.bottom;
+  refMenu.style.top=below>=160?(rect.bottom+4)+'px':'auto';
+  refMenu.style.bottom=below>=160?'auto':(innerHeight-rect.top+4)+'px';
+  refMenu.hidden=false;refPrompt.setAttribute('aria-expanded','true');highlightRefSuggestion();
+}
+refPrompt.addEventListener('input',updateRefSuggestions);
+refPrompt.addEventListener('click',updateRefSuggestions);
+refPrompt.addEventListener('keydown',event=>{
+  if(refMenu.hidden)return;
+  if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+    event.preventDefault();refSelected=(refSelected+(event.key==='ArrowDown'?1:-1)+refOptions.length)%refOptions.length;highlightRefSuggestion();
+  }else if(event.key==='Enter'||event.key==='Tab'){
+    event.preventDefault();selectRefSuggestion(refSelected);
+  }else if(event.key==='Escape'){event.preventDefault();closeRefSuggestions();}
+});
+refPrompt.addEventListener('blur',()=>setTimeout(closeRefSuggestions,150));
+window.addEventListener('resize',closeRefSuggestions);
+window.addEventListener('scroll',event=>{if(!refMenu.contains(event.target))closeRefSuggestions();},true);
+q('#imageMode').addEventListener('change',closeRefSuggestions);
 
 async function taskAction(id,action){
   if(action==='stop'&&!confirm('Stop monitoring this task? This does not cancel generation on Dola.'))return;
@@ -569,13 +809,37 @@ function taskControls(t){
   }
   return controls.length?'<div class="task-actions">'+controls.join('')+'</div>':'';
 }
+const taskPromptCopies=new Map();
+function originalTaskPrompt(t){
+  const prompt=t.prompt||'';
+  const suffix='\n\nUse the first uploaded image as the opening frame and the second uploaded image as the ending frame. Create continuous motion between these two frames, preserving their composition and subjects.';
+  return t.start_end&&prompt.endsWith(suffix)?prompt.slice(0,-suffix.length):prompt;
+}
+function taskPromptCell(t){
+  const prompt=originalTaskPrompt(t);
+  taskPromptCopies.set(t.id,prompt);
+  return '<div class="prompt-copy-wrap">'+(t.start_end?'<span class="badge b-blue">Start / End</span> ':'')+'<span class="prompt" title="'+esc(prompt)+'">'+esc(prompt)+'</span><button class="prompt-copy" title="Copy prompt" aria-label="Copy prompt" onclick="copyTaskPrompt(this,&quot;'+esc(t.id)+'&quot;)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4"/></svg></button></div>';
+}
+async function copyTaskPrompt(button,id){
+  if(!taskPromptCopies.has(id))return;
+  try{
+    await copy(taskPromptCopies.get(id));
+    button.title='Copied!';button.setAttribute('aria-label','Copied!');
+    button.innerHTML='<span aria-hidden="true">&#10003;</span>';
+  }catch(e){alert('Could not copy prompt: '+e.message);}
+}
 async function loadTasks(){
-  const r=await api('/api/admin/tasks?limit=50');
+  if(bulkDeleting.tasks)return;
+  const [r,a]=await Promise.all([api('/api/admin/tasks?limit=50'),api('/api/admin/accounts')]);
+  const accountNumbers=new Map(a.accounts.map((account,index)=>[account.uuid,index+1]));
+  deleteVisible.tasks=r.tasks.filter(t=>['completed','failed','stopped','needs_recovery'].includes(t.status)).map(t=>t.id);
   const sb={'queued':'<span class="badge b-gray">Queued</span>','processing':'<span class="badge b-blue">Processing</span>','completed':'<span class="badge b-green">Completed</span>','failed':'<span class="badge b-red">Failed</span>'};
+  taskPromptCopies.clear();
   const rows=r.tasks.map(t=>[
+    selectionBox('tasks',t.id,deleteVisible.tasks.includes(t.id)),
     '<span class="tiny" title="'+esc(t.id)+'">'+t.id.replace('video_','').slice(0,10)+'</span>',
-    (t.start_end?'<span class="badge b-blue">Start / End</span> ':'')+'<span class="prompt" title="'+esc(t.prompt||'')+'">'+esc(t.prompt||'')+'</span>',
-    t.account||'-',
+    taskPromptCell(t),
+    accountNumbers.get(t.account)||'?',
     t.api_key_name||'—',
     (t.duration||10)+'s',
     ({needs_recovery:'<span class="badge b-red">Needs recovery</span>',stopped:'<span class="badge b-gray">Stopped</span>'})[t.status]||sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
@@ -585,7 +849,8 @@ async function loadTasks(){
       :(['failed','needs_recovery','stopped'].includes(t.status)?'<details><summary class="tiny" style="cursor:pointer">'+esc((t.error||'').slice(0,30))+' ? Details</summary><div style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto">'+esc(t.error||'')+'</div></details>':'—')
     ,taskControls(t)
   ]);
-  q('#tasksTable').innerHTML=table(['Task ID','Prompt','Account','Client','Duration','Status','Created At','Video','Actions'],rows);
+  q('#tasksTable').innerHTML=table([selectionHeader('tasks'),'Task ID','Prompt','Account STT','Client','Duration','Status','Created At','Video','Actions'],rows);
+  updateDeleteSelection('tasks');
 }
 
 function playVideo(url){q('#videoEl').src=url;show('videoModal');}
@@ -662,7 +927,7 @@ async function submitEditKey(key){
 function copyFromNewKey(){copy(q('#newKey').textContent.trim());}
 async function copy(text){
   try{await navigator.clipboard.writeText(text);}catch(e){
-    const t=document.createElement('textarea');t.value=text;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove();
+    const t=document.createElement('textarea');t.value=text;document.body.appendChild(t);t.select();try{if(!document.execCommand('copy'))throw new Error('Clipboard unavailable');}finally{t.remove();}
   }
 }
 

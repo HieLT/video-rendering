@@ -62,6 +62,7 @@ class TaskStore:
             # Legacy migration: add missing columns for task recovery, client usage, and timing stats.
             for column, definition in (
                 ("account", "TEXT"),
+                ("account_uuid", "TEXT"),
                 ("deleted_at", "REAL"),
                 ("start_end", "INTEGER DEFAULT 0"),
                 ("conversation_id", "TEXT"),
@@ -319,6 +320,15 @@ class TaskStore:
             "queued": row["queued"] or 0,
         }
 
+    def bind_account_uuids(self, accounts):
+        """Pin historical task ownership once, including hidden/deleted task records."""
+        with _LOCK, self._conn:
+            for account in accounts:
+                self._conn.execute(
+                    "UPDATE tasks SET account_uuid=? WHERE account_uuid IS NULL AND account IN (?, ?)",
+                    (account["uuid"], account["name"], account["uuid"]),
+                )
+
     def stats(self) -> dict:
         """Daily completed/failed stats, success rate, 7-day trend, and total generated per account."""
         days = [(datetime.date.today() - datetime.timedelta(days=i)).isoformat()
@@ -333,9 +343,9 @@ class TaskStore:
                 per_day.append({"day": d[5:], "completed": row[0] or 0, "failed": row[1] or 0})
             t = per_day[-1]
             per_account = self._conn.execute(
-                "SELECT account, sum(status='completed') FROM tasks "
-                "WHERE account IS NOT NULL "
-                "AND id NOT IN (SELECT task_id FROM generated_reset_tasks) GROUP BY account"
+                "SELECT account_uuid, sum(status='completed') FROM tasks "
+                "WHERE account_uuid IS NOT NULL "
+                "AND id NOT IN (SELECT task_id FROM generated_reset_tasks) GROUP BY account_uuid"
             ).fetchall()
         completed, failed = t["completed"], t["failed"]
         total = completed + failed
