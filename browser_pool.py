@@ -265,6 +265,17 @@ class BrowserPool:
         self._conn.commit()
         _log(f"[account-delete] account={name!r} stage=metadata_removed")
 
+    def reset_quota(self, account: str):
+        self._conn.execute(
+            "UPDATE usage SET used=0 WHERE account=? AND day=?",
+            (account, date.today().isoformat()),
+        )
+        self._conn.execute(
+            "UPDATE accounts_meta SET rate_limited_until=0, limit_reason='', quota_blocked_until=0, quota_reason='' WHERE name=?",
+            (account,)
+        )
+        self._conn.commit()
+
     def auth_result(self, name, state, error="", identity=None):
         identity = identity or {}
         if state == "active":

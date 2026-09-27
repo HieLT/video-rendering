@@ -560,6 +560,15 @@ async def admin_account_delete(name: str, x_admin_key: str | None = Header(defau
     return {"ok": True}
 
 
+
+@app.post("/api/admin/accounts/{name}/reset-quota")
+async def admin_account_reset_quota(name: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if name not in pool.accounts:
+        raise HTTPException(404, "account not found")
+    pool.reset_quota(name)
+    return {"ok": True}
+
 @app.post("/api/admin/accounts/{name}/verify")
 async def admin_account_verify(name: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)

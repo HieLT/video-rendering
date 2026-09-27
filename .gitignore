@@ -2,7 +2,8 @@
 .env.local
 cookies.txt
 *.log
-
+*.rar
+downloads.rar
 # --- account state (contains real login sessions + emails) ---
 accounts/
 

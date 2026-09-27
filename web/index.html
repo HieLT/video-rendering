@@ -363,13 +363,23 @@ async function loadAccounts(){
       `<b>${x.used_today}</b> / ${x.limit}`,
       fmt(x.last_used_at),
       fmt(x.created_at),
-      `<button class="btn" style="margin-right:6px" onclick="openWeb('${esc(x.name)}',this)">Open Web</button><button class="btn" style="margin-right:6px" onclick="verify('${esc(x.name)}',this)">Verify</button><button class="btn" onclick="openAddAccount('${esc(x.name)}')">Retry</button><button class="btn btn-danger" onclick="delAccount('${esc(x.name)}')">Delete</button>`
+      `<button class="btn" style="margin-right:6px" onclick="openWeb('${esc(x.name)}',this)">Open Web</button><button class="btn" style="margin-right:6px" onclick="verify('${esc(x.name)}',this)">Verify</button><button class="btn" style="margin-right:6px" onclick="resetQuota('${esc(x.name)}',this)">Reset</button><button class="btn" onclick="openAddAccount('${esc(x.name)}')">Retry</button><button class="btn btn-danger" onclick="delAccount('${esc(x.name)}')">Delete</button>`
     ];
   });
   q('#accountsTable').innerHTML=table(['Account ID','Name','Type','Status','Dispatch','Used Today','Last Used','Created At','Actions'],rows);
 }
 
-async function verify(name,btn){
+
+async function resetQuota(name, btn){
+  if(!confirm('Reset quota for account ' + name + '?')) return;
+  btn.disabled=true; const old=btn.textContent; btn.textContent='Resetting…';
+  try{ await api('/api/admin/accounts/'+encodeURIComponent(name)+'/reset-quota', {method:'POST'}); }
+  catch(e){alert(e.message);}
+  btn.disabled=false; btn.textContent=old; refresh();
+}
+
+async function verify
+(name,btn){
   btn.disabled=true;const old=btn.textContent;btn.textContent='Verifying…';
   try{const r=await api('/api/admin/accounts/'+name+'/verify',{method:'POST'});
     alert(name+' Session: '+(r.ok?'Active ✓':'Expired ✗'));
