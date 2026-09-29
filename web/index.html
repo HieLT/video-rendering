@@ -71,18 +71,30 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .empty{padding:34px;text-align:center;color:var(--sub)}
 .video-wrap{display:flex;gap:8px;align-items:center}
 #tasksTable{overflow-x:auto}
-#tasksTable table{table-layout:fixed;min-width:1000px}
-#tasksTable th,#tasksTable td{padding:10px 6px;overflow-wrap:anywhere}
-#tasksTable th:nth-child(2){width:82px}
-#tasksTable th:nth-child(4){width:100px}
-#tasksTable th:nth-child(5){width:90px}
+#tasksTable table{table-layout:fixed;min-width:1030px}
+#tasksTable th,#tasksTable td{padding:12px 6px;overflow-wrap:normal}
+#tasksTable th{background:#f8faf9;font-size:11px;letter-spacing:.2px}
+#tasksTable tbody tr:hover{background:#fafcfb}
+#tasksTable th:first-child{width:30px}
+#tasksTable th:nth-child(2){width:115px}
+#tasksTable th:nth-child(3){width:160px}
+#tasksTable th:nth-child(4){width:75px}
+#tasksTable th:nth-child(5){width:75px}
 #tasksTable td:nth-child(5){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#tasksTable th:nth-child(6){width:66px}
-#tasksTable th:nth-child(7){width:112px}
-#tasksTable th:nth-child(8){width:80px}
-#tasksTable th:nth-child(9){width:128px}
-#tasksTable th:first-child{width:32px}
-#tasksTable th:last-child{width:222px}
+#tasksTable th:nth-child(6){width:65px}
+#tasksTable th:nth-child(7){width:115px}
+#tasksTable th:nth-child(8){width:100px}
+#tasksTable th:nth-child(9){width:125px}
+#tasksTable th:last-child{width:170px}
+.task-id{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:0;background:transparent;padding:4px 0;color:#52615d;font:12px ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;text-align:left}
+.task-id:hover{color:var(--accent)}
+#tasksTable .video-wrap{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+#tasksTable .video-wrap a,#tasksTable .video-wrap button{flex:none;white-space:nowrap;word-break:normal;line-height:18px}
+#tasksTable .video-wrap .video-preview{width:100%;text-align:center;background:#e6f7f0;border-color:#cdeadd;color:var(--accent-d)}
+#tasksTable .video-wrap a{font-size:12px}
+#tasksTable .task-actions{flex-wrap:wrap;width:auto}
+#tasksTable details summary{cursor:pointer;color:#c03237;font-size:12px}
+#tasksTable details>div{margin-top:8px}
 #tasksTable td .prompt{max-width:100%;min-width:0}
 .prompt-copy-wrap{position:relative;padding-right:30px}
 .prompt-copy{position:absolute;right:0;top:0;border:0;background:var(--card);color:var(--sub);cursor:pointer;padding:3px;opacity:0;border-radius:4px}
@@ -90,8 +102,18 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .prompt-copy:hover{color:var(--accent)}
 @media (hover:none){.prompt-copy{opacity:1}}
 
-#tasksTable th:last-child,#tasksTable td:last-child{position:sticky;right:0;background:var(--card);z-index:1;box-shadow:-1px 0 var(--line)}
-#tasksTable .video-wrap{gap:5px}
+#tasksTable th:last-child,#tasksTable td:last-child{position:static;border-left:1px solid var(--line)}
+#tasksTable .video-wrap{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+#tasksTable .video-wrap a{display:flex;align-items:center;justify-content:center;min-height:32px;padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:#fff;color:#52615d}
+#tasksTable .video-wrap a:hover{border-color:var(--accent);color:var(--accent)}
+#tasksTable .video-wrap .video-preview{grid-column:1 / -1;grid-row:1;min-height:34px}
+#tasksTable .task-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px;align-items:stretch}
+#tasksTable .task-actions .btn{padding:7px 4px;min-height:32px;text-align:center}
+#tasksTable .task-actions .btn:first-child,#tasksTable .task-actions a.btn{grid-column:1 / -1}
+#tasksTable .task-actions .btn:last-child{grid-column:1 / -1}
+#tasksTable td:nth-child(9),#tasksTable td:last-child{vertical-align:middle}
+.video-file{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:#52615d;margin-bottom:5px}
+#tasksTable .task-actions .video-preview{background:#e6f7f0;border-color:#cdeadd;color:var(--accent-d)}
 #tasksTable .video-wrap .btn{padding:7px 9px}
 .task-actions{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;width:max-content}
 .task-actions .btn{flex:none;white-space:nowrap;padding:7px 10px}
@@ -177,6 +199,20 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 @media(max-width:600px){.studio .prompt-field{padding:16px 14px 6px}.image-workspace{padding:0 14px 16px}.mode-bar{align-items:start;flex-direction:column;gap:8px}.studio-footer{padding:14px;flex-wrap:wrap;gap:10px}.studio-footer .field:first-child{width:100%}.studio-footer .field{flex:1}.studio-footer #generateBtn{width:100%;margin-top:4px}.advanced-settings{padding:12px 14px}.frame-grid{gap:6px;grid-template-columns:1fr 18px 1fr}}
 @media(prefers-reduced-motion:reduce){.studio *{animation:none!important;transition:none!important}}
 
+/* Task search */
+.task-list-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.task-list-heading h3{margin:0}
+.task-search-panel{padding:16px;margin-bottom:16px;border:1px solid var(--line);border-radius:12px;background:#f8faf9}
+.task-search-main{display:flex;gap:10px;margin-bottom:12px}
+.task-search-input{display:flex;align-items:center;gap:10px;flex:1;min-width:0;padding:0 12px;background:#fff;border:1px solid #d8e2de;border-radius:9px;color:var(--sub)}
+.task-search-input:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px #00a87012}
+.task-search-input input{border:0;outline:0;background:transparent;min-width:0;width:100%;padding:12px 0;font:inherit;color:var(--text)}
+.task-search-panel select{padding:9px 12px;border:1px solid #d8e2de;border-radius:8px;background:#fff;color:var(--text);font:inherit;font-size:13px;max-width:100%}
+.task-search-panel select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.task-search-filters{display:flex;flex-wrap:wrap;align-items:end;gap:10px;margin-bottom:12px}
+.task-search-filters label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--sub);min-width:140px}
+.task-search-filters .btn{margin-left:auto;min-height:36px;background:transparent}
+@media(max-width:600px){.task-search-main{flex-direction:column}.task-search-filters label{min-width:0;flex:1 1 40%}.task-search-filters .btn{margin-left:0}.task-search-panel{padding:12px}}
 </style>
 </head>
 <body>
@@ -261,12 +297,30 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
           <div class="field"><label for="videoModel">Model</label><select id="videoModel"><option value="seedance-2.0">Seedance 2.0</option><option value="seedance-2.5">Seedance 2.5</option></select></div>
           <div class="field"><label for="videoRatio">Ratio</label><select id="videoRatio"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="3:4">3:4</option></select></div>
           <div class="field"><label for="videoDuration">Duration</label><select id="videoDuration"><option value="10">10s</option><option value="15">15s</option><option value="30">30s</option></select></div>
+          <div class="field"><label for="videoCount">Videos</label><select id="videoCount" onchange="updateVideoCount()"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
           <button class="btn btn-p" id="generateBtn" onclick="submitVideoTask()">Generate Video &rarr;</button>
         </div>
+        <p id="videoCountHint" class="form-note" style="padding:8px 22px" aria-live="polite">Create 1 video - uses quota for 1 generation</p>
         <details class="advanced-settings"><summary>Advanced settings</summary><div class="field"><label for="videoApiKey">Gateway API Key (optional)</label><input id="videoApiKey" type="password" autocomplete="off" placeholder="Only if API auth is enabled"></div></details>
       </div>
     </div>
-    <div class="card"><h3>Recent Video Tasks (Last 50)</h3><button id="deleteSelectedTasks" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('tasks')">Delete selected (0)</button><div id="tasksTable"></div></div>
+    <div class="card">
+      <div class="task-list-heading"><h3>Recent Video Tasks</h3><span class="tiny">Latest 50 matches</span></div>
+      <div class="task-search-panel" role="search" aria-label="Search video tasks">
+        <div class="task-search-main">
+          <div class="task-search-input"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="taskSearch" name="video-task-filter" type="search" readonly onfocus="this.removeAttribute('readonly')" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" aria-label="Search tasks" placeholder="Search Task ID, prompt, client, batch or error..." autocomplete="off" oninput="searchTasks()"></div>
+          <select id="taskSearchIn" aria-label="Search in" onchange="searchTasks()"><option value="all">All fields</option><option value="id">Task ID</option><option value="prompt">Prompt</option><option value="client">Client</option><option value="batch">Batch</option><option value="error">Error message</option></select>
+        </div>
+        <div class="task-search-filters">
+          <label>Status<select id="taskStatus" onchange="searchTasks()"><option value="">All statuses</option><option value="queued">Queued</option><option value="processing">Processing</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="stopped">Stopped</option><option value="needs_recovery">Needs recovery</option></select></label>
+          <label>Account<select id="taskAccount" onchange="searchTasks()"><option value="">All accounts</option></select></label>
+          <label>Duration<select id="taskDuration" onchange="searchTasks()"><option value="">All durations</option><option value="10">10s</option><option value="15">15s</option><option value="30">30s</option></select></label>
+          <button type="button" class="btn" onclick="clearTaskSearch()">Clear filters</button>
+        </div>
+        <div id="taskSearchSummary" class="tiny" role="status" aria-live="polite">Search across your task history</div>
+      </div>
+      <button id="deleteSelectedTasks" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('tasks')">Delete selected (0)</button><div id="tasksTable"></div>
+    </div>
   </section>
 
   <section id="tab-keys" style="display:none">
@@ -532,7 +586,13 @@ async function submitAddAccount(){
 }
 
 /* ---- Task Queue ---- */
+function updateVideoCount(){
+  const count=Number(q('#videoCount').value);
+  if(!q('#generateBtn').disabled)q('#generateBtn').textContent=count===1?'Generate Video \u2192':`Generate ${count} videos \u2192`;
+  q('#videoCountHint').textContent=`Create ${count} video${count===1?'':'s'} - uses quota for ${count} generation${count===1?'':'s'}`;
+}
 async function submitVideoTask(){
+  if(q('#generateBtn').disabled)return;
   const prompt=q('#videoPrompt').value.trim();
   if(!prompt)return alert('Please enter a video prompt');
   const startEnd=q('#imageMode').value==='start_end';
@@ -541,6 +601,7 @@ async function submitVideoTask(){
   const apiKey=q('#videoApiKey').value.trim();
   const headers=apiKey?{Authorization:'Bearer '+apiKey}:{};
   const btn=q('#generateBtn');
+  const settings={model:q('#videoModel').value,ratio:q('#videoRatio').value,duration:Number(q('#videoDuration').value),count:Number(q('#videoCount').value),reference_aliases:startEnd?[]:files.map((_,index)=>referenceAliases[index]||'')};
   btn.disabled=true;btn.textContent='Submitting...';
   try{
     let referenceImages=[];
@@ -556,12 +617,9 @@ async function submitVideoTask(){
       referenceImages=uploadData.reference_images||[];
     }
     const body={
-      model:q('#videoModel').value,
+      ...settings,
       prompt,
-      ratio:q('#videoRatio').value,
-      duration:Number(q('#videoDuration').value),
       reference_images:referenceImages,
-      reference_aliases:startEnd?[]:files.map((_,index)=>referenceAliases[index]||''),
       start_end:startEnd
     };
     const task=await api('/v1/videos/generations',{method:'POST',headers,body});
@@ -572,10 +630,10 @@ async function submitVideoTask(){
     for(const id of ['startImage','endImage'])q('#'+id).value='';
     for(const id of ['startPreview','endPreview'])q('#'+id).innerHTML='';
     updateImageCount();
-    alert('Task created: '+task.id);
+    alert(task.tasks?`${task.tasks.length} tasks created: \n${task.tasks.map(item=>item.id).join('\n')}`:'Task created: '+task.id);
     await loadTasks();
   }catch(e){alert(e.message);}
-  finally{btn.disabled=false;btn.textContent='Generate Video \u2192';}
+  finally{btn.disabled=false;updateVideoCount();}
 }
 
 function setImageMode(mode){q('#imageMode').value=mode;toggleImageMode();closeRefSuggestions();}
@@ -800,6 +858,13 @@ async function deleteTask(id){
 }
 function taskControls(t){
   const controls=[];
+  if(t.video_url){
+    controls.push('<button class="btn video-preview" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">Preview</button>');
+    controls.push('<a class="btn" href="'+esc(t.video_url)+'" target="_blank" rel="noopener">Open</a>');
+  }
+  if(t.account&&!t.conversation_id&&t.status!=='completed'){
+    controls.push('<button class="btn" title="Open this account in Dola; no conversation was saved for this task" data-account="'+esc(t.account)+'" onclick="openWeb(this.dataset.account,this)">Open chat</button>');
+  }
   if(t.account&&t.conversation_id&&t.status!=='completed'){
     const hints=['Show the conversation; restart monitoring if stopped','Resume monitoring the saved conversation without submitting a new video','Stop local monitoring; generation on Dola is not cancelled'];
     controls.push(...['open','resume','stop'].map((action,i)=>'<button class="btn'+(action==='stop'?' btn-danger':'')+'" title="'+hints[i]+'" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;'+action+'&quot;)">'+['Open chat','Continue','Stop'][i]+'</button>'));
@@ -818,7 +883,7 @@ function originalTaskPrompt(t){
 function taskPromptCell(t){
   const prompt=originalTaskPrompt(t);
   taskPromptCopies.set(t.id,prompt);
-  return '<div class="prompt-copy-wrap">'+(t.start_end?'<span class="badge b-blue">Start / End</span> ':'')+'<span class="prompt" title="'+esc(prompt)+'">'+esc(prompt)+'</span><button class="prompt-copy" title="Copy prompt" aria-label="Copy prompt" onclick="copyTaskPrompt(this,&quot;'+esc(t.id)+'&quot;)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4"/></svg></button></div>';
+  return (t.batch_id?'<span class="badge b-gray" title="'+esc(t.batch_id)+'">Batch '+esc(t.batch_id.slice(-6))+' / '+t.batch_index+'/'+t.batch_count+'</span> ':'')+'<div class="prompt-copy-wrap">'+(t.start_end?'<span class="badge b-blue">Start / End</span> ':'')+'<span class="prompt" title="'+esc(prompt)+'">'+esc(prompt)+'</span><button class="prompt-copy" title="Copy prompt" aria-label="Copy prompt" onclick="copyTaskPrompt(this,&quot;'+esc(t.id)+'&quot;)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4"/></svg></button></div>';
 }
 async function copyTaskPrompt(button,id){
   if(!taskPromptCopies.has(id))return;
@@ -828,16 +893,41 @@ async function copyTaskPrompt(button,id){
     button.innerHTML='<span aria-hidden="true">&#10003;</span>';
   }catch(e){alert('Could not copy prompt: '+e.message);}
 }
+let taskSearchTimer, taskLoadVersion=0;
+function resetTaskSearchDefaults(){
+  for(const id of ['taskSearch','taskStatus','taskAccount','taskDuration'])q('#'+id).value='';
+  q('#taskSearchIn').value='all';
+}
+resetTaskSearchDefaults();
+function clearTaskSearch(){
+  resetTaskSearchDefaults();searchTasks();
+}
+function searchTasks(){
+  clearTimeout(taskSearchTimer);
+  taskLoadVersion++;
+  taskSearchTimer=setTimeout(()=>loadTasks().catch(e=>alert(e.message)),250);
+}
 async function loadTasks(){
   if(bulkDeleting.tasks)return;
-  const [r,a]=await Promise.all([api('/api/admin/tasks?limit=50'),api('/api/admin/accounts')]);
+  const version=++taskLoadVersion;
+  const search=q('#taskSearch').value.trim();
+  const params=new URLSearchParams({limit:'50',query:search,search_in:q('#taskSearchIn').value,status:q('#taskStatus').value,account:q('#taskAccount').value,duration:q('#taskDuration').value||'0'});
+  const [r,a]=await Promise.all([api('/api/admin/tasks?'+params),api('/api/admin/accounts')]);
+  if(version!==taskLoadVersion)return;
   const accountNumbers=new Map(a.accounts.map((account,index)=>[account.uuid,index+1]));
+  const accountSelect=q('#taskAccount'),selectedAccount=accountSelect.value;
+  accountSelect.replaceChildren(new Option('All accounts',''));
+  a.accounts.forEach((account,index)=>accountSelect.add(new Option('Account '+(index+1)+(account.email?' - '+account.email:''),account.uuid)));
+  if(selectedAccount&&!a.accounts.some(account=>account.uuid===selectedAccount))accountSelect.add(new Option('Previous account',selectedAccount));
+  accountSelect.value=selectedAccount;
+  const filtered=search||params.get('status')||params.get('account')||params.get('duration')!=='0';
+  q('#taskSearchSummary').textContent=r.tasks.length?(r.tasks.length===50?'Showing latest 50':r.tasks.length+' task'+(r.tasks.length===1?'':'s'))+(filtered?' matching your filters':' in recent history'):'No tasks match your search. Try another keyword or clear filters.';
   deleteVisible.tasks=r.tasks.filter(t=>['completed','failed','stopped','needs_recovery'].includes(t.status)).map(t=>t.id);
   const sb={'queued':'<span class="badge b-gray">Queued</span>','processing':'<span class="badge b-blue">Processing</span>','completed':'<span class="badge b-green">Completed</span>','failed':'<span class="badge b-red">Failed</span>'};
   taskPromptCopies.clear();
   const rows=r.tasks.map(t=>[
     selectionBox('tasks',t.id,deleteVisible.tasks.includes(t.id)),
-    '<span class="tiny" title="'+esc(t.id)+'">'+t.id.replace('video_','').slice(0,10)+'</span>',
+    '<button class="task-id" title="Copy '+esc(t.id)+'" aria-label="Copy task ID '+esc(t.id)+'" onclick="copy(this.dataset.taskId)" data-task-id="'+esc(t.id)+'">'+esc(t.id)+'</button>',
     taskPromptCell(t),
     accountNumbers.get(t.account)||'?',
     t.api_key_name||'—',
@@ -845,11 +935,11 @@ async function loadTasks(){
     ({needs_recovery:'<span class="badge b-red">Needs recovery</span>',stopped:'<span class="badge b-gray">Stopped</span>'})[t.status]||sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
     fmt(t.created_at),
     t.video_url
-      ?'<div class="video-wrap"><a href="'+esc(t.video_url)+'" target="_blank">Open</a><button class="btn" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">Preview</button></div>'
-      :(['failed','needs_recovery','stopped'].includes(t.status)?'<details><summary class="tiny" style="cursor:pointer">'+esc((t.error||'').slice(0,30))+' ? Details</summary><div style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto">'+esc(t.error||'')+'</div></details>':'—')
+      ?'<span class="video-file" title="'+esc(t.id)+'.mp4">'+esc(t.id)+'.mp4</span><span class="tiny">MP4 video</span>'
+      :(['failed','needs_recovery','stopped'].includes(t.status)?'<details><summary class="tiny" style="cursor:pointer">View error details</summary><div style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto">'+esc(t.error||'')+'</div></details>':'—')
     ,taskControls(t)
   ]);
-  q('#tasksTable').innerHTML=table([selectionHeader('tasks'),'Task ID','Prompt','Account STT','Client','Duration','Status','Created At','Video','Actions'],rows);
+  q('#tasksTable').innerHTML=table([selectionHeader('tasks'),'Task ID','Prompt','Account','Client','Duration','Status','Created At','Video','Actions'],rows);
   updateDeleteSelection('tasks');
 }
 

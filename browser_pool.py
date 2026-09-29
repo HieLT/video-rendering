@@ -481,7 +481,8 @@ class BrowserPool:
     async def generate_video(self, prompt: str, ratio: str = None, duration: int = None,
                              model: str = "seedance_v2.0", on_conversation_id=None,
                              on_poll=None, on_balance=None,
-                             reference_image_paths: list[str] | None = None) -> dict:
+                             reference_image_paths: list[str] | None = None,
+                             on_account_selected=None) -> dict:
         """Picks an idle schedulable account; automatically rotates on quota/risk limits."""
         async with self.semaphore:
             last_err = None
@@ -497,6 +498,8 @@ class BrowserPool:
                 async with self.account_activity(account, "generating"):
                     if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
                         continue  # State changed while waiting
+                    if on_account_selected:
+                        on_account_selected(account)
                     submit_attempted = False
 
                     def on_submit():

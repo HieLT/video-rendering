@@ -173,6 +173,7 @@ class VideoGenRequest(BaseModel):
     reference_images: list[str] = Field(default_factory=list)
     reference_aliases: list[str] = Field(default_factory=list)
     start_end: bool = False
+    count: int = Field(1, ge=1, le=5, strict=True)
 
 
 class TaskResponse(BaseModel):
@@ -182,6 +183,11 @@ class TaskResponse(BaseModel):
     prompt: str | None = None
     video_url: str | None = None
     error: str | None = None
+
+
+class BatchTaskResponse(BaseModel):
+    batch_id: str
+    tasks: list[TaskResponse]
 
 
 @app.post("/api/admin/reference-images", status_code=201)
@@ -237,6 +243,9 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         acquired = True
         store.update(task_id, status="processing", started_at=time.time())
 
+        def on_account_selected(account):
+            store.update(task_id, account=account, account_uuid=pool.account_uuid(account))
+
         def on_conversation_id(account, conversation_id, deadline_at):
             store.update(task_id, status="processing", account=account, account_uuid=pool.account_uuid(account),
                          conversation_id=conversation_id, deadline_at=deadline_at,
@@ -262,8 +271,12 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         result = await pool.generate_video(
             prompt, ratio, duration, model,
             on_conversation_id=on_conversation_id, on_poll=on_poll,
-            reference_image_paths=reference_paths)
-        public_url = f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
+            reference_image_paths=reference_paths,
+            on_account_selected=on_account_selected)
+        video_path = Path(result["local_path"])
+        named_path = video_path.with_name(f"{task_id}{video_path.suffix}")
+        video_path.replace(named_path)
+        public_url = f"{config.PUBLIC_BASE}/videos/{named_path.name}"
         store.update(task_id, status="completed", video_url=public_url,
                      account=result.get("account"), account_uuid=pool.account_uuid(result["account"]) if result.get("account") else None, last_poll_at=time.time(),
                      finished_at=time.time())
@@ -308,7 +321,10 @@ async def _resume_task(row: dict):
 
         result = await pool.resume_video(
             row["account"], row["conversation_id"], remaining, on_poll=on_poll)
-        public_url = f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
+        video_path = Path(result["local_path"])
+        named_path = video_path.with_name(f"{task_id}{video_path.suffix}")
+        video_path.replace(named_path)
+        public_url = f"{config.PUBLIC_BASE}/videos/{named_path.name}"
         store.update(task_id, status="completed", video_url=public_url,
                      account=result.get("account"), account_uuid=pool.account_uuid(result["account"]) if result.get("account") else None, last_poll_at=time.time(),
                      finished_at=time.time())
@@ -359,7 +375,7 @@ async def resume_incomplete_tasks():
         ))
 
 
-@app.post("/v1/videos/generations", response_model=TaskResponse)
+@app.post("/v1/videos/generations", response_model=TaskResponse | BatchTaskResponse)
 async def create_video(req: VideoGenRequest, authorization: str | None = Header(default=None)):
     client = _auth(authorization)
     duration = req.duration or 10
@@ -402,21 +418,45 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
         raise HTTPException(429, "Insufficient credits: All accounts lack points, waiting for refresh")
     if not pool.accounts:
         raise HTTPException(503, "no account in pool")
-    task_id = "video_" + uuid.uuid4().hex
+    task_ids = ["video_" + uuid.uuid4().hex for _ in range(req.count)]
+    batch_id = "batch_" + uuid.uuid4().hex if req.count > 1 else None
     ratio = _resolve_ratio(req.size, req.ratio)
     prompt = resolved_prompt
     if req.start_end:
         prompt += ("\n\nUse the first uploaded image as the opening frame and the second "
                    "uploaded image as the ending frame. Create continuous motion between "
                    "these two frames, preserving their composition and subjects.")
+    # Each runner owns its uploaded copies and can clean them independently.
+    task_references = {}
+    copied_tokens = []
+    accepted = False
     try:
-        store.create(
-            task_id,
+        for task_id in task_ids:
+            references = []
+            for reference in reference_images:
+                uploaded = UPLOADED_REFERENCES.get(reference)
+                if uploaded:
+                    root = Path(tempfile.mkdtemp(prefix="dola_upload_"))
+                    token = "uploaded://" + uuid.uuid4().hex
+                    paths = []
+                    UPLOADED_REFERENCES[token] = (root, paths)
+                    copied_tokens.append(token)
+                    for index, source in enumerate(uploaded[1]):
+                        target = root / f"image_{index}{Path(source).suffix}"
+                        shutil.copy2(source, target)
+                        paths.append(str(target))
+                    references.append(token)
+                else:
+                    references.append(reference)
+            task_references[task_id] = references
+        store.create_batch(
+            task_ids,
             req.model,
             prompt,
             ratio or "default",
             duration,
-            reference_images=json.dumps(reference_images, ensure_ascii=False),
+            reference_images={key: json.dumps(value, ensure_ascii=False) for key, value in task_references.items()},
+            batch_id=batch_id,
             start_end=req.start_end,
             api_key_hash=client["api_key_hash"],
             api_key_name=client["api_key_name"],
@@ -424,14 +464,27 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
             concurrency_limit=client["concurrency_limit"],
             max_pending=config.MAX_PENDING_TASKS,
         )
+        accepted = True
     except TaskQuotaExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
     except PendingTaskLimitExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
-    asyncio.create_task(_run_task(
-        task_id, req.model, prompt, ratio, duration, reference_images, client
-    ))
-    return TaskResponse(id=task_id, status="queued", model=req.model, prompt=prompt)
+    finally:
+        if not accepted:
+            for token in copied_tokens:
+                root, _ = UPLOADED_REFERENCES.pop(token)
+                shutil.rmtree(root, ignore_errors=True)
+    for reference in reference_images:
+        uploaded = UPLOADED_REFERENCES.pop(reference, None)
+        if uploaded:
+            shutil.rmtree(uploaded[0], ignore_errors=True)
+    for task_id in task_ids:
+        asyncio.create_task(_run_task(
+            task_id, req.model, prompt, ratio, duration, task_references[task_id], client
+        ))
+    tasks = [TaskResponse(id=task_id, status="queued", model=req.model, prompt=prompt)
+             for task_id in task_ids]
+    return BatchTaskResponse(batch_id=batch_id, tasks=tasks) if batch_id else tasks[0]
 
 
 @app.get("/v1/videos/{task_id}", response_model=TaskResponse)
@@ -783,10 +836,13 @@ async def admin_jobs(x_admin_key: str | None = Header(default=None)):
 
 
 @app.get("/api/admin/tasks")
-async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None)):
+async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None), task_id: str = "",
+                      query: str = "", search_in: str = "all", status: str = "",
+                      account: str = "", duration: int = 0):
     _admin_auth(x_admin_key)
     return {"tasks": [{**t, "account": t.get("account_uuid") or (pool.account_uuid(t["account"]) if t.get("account") else None)}
-                      for t in store.recent_tasks(min(max(limit, 1), 200))]}
+                      for t in store.recent_tasks(min(max(limit, 1), 200), task_id=task_id, query=query, search_in=search_in,
+                                                  status=status, account=account, duration=duration)]}
 
 
 TASK_ACTION_LOCKS = {}
