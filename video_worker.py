@@ -167,11 +167,20 @@ def _check_submit(result: dict) -> str:
     return conv_id
 
 
-async def _download(url: str, account: str) -> Path:
+def sanitize_filename_prefix(name: str) -> str:
+    if not name or not name.strip():
+        return ""
+    clean = re.sub(r'[\\/]', '_', name.strip())
+    clean = re.sub(r'[*?:"<>|]', '', clean).strip()
+    return f"{clean}_" if clean else ""
+
+
+async def _download(url: str, account: str, name: str = "") -> Path:
     """Downloads video to DOWNLOAD_DIR and returns local path."""
     dl_dir = Path(config.DOWNLOAD_DIR)
     dl_dir.mkdir(parents=True, exist_ok=True)
-    fname = dl_dir / f"{account}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+    prefix = sanitize_filename_prefix(name)
+    fname = dl_dir / f"{prefix}{account}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
     timeout = aiohttp.ClientTimeout(total=300)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(url, proxy=config.PROXY or None) as resp:
@@ -183,7 +192,7 @@ async def _download(url: str, account: str) -> Path:
 
 
 async def generate_video(account: str, prompt: str, ratio: str = "9:16",
-                         duration: int = 5, timeout: int = None) -> dict:
+                         duration: int = 5, timeout: int = None, name: str = "") -> dict:
     """Complete generation flow: submit -> poll -> download.
 
     Returns {"video_url": cdn_url, "local_path": local_file, "conversation_id": ...}
@@ -236,7 +245,7 @@ async def generate_video(account: str, prompt: str, ratio: str = "9:16",
                 if videos:
                     url = videos[0]
                     print(f"[{account}] Video completed download_url={url[:100]}...", flush=True)
-                    local = await _download(url, account)
+                    local = await _download(url, account, name=name)
                     print(f"[{account}] Downloaded {local} ({local.stat().st_size / 1e6:.1f} MB)", flush=True)
                     return {
                         "video_url": url,

@@ -198,19 +198,8 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
           <select id="videoDuration"><option value="10">10s</option><option value="15">15s</option><option value="30">30s</option></select>
         </div>
         <div class="field">
-          <label for="videoConcurrent">Concurrent</label>
-          <select id="videoConcurrent">
-            <option value="1" selected>1 video</option>
-            <option value="2">2 videos</option>
-            <option value="3">3 videos</option>
-            <option value="4">4 videos</option>
-            <option value="5">5 videos</option>
-            <option value="6">6 videos</option>
-            <option value="7">7 videos</option>
-            <option value="8">8 videos</option>
-            <option value="9">9 videos</option>
-            <option value="10">10 videos</option>
-          </select>
+          <label for="videoConcurrent">Concurrent (1 - 100)</label>
+          <input id="videoConcurrent" type="number" min="1" max="100" value="1" placeholder="1-100">
         </div>
         <div class="field">
           <label for="videoApiKey">Gateway API Key (optional)</label>
@@ -497,7 +486,7 @@ async function submitVideoTask(){
   const files=startEnd?[q('#startImage').files[0],q('#endImage').files[0]]:[...q('#referenceImages').files];
   const apiKey=q('#videoApiKey').value.trim();
   const headers=apiKey?{Authorization:'Bearer '+apiKey}:{};
-  const count=Math.max(1, Math.min(10, parseInt(q('#videoConcurrent')?.value, 10) || 1));
+  const count=Math.max(1, Math.min(100, parseInt(q('#videoConcurrent')?.value, 10) || 1));
   const baseName=q('#videoName').value.trim();
 
   const btn=q('#generateBtn');

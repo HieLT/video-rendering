@@ -258,10 +258,12 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
                 if reference_root:
                     reference_roots.append(reference_root)
                 reference_paths.extend(downloaded)
+        task_row = store.get(task_id)
+        task_name = task_row.get("name") if task_row else ""
         result = await pool.generate_video(
             prompt, ratio, duration, model,
             on_conversation_id=on_conversation_id, on_poll=on_poll,
-            reference_image_paths=reference_paths)
+            reference_image_paths=reference_paths, name=task_name)
         public_url = f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
         store.update(task_id, status="completed", video_url=public_url,
                      account=result.get("account"), last_poll_at=time.time(),
@@ -308,7 +310,8 @@ async def _resume_task(row: dict):
             store.update(task_id, last_poll_at=now)
 
         result = await pool.resume_video(
-            row["account"], row["conversation_id"], remaining, on_poll=on_poll)
+            row["account"], row["conversation_id"], remaining, on_poll=on_poll,
+            name=row.get("name") or "")
         public_url = f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
         store.update(task_id, status="completed", video_url=public_url,
                      account=result.get("account"), last_poll_at=time.time(),

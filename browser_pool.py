@@ -382,7 +382,7 @@ class BrowserPool:
         } for a in self.list_accounts()]
 
     async def resume_video(self, account: str, conversation_id: str, timeout: int,
-                           on_poll=None) -> dict:
+                           on_poll=None, name: str = "") -> dict:
         """Resumes an accepted session without re-scheduling."""
         async with self.semaphore:
             lock = self._locks.setdefault(account, asyncio.Lock())
@@ -391,7 +391,7 @@ class BrowserPool:
                     self._set_credit_balance(account, balance, source)
                 try:
                     result = await resume_video(account, conversation_id, timeout,
-                                                on_poll=on_poll, on_balance=on_balance)
+                                                on_poll=on_poll, on_balance=on_balance, name=name)
                     self._claim(account)
                     self._conn.execute(
                         "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
@@ -406,7 +406,8 @@ class BrowserPool:
     async def generate_video(self, prompt: str, ratio: str = None, duration: int = None,
                              model: str = "seedance_v2.0", on_conversation_id=None,
                              on_poll=None, on_balance=None,
-                             reference_image_paths: list[str] | None = None) -> dict:
+                             reference_image_paths: list[str] | None = None,
+                             name: str = "") -> dict:
         """Picks an idle schedulable account; automatically rotates on quota/risk limits."""
         async with self.semaphore:
             last_err = None
@@ -436,7 +437,7 @@ class BrowserPool:
                             account, prompt, ratio, duration, model=model,
                             on_conversation_id=on_conversation_id, on_poll=on_poll,
                             on_balance=on_balance, reference_image_paths=reference_image_paths,
-                            on_submit=on_submit)
+                            on_submit=on_submit, name=name)
                         self._claim(account)
                         self._conn.execute(
                             "UPDATE accounts_meta SET last_used_at=? WHERE name=?",

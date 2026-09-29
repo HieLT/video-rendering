@@ -27,10 +27,10 @@ API_KEYS = [k.strip() for k in os.getenv("DOLA_API_KEYS", "").split(",") if k.st
 COOKIES_FILE = os.getenv("DOLA_COOKIES_FILE", "cookies.txt")
 
 # Max concurrent video generation tasks
-MAX_CONCURRENCY = int(os.getenv("DOLA_MAX_CONCURRENCY", "10"))
+MAX_CONCURRENCY = int(os.getenv("DOLA_MAX_CONCURRENCY", "100"))
 
 # Global pending task queue limit (queued + processing), 0 = unlimited
-MAX_PENDING_TASKS = int(os.getenv("DOLA_MAX_PENDING_TASKS", "100"))
+MAX_PENDING_TASKS = int(os.getenv("DOLA_MAX_PENDING_TASKS", "500"))
 
 # Video generation timeout in seconds
 VIDEO_TIMEOUT = int(os.getenv("DOLA_VIDEO_TIMEOUT", "300"))

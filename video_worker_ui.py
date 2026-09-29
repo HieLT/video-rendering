@@ -487,7 +487,8 @@ async def _preflight_balance(page, ms_token: str, fp: str, required: int) -> dic
 
 
 async def poll_conversation(account: str, page, context, conversation_id: str,
-                            timeout: int, on_poll=None, on_balance=None, after_index=0) -> dict:
+                            timeout: int, on_poll=None, on_balance=None, after_index=0,
+                            name: str = "") -> dict:
     """Polls accepted conversation for video completion."""
     cookies = await context.cookies("https://www.dola.com")
     ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
@@ -539,7 +540,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             url = extract_unwatermarked_url(
                 video_models[0] if video_models else "", poll["videos"][0])
             _log(f"[{account}] Completed! Downloading (unwatermarked priority)...")
-            local = await _download(url, account)
+            local = await _download(url, account, name=name)
             _log(f"[{account}] Downloaded {local} ({local.stat().st_size / 1e6:.1f} MB)")
             return {"video_url": url, "local_path": str(local),
                     "conversation_id": conversation_id, "account": account}
@@ -548,7 +549,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
 
 
 async def resume_video(account: str, conversation_id: str, timeout: int,
-                       on_poll=None, on_balance=None) -> dict:
+                       on_poll=None, on_balance=None, name: str = "") -> dict:
     """Recovers accepted session after server restart without re-sending prompt."""
     async with async_playwright() as p:
         context = await launch_account_context(p, account, headless=False, use_extension=True)
@@ -557,7 +558,7 @@ async def resume_video(account: str, conversation_id: str, timeout: int,
             await page.goto(f"https://www.dola.com/chat/{conversation_id}",
                             timeout=60000, wait_until="domcontentloaded")
             await page.wait_for_timeout(5000)
-            return await poll_conversation(account, page, context, conversation_id, timeout, on_poll, on_balance)
+            return await poll_conversation(account, page, context, conversation_id, timeout, on_poll, on_balance, name=name)
         finally:
             await context.close()
 
@@ -844,7 +845,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                          model: str = "seedance_v2.0", use_extension: bool = True,
                          on_conversation_id=None, on_poll=None, on_balance=None,
                          reference_image_paths: list[str] | None = None,
-                         on_submit=None) -> dict:
+                         on_submit=None, name: str = "") -> dict:
     """Full generation flow via UI automation."""
     timeout = timeout or config.VIDEO_TIMEOUT
     model_key = model.lower().replace("-", "_")
@@ -1033,7 +1034,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 try:
                     return await poll_conversation(
                         account, page, context, conv_id, timeout, on_poll, on_balance,
-                        after_index=after_index)
+                        after_index=after_index, name=name)
                 except GenerationRejectedError as exc:
                     if  retry >= 5:
                         raise

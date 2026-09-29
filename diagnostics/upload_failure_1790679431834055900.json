@@ -1,0 +1,118 @@
+{
+  "error_type": "TargetClosedError",
+  "error": "Page.wait_for_timeout: Target page, context or browser has been closed",
+  "files": [
+    {
+      "index": 1,
+      "file": "image_0.png",
+      "bytes": 1824460
+    },
+    {
+      "index": 2,
+      "file": "image_1.png",
+      "bytes": 2481721
+    },
+    {
+      "index": 3,
+      "file": "image_2.png",
+      "bytes": 2564072
+    },
+    {
+      "index": 4,
+      "file": "image_3.png",
+      "bytes": 343382
+    }
+  ],
+  "composer": {
+    "text": "14%\n88%\n18%\n動画を作成\nモデル\n2.5\n10s\n比率\n\n\n",
+    "images": [
+      {
+        "alt": "image_0.png",
+        "complete": true,
+        "width": 1536
+      },
+      {
+        "alt": "image_1.png",
+        "complete": true,
+        "width": 1672
+      },
+      {
+        "alt": "image_2.png",
+        "complete": true,
+        "width": 1536
+      },
+      {
+        "alt": "image_3.png",
+        "complete": true,
+        "width": 741
+      }
+    ],
+    "indicators": [
+      {
+        "title": null,
+        "aria": "upload progress percent",
+        "role": "progressbar",
+        "state": null,
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": "upload progress percent",
+        "role": "progressbar",
+        "state": null,
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": "upload progress percent",
+        "role": "progressbar",
+        "state": null,
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": null,
+        "role": null,
+        "state": "closed",
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": null,
+        "role": null,
+        "state": "closed",
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": null,
+        "role": null,
+        "state": "closed",
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": null,
+        "role": null,
+        "state": "closed",
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": "",
+        "role": null,
+        "state": null,
+        "text": ""
+      }
+    ]
+  },
+  "statuses": [
+    200,
+    200,
+    200,
+    200,
+    200,
+    200
+  ],
+  "network_failures": []
+}
