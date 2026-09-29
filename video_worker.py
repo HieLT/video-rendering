@@ -72,45 +72,64 @@ async ({conversationId, msToken, fp, afterIndex = 0}) => {
   // Ignore previous submissions, including while the new message is in flight.
   const boundary = Math.max(afterIndex, latestUserIndex);
   const messages = allMessages.filter(m => !boundary || Number(m.index_in_conv) > boundary);
-  const texts = [];
-  let rejection = null;
-  for (const msg of messages) {
-    const code = String((msg.ext || {}).ai_creation_res_code);
+  const parseBlocks = msg => {
+    let blocks = msg.content;
+    if (typeof blocks === "string") {
+      try { blocks = JSON.parse(blocks); } catch (_) { blocks = null; }
+    }
+    return Array.isArray(blocks) ? blocks : (Array.isArray(msg.content_block) ? msg.content_block : []);
+  };
+  const assistants = messages.filter(m => Number(m.user_type) === 2);
+  const finished = msg => {
+    const ext = msg.ext || {}, blocks = parseBlocks(msg);
+    // Individual text blocks can finish while the assistant is still thinking.
+    if (Number(msg.content_status) !== 0 || blocks.some(b => b.is_finish === false)) return false;
+    return [true, 1, "1", "true"].includes(ext.is_finish)
+      || Boolean(ext.finish_reason_chat && Number(ext.finish_time_ms) > 0);
+  };
+  // Check the whole returned conversation, not just the latest response.
+  const responseGenerating = allMessages.some(m => Number(m.user_type) === 2 && !finished(m));
+  const responseFinished = assistants.length > 0 && assistants.every(finished);
+  const texts = [], videos = [], videoModels = [];
+  let accepted = false, knownRejection = null, terminalRejection = null;
+  for (const msg of assistants) {
+    const blocks = parseBlocks(msg);
+    const messageTexts = blocks.map(b => b.content?.text_block?.text || "").filter(Boolean);
+    texts.push(...messageTexts);
+    for (const text of messageTexts) {
+      // English/Japanese confirmation: the model name is inside bold markup.
+      const bold = [...text.matchAll(/\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi)];
+      if (bold.some(m => /Dreamina\s+Seedance\b/i.test(m[1] || m[2] || m[3] || ""))) accepted = true;
+    }
+    const ext = msg.ext || {};
+    const code = String(ext.ai_creation_res_code);
+    // Observed terminal video rejection; API metadata is unaffected by page translation.
+    const tools = Array.isArray(ext.ai_creation_tool_list) ? ext.ai_creation_tool_list : [];
+    if (code === "710082022" || tools.some(t => Number(t.status) === 5 && String(t.fail_code) === "710082022")) {
+      terminalRejection = {code: "710082022", reason: messageTexts.join("\n") || "Dola blocked the generated video", terminal: true};
+    }
     if (["710082031", "710082041"].includes(code)) {
-      let blocks = Array.isArray(msg.content) ? msg.content : (msg.content_block || []);
-      try { blocks = JSON.parse(msg.content); } catch (_) {}
-      if (!Array.isArray(blocks)) blocks = [];
-      const reason = blocks.map(b => (((b.content || {}).text_block || {}).text || "")).filter(Boolean).join("\n");
-      // A privacy rejection must never be replaced by a retryable response.
-      if (!rejection || code === "710082031") {
-        rejection = {code, reason: reason || "Dola rejected generation"};
-      }
+      knownRejection = {code, reason: messageTexts.join("\n") || "Dola rejected generation"};
     }
-  }
-  const videos = [];
-  const videoModels = [];
-  for (const msg of messages) {
-    let content = msg.content;
-    if (typeof content === "string") {
-      try { content = JSON.parse(content); } catch (e) { continue; }
-    }
-    if (!Array.isArray(content)) continue;
-    for (const block of content) {
-      const text = (((block.content || {}).text_block) || {}).text || "";
-      if (text) texts.push(text);
+    for (const block of blocks) {
       if (block.block_type !== 2074) continue;
-      const creations = (((block.content || {}).creation_block) || {}).creations || [];
-      for (const cre of creations) {
+      for (const cre of block.content?.creation_block?.creations || []) {
         if (cre.type !== 2) continue;
-        const url = ((cre.video || {}).download_url) || "";
+        const url = cre.video?.download_url || "";
         if (url.startsWith("http")) {
           videos.push(url);
-          videoModels.push((cre.video || {}).video_model || "");
+          videoModels.push(cre.video?.video_model || "");
         }
       }
     }
   }
-  return {ok: true, status: resp.status, texts, videos, videoModels, rejection, latestIndex};
+  // A finished response without confirmation is retryable, including generic errors.
+  // No response yet, unfinished messages, and unknown state must keep waiting.
+  const rejection = responseFinished && !responseGenerating && !videos.length && (terminalRejection || !accepted)
+    ? (terminalRejection || knownRejection || {code: "missing_confirmation", reason: texts.join("\n") || "Response finished without generation confirmation"})
+    : null;
+  return {ok: true, status: resp.status, texts, videos, videoModels, rejection,
+          latestIndex, accepted, responseFinished, responseGenerating};
 }
 """
 

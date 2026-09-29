@@ -1,0 +1,121 @@
+"""Offline tests for confirmation, completion, and idle-only retry decisions."""
+import asyncio
+import json
+from unittest.mock import patch
+from patchright.async_api import async_playwright
+from video_worker import POLL_JS, GenerationRejectedError
+import video_worker_ui as worker
+
+EN = 'The video will be generated using **the Dreamina Seedance 2.5 model. It will use 2 credits. You still have 0 video credits remaining today.**'
+JA = '\u52d5\u753b\u306f**Dreamina Seedance 2.5 \u30e2\u30c7\u30eb**\u3092\u4f7f\u7528\u3057\u3066\u751f\u6210\u3055\u308c\u307e\u3059\u3002'
+
+def user(index=1):
+    return {'user_type': 1, 'index_in_conv': str(index)}
+
+def reply(text, index=2, done=True, **extra):
+    result = {'user_type': 2, 'index_in_conv': str(index), 'content_status': 0 if done else 100,
+              'ext': {'is_finish': '1'} if done else {},
+              'content': [{'block_type': 10000, 'is_finish': True, 'content': {'text_block': {'text': text}}}]}
+    result.update(extra)
+    return result
+
+async def run():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.route("https://fixture.test/**", lambda route: route.fulfill(body="<html></html>", content_type="text/html"))
+            await page.goto("https://fixture.test/")
+            async def classify(messages, after=0):
+                return await page.evaluate("""async ({source, messages, after}) => {
+                    const previous = globalThis.fetch;
+                    globalThis.fetch = async () => ({ok:true, status:200, json:async () => ({downlink_body:{pull_singe_chain_downlink_body:{messages}}})});
+                    try { return await (eval('(' + source + ')'))({conversationId:'fixture', afterIndex:after}); }
+                    finally { globalThis.fetch = previous; }
+                }""", {'source': POLL_JS, 'messages': messages, 'after': after})
+            cases = [
+                ('English confirmation', [user(), reply(EN)], True, False),
+                ('Japanese confirmation', [user(), reply(JA)], True, False),
+                ('unbolded model', [user(), reply('Dreamina Seedance 2.5 failed')], False, True),
+                ('generic error', [user(), reply('An error occurred. Please try again.')], False, True),
+                ('still streaming despite finished block', [user(), reply('Error', done=False)], False, False),
+                ('no reply yet', [user()], False, False),
+                ('unknown finish state', [user(), reply('Error', ext={})], False, False),
+                ('another response still generating', [user(), reply('Error'), reply('Thinking', index=3, done=False)], False, False),
+                ('older response still generating', [reply('Thinking', index=1, done=False), user(2), reply('Error', index=3)], False, False),
+                ('old confirmation ignored', [user(), reply(EN), user(3), reply('Error', index=4)], False, True),
+                ('old rejection ignored', [user(), reply('Error'), user(3)], False, False),
+                ('accepted plus follow-up text', [user(), reply(EN), reply('Follow-up', index=3)], True, False),
+            ]
+            for name, messages, accepted, retry in cases:
+                result = await classify(messages)
+                assert result['accepted'] == accepted, (name, result)
+                assert bool(result['rejection']) == retry, (name, result)
+                print('PASS', name, flush=True)
+            blocked = reply('Translated text is irrelevant', index=7,
+                            ext={'is_finish':'1', 'ai_creation_res_code':'710082022'})
+            result = await classify([user(), reply(EN), blocked])
+            assert result['accepted'] and result['rejection']['terminal']
+            assert result['rejection']['code'] == '710082022'
+            assert not (await classify([user(), reply(EN), blocked, user(8)]))['rejection']
+            assert not (await classify([user(), reply(EN), blocked], after=7))['rejection']
+            assert not (await classify([user(), reply(EN), blocked, reply('Thinking', index=8, done=False)]))['rejection']
+            tool_blocked = reply('', index=7, ext={'is_finish':'1', 'ai_creation_tool_list':[
+                {'status':5, 'fail_code':710082022}]})
+            assert (await classify([user(), reply(EN), tool_blocked]))['rejection']['terminal']
+            print('PASS terminal API rejection after acceptance, translation independence, and retry boundaries')
+            video = reply('Video done')
+            video['content'].append({'block_type':2074, 'is_finish':True, 'content':{'creation_block':{'creations':[{'type':2,'video':{'download_url':'https://example.test/video.mp4'}}]}}})
+            result = await classify([user(),video])
+            assert result['videos'] and not result['rejection']
+            assert not (await classify([user(), reply(EN), blocked, video]))['rejection']
+            print('PASS completed video without confirmation and video precedence')
+            raw = reply(JA); raw['content'] = json.dumps(raw['content'])
+            assert (await classify([user(),raw]))['accepted']
+            assert not (await classify([user(),reply('Error')], after=2))['rejection']
+            print('PASS JSON string content and retry boundary')
+        finally:
+            await browser.close()
+
+    # Exercise the actual Python monitor: two consecutive idle responses are required.
+    idle = {'ok':True,'responseFinished':True,'responseGenerating':False,'latestIndex':2,
+            'texts':[], 'rejection':{'code':'missing_confirmation','reason':'error'}}
+    busy = {**idle,'responseFinished':False,'responseGenerating':True,'rejection':None}
+    accepted = {**idle,'accepted':True,'rejection':None}
+    done = {**idle,'rejection':None,'videos':['https://example.test/video.mp4']}
+    class Context:
+        async def cookies(self, *args): return []
+    class Page:
+        def __init__(self, sequence): self.sequence=iter(sequence); self.calls=0
+        def is_closed(self): return False
+        async def evaluate(self,*args):
+            self.calls+=1
+            return next(self.sequence)
+    class Download:
+        def stat(self): return type('Stat',(),{'st_size':100})()
+        def __str__(self): return 'fixture.mp4'
+    async def sleep(*args): pass
+    async def download(*args, **kwargs): return Download()
+    with patch.object(worker.asyncio,'sleep',sleep), patch.object(worker,'_download',download):
+        page=Page([idle,busy,idle,idle])
+        try:
+            await worker.poll_conversation('test',page,Context(),'fixture',30)
+        except GenerationRejectedError:
+            assert page.calls == 4
+        else: raise AssertionError('Expected retry only after two consecutive idle responses')
+        terminal = {**idle, 'latestIndex':7, 'accepted':True,
+                    'rejection':{'code':'710082022','reason':'blocked','terminal':True}}
+        page=Page([accepted,terminal,busy,terminal,terminal])
+        try:
+            await worker.poll_conversation('test',page,Context(),'fixture',30)
+        except GenerationRejectedError as exc:
+            assert page.calls == 5 and exc.code == '710082022' and exc.latest_index == 7
+        else: raise AssertionError('Expected terminal rejection to enter existing retry loop')
+        print('PASS terminal rejection after acceptance requires two consecutive idle polls')
+        page=Page([accepted,idle,idle,done])
+        result=await worker.poll_conversation('test',page,Context(),'fixture',30)
+        assert result['video_url'] and page.calls==4
+        print('PASS idle stability and accepted state retained without resubmission')
+
+if __name__ == '__main__':
+    asyncio.run(run())

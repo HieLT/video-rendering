@@ -1,50 +1,45 @@
-"""Offline checks for custom task metadata alongside upstream start/end."""
+﻿"""Offline regression for custom scene metadata with upstream batching."""
 import asyncio
-import importlib
 import unittest
-from unittest.mock import MagicMock, patch
-
+from unittest.mock import patch
+from test_video_batch import isolated_api
 from store import TaskStore
 
-
 class MergeCompatibilityTests(unittest.TestCase):
-    def test_start_end_and_scene_name_reach_storage_and_worker(self):
-        database = TaskStore(':memory:')
-        pool = MagicMock()
-        pool.accounts = ['acc1']
-        pool.available = True
-        with patch('store.TaskStore', return_value=database), \
-             patch('browser_pool.BrowserPool', return_value=pool):
-            server = importlib.import_module('server')
-        server.UPLOADED_REFERENCES['uploaded://test'] = (None, ['start.png', 'end.png'])
+    def test_named_start_end_batch(self):
+        ns, _ = isolated_api()
         queued = []
-
         def capture(coroutine):
             queued.append(coroutine.cr_frame.f_locals.copy())
             coroutine.close()
-
         try:
-            with patch.object(server, 'store', database), \
-                 patch.object(server, 'pool', pool), \
-                 patch.object(server, '_auth', return_value=server._anonymous_client()), \
-                 patch.object(server.asyncio, 'create_task', side_effect=capture):
-                result = asyncio.run(server.create_video(server.VideoGenRequest(
-                    name=' scene 2 ', prompt='A moving subject', start_end=True,
-                    reference_images=['uploaded://test'])))
-                row = database.get(result.id)
-                self.assertEqual(row['name'], 'scene 2')
+            with patch.object(ns['asyncio'], 'create_task', side_effect=capture):
+                req = ns['VideoGenRequest'](name=' scene 2 ', prompt='@Hero moves toward @Door', count=2,
+                    reference_images=['https://example.com/a.png','https://example.com/b.png'],
+                    reference_aliases=['Hero','Door'], start_end=True)
+                result = asyncio.run(ns['create_video'](req, None))
+            self.assertEqual(len(result.tasks), 2)
+            for index, task in enumerate(result.tasks, 1):
+                row = ns['store'].get(task.id)
+                self.assertEqual(row['name'], f'scene 2 ({index}/2)')
+                self.assertEqual(task.name, row['name'])
                 self.assertEqual(row['start_end'], 1)
-                self.assertIn('opening frame', result.prompt)
-                self.assertEqual(row['prompt'], result.prompt)
-                self.assertEqual(queued[0]['prompt'], result.prompt)
-                for i in range(205):
-                    database.create(str(i), 'model', 'prompt', '16:9', 10)
-                with patch.object(server, '_admin_auth'):
-                    self.assertEqual(len(asyncio.run(server.admin_tasks())['tasks']), 206)
+                self.assertEqual(row['batch_index'], index)
+                self.assertIn('opening frame', row['prompt'])
+                self.assertIn('@Image1 moves toward @Image2', row['prompt'])
+                self.assertEqual(queued[index-1]['prompt'], row['prompt'])
         finally:
-            server.UPLOADED_REFERENCES.pop('uploaded://test', None)
-            database._conn.close()
+            ns['store']._conn.close()
 
+    def test_unlimited_scene_search(self):
+        store = TaskStore(':memory:')
+        try:
+            for i in range(205):
+                store.create(str(i), 'model', 'prompt', '16:9', 10, name='scene')
+            self.assertEqual(len(store.recent_tasks(-1, query='scene', search_in='name')), 205)
+            store.create('plain', 'model', 'prompt', '16:9', 10)
+            self.assertEqual(store.get('plain')['name'], '')
+        finally:
+            store._conn.close()
 
-if __name__ == '__main__':
-    unittest.main()
+if __name__ == '__main__': unittest.main()

@@ -1,6 +1,6 @@
 # Context dự án Video Rendering
 
-Cập nhật: 25/09/2026. Tài liệu mô tả bản custom tại commit `bb8ea94`.
+Cập nhật: 30/09/2026. Nhánh custom gộp main `cf932627`, giữ tên scene và danh sách toàn bộ task; bỏ Try 30s.
 
 ## Tổng quan
 
@@ -12,9 +12,9 @@ Luồng chính: Dashboard/API → lưu task → chọn tài khoản trong pool �
 
 - Repo: https://github.com/HieLT/video-rendering
 - Chỉ phát triển trên nhánh `adding-more-scene`; `main` là nguồn cập nhật gốc.
-- `adding-more-scene` đã được push lên GitHub ở `bb8ea94`.
-- Đã gộp main đến `14c89c0` (`start/end ui`).
-- Lần kiểm tra remote gần nhất thấy main có commit mới `2eeeb88`, **chưa được gộp hoặc đánh giá trong bản hiện tại**. Trạng thái này có thể thay đổi sau ngày viết tài liệu.
+- Nền custom trước lần gộp này: `307beee8` (`update name scene`).
+- Main mới nhất đã fetch và gộp: `cf932627` (`last update`). Remote main đã được cập nhật lại lịch sử; tổ tiên chung là `13e7fc94`.
+- Đợt cập nhật 30/09 chưa push lên GitHub. Chỉ làm việc trên `adding-more-scene`, không sửa nhánh `main`.
 - Khi cập nhật main, giữ đầy đủ chức năng gốc và các phần custom bên dưới; đối chiếu code Git thực tế, không tự thay thế tính năng gốc bằng luồng suy đoán.
 
 ## Các chức năng hiện tại
@@ -30,20 +30,21 @@ Luồng chính: Dashboard/API → lưu task → chọn tài khoản trong pool �
 - Các thao tác tùy trạng thái gồm Open chat, Continue, Stop, Delete. Stop dừng theo dõi cục bộ, không hủy quá trình tạo trên Dola. Delete ẩn bản ghi và giữ file video.
 - Có khôi phục một số tác vụ sau restart dựa trên account/conversation ID đã lưu. Token ảnh upload và job quản trị nằm trong RAM, không bền qua restart.
 
-### Try 30s — chức năng custom
+### Ảnh reference, batch và các phần custom
 
-- Nằm cạnh Generate Video, có bước chọn tài khoản.
-- Lấy ảnh theo Image mode đang chọn, upload ảnh, điền prompt, chọn model/tỷ lệ rồi thử chọn 30s.
-- Với Start / End, dùng cùng chỉ dẫn prompt như luồng tạo video.
-- Không nhấn Enter để gửi, không bấm tạo video, không tạo bản ghi generation task.
-- Báo kết quả trên dashboard; giữ Chrome mở cả khi chọn thất bại để người dùng kiểm tra.
-- Chỉ kết thúc phiên khi người dùng đóng Chrome; dừng server cũng có thể kết thúc phiên.
-- Khóa tài khoản trong thời gian kiểm tra để tránh dùng chung profile với tác vụ khác.
+- Đã bỏ Try 30s theo yêu cầu: không còn nút, API hoặc worker thử riêng.
+- Ảnh reference hỗ trợ sắp xếp, đặt alias và gợi ý khi gõ `@`. Backend đổi alias sang `@ImageN` theo thứ tự ảnh cuối cùng.
+- Batch mới từ main tạo 1–5 video trong một request, kiểm tra quota nguyên batch và sao chép ảnh độc lập cho từng task. Thay thế ô Concurrent 1–100 cũ; pool/API key vẫn quyết định mức chạy đồng thời thực tế.
+- Với batch có tên, task có hậu tố `(1/3)`, `(2/3)`...; tên scene có thể tìm qua bộ lọc.
+- Giữ tên scene trong tên file MP4, kèm Task ID để tránh trùng tên giữa các task.
+- Giữ nút Reset quota custom, dùng bảng quota UUID mới.
+- Giữ thời gian theo dõi custom 7 ngày cho video 30s và Continue; đây không phải thời lượng video.
+- Giữ bộ lọc, copy prompt/ID và xóa nhiều bản ghi từ main; danh sách vẫn không giới hạn 50/200.
 
 ### Tài khoản, API key và chạy đồng thời
 
-- Profile riêng trong `accounts/<account>`; hỗ trợ các luồng Google, Facebook và nhập cookie.
-- Pool quản lý khóa tài khoản, quota, credit và cooldown; mặc định tối đa 5 tác vụ tạo video đồng thời toàn hệ thống.
+- Profile riêng trong `accounts/<account>`; hỗ trợ các luồng Google, Facebook và nhập cookie. Main mới theo dõi quota theo UUID, cửa sổ 24 giờ từ lần sử dụng.
+- Pool quản lý khóa tài khoản, quota, credit và cooldown. Giữ cấu hình custom: mặc định 100 tác vụ đồng thời và 500 tác vụ chờ/xử lý; biến môi trường hoặc `.env.local` có thể ghi đè. Số tài khoản đủ điều kiện vẫn giới hạn số tác vụ thực sự chạy.
 - Mỗi tài khoản chỉ có một hoạt động giữ khóa tại một thời điểm. API key có giới hạn riêng.
 - Dashboard tự polling accounts/jobs; các dòng GET lặp trong terminal không có nghĩa đang tạo nhiều video.
 
@@ -57,13 +58,13 @@ Hiển thị hoặc click được 30s không chứng minh server Dola chấp nh
 
 | File | Vai trò |
 | --- | --- |
-| `server.py` | FastAPI, xác thực, API task/admin, upload ảnh, phục hồi task và phiên Try 30s |
+| `server.py` | FastAPI, xác thực, API task/admin, upload ảnh, batch và phục hồi task |
 | `store.py` | SQLite task/API key, migration schema; lưu cả `name` và `start_end` |
 | `browser_pool.py` | Chọn tài khoản, khóa profile, quota/credit, điều phối |
 | `browser.py` | Mở persistent Chromium profile, proxy và extension |
 | `video_worker_ui.py` | Luồng tạo video qua giao diện, upload ảnh, polling |
 | `video_worker.py` | Các hàm protocol/polling, tải video và phân loại lỗi |
-| `try_30s.py` | Chuẩn bị bản nháp và thử thời lượng, giữ Chrome mở |
+| `reference_aliases.py` | Kiểm tra alias và ánh xạ tên ảnh sang `@ImageN` |
 | `media.py` | Kiểm tra URL và tải ảnh tham chiếu |
 | `account_import.py`, `add_account.py` | Nhập/đăng nhập tài khoản |
 | `web/index.html` | Toàn bộ dashboard |
@@ -134,9 +135,9 @@ C:\dola\.venv\Scripts\python.exe -m patchright install chromium
 Từ thư mục dự án:
 
 ```cmd
-C:\dola\.venv\Scripts\python.exe -m unittest test_merge_compatibility test_try_30s -v
+C:\dola\.venv\Scripts\python.exe -m unittest test_merge_compatibility test_reference_aliases test_account_uuid -v
 ```
 
-Các test này kiểm tra tích hợp tên scene/start-end, danh sách không giới hạn và vòng đời Try 30s bằng mock; không tạo video thật. Lần kiểm tra khi merge `bb8ea94`: 5 test pass, JavaScript hợp lệ. Chưa xác nhận end-to-end tạo video trên Dola sau merge.
+Các test này kiểm tra tên scene/start-end, alias, batch, danh sách không giới hạn và UUID bằng database tạm/mock; không tạo video thật. Các script `test_video_batch.py`, `test_video_duration.py`, `test_video_ratio.py`, `test_ratio_recovery.py`, `test_dashboard_delete.py` kiểm tra offline với dữ liệu/trang giả lập. Chưa xác nhận end-to-end tạo video trên Dola sau lần gộp 30/09.
 
 Không chạy toàn bộ `test_*.py` một cách mặc định: một số script từ main là thử nghiệm live, có thể mở profile, gửi request và tạo video thật.

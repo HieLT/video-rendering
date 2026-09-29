@@ -31,6 +31,9 @@ class TaskStore:
     def _init(self):
         with _LOCK:
             self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS generated_reset_tasks (task_id TEXT PRIMARY KEY)"
+            )
+            self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY,
@@ -60,8 +63,12 @@ class TaskStore:
             for column, definition in (
                 ("name", "TEXT DEFAULT ''"),
                 ("account", "TEXT"),
+                ("account_uuid", "TEXT"),
                 ("deleted_at", "REAL"),
                 ("start_end", "INTEGER DEFAULT 0"),
+                ("batch_id", "TEXT"),
+                ("batch_index", "INTEGER"),
+                ("batch_count", "INTEGER"),
                 ("conversation_id", "TEXT"),
                 ("deadline_at", "REAL"),
                 ("last_poll_at", "REAL"),
@@ -142,9 +149,12 @@ class TaskStore:
 
     # ===== tasks =====
 
-    def create(
+    def create(self, task_id, *args, **kwargs):
+        return self.create_batch([task_id], *args, **kwargs)
+
+    def create_batch(
         self,
-        task_id,
+        task_ids,
         model,
         prompt,
         ratio,
@@ -156,16 +166,20 @@ class TaskStore:
         daily_limit=0,
         concurrency_limit=0,
         max_pending=0,
-        name=None,
         start_end=False,
+        batch_id=None,
+        name=None,
     ):
+        if not 1 <= len(task_ids) <= 5 or len(set(task_ids)) != len(task_ids):
+            raise ValueError("Expected 1 to 5 unique task IDs")
         now = time.time()
-        with _LOCK:
+        with _LOCK, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
             if max_pending > 0:
                 pending = self._conn.execute(
                     "SELECT COUNT(*) FROM tasks WHERE status IN ('queued','processing')"
                 ).fetchone()[0]
-                if pending >= max_pending:
+                if pending + len(task_ids) > max_pending:
                     raise PendingTaskLimitExceeded(
                         f"Pending task queue has reached server limit ({max_pending})"
                     )
@@ -176,17 +190,17 @@ class TaskStore:
                     "WHERE api_key_hash=? AND date(created_at,'unixepoch','localtime')=?",
                     (api_key_hash, day),
                 ).fetchone()[0]
-                if used >= daily_limit:
+                if used + len(task_ids) > daily_limit:
                     raise TaskQuotaExceeded(
                         f"API Key daily quota exceeded ({daily_limit} tasks)"
                     )
-            self._conn.execute(
+            self._conn.executemany(
                 "INSERT INTO tasks ("
                 "id,model,prompt,ratio,duration,status,account,created_at,updated_at,"
                 "conversation_id,deadline_at,last_poll_at,failure_code,reference_images,"
-                "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,name,start_end"
-                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?,?)",
-                (
+                "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,start_end,batch_id,batch_index,batch_count,name"
+                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?,?,?,?,?)",
+                [(
                     task_id,
                     model,
                     prompt,
@@ -195,15 +209,18 @@ class TaskStore:
                     account,
                     now,
                     now,
-                    reference_images or "[]",
+                    (reference_images.get(task_id, "[]") if isinstance(reference_images, dict) else reference_images) or "[]",
                     api_key_hash,
                     api_key_name,
                     None,
                     None,
                     max(0, int(concurrency_limit or 0)),
-                    (name or "").strip(),
                     int(start_end),
-                ),
+                    batch_id,
+                    index,
+                    len(task_ids),
+                    ((name or "").strip() + (f" ({index}/{len(task_ids)})" if len(task_ids) > 1 and name else "")),
+                ) for index, task_id in enumerate(task_ids, 1)],
             )
             self._conn.commit()
 
@@ -273,17 +290,38 @@ class TaskStore:
                 "SELECT COUNT(*) FROM tasks WHERE status IN ('queued','processing')"
             ).fetchone()[0]
 
-    def recent_tasks(self, limit: int = 50, api_key_hash: str | None = None) -> list:
+    def recent_tasks(self, limit: int = 50, api_key_hash: str | None = None,
+                     task_id: str = "", query: str = "", search_in: str = "all",
+                     status: str = "", account: str = "", duration: int = 0) -> list:
+        fields = {"name": ["name"], "id": ["id"], "prompt": ["prompt"], "client": ["api_key_name"],
+                  "batch": ["batch_id"], "error": ["error"]}
+        clauses, params = [], []
+        if api_key_hash:
+            clauses.append("api_key_hash=?")
+            params.append(api_key_hash)
+        else:
+            clauses.append("deleted_at IS NULL")
+        if task_id.strip():
+            clauses.append("instr(lower(id),lower(?))>0")
+            params.append(task_id.strip())
+        if query.strip():
+            columns = fields.get(search_in, ["name", "id", "prompt", "api_key_name", "batch_id", "error", "account", "account_uuid", "status", "model"])
+            clauses.append("(" + " OR ".join(f"instr(lower(COALESCE({column},'')),lower(?))>0" for column in columns) + ")")
+            params.extend([query.strip()] * len(columns))
+        if status:
+            clauses.append("status=?")
+            params.append(status)
+        if account:
+            clauses.append("(account_uuid=? OR account=?)")
+            params.extend([account, account])
+        if duration:
+            clauses.append("duration=?")
+            params.append(duration)
+        params.append(limit)
         with _LOCK:
-            if api_key_hash:
-                rows = self._conn.execute(
-                    "SELECT * FROM tasks WHERE api_key_hash=? "
-                    "ORDER BY created_at DESC LIMIT ?", (api_key_hash, limit)
-                ).fetchall()
-            else:
-                rows = self._conn.execute(
-                    "SELECT * FROM tasks WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?", (limit,)
-                ).fetchall()
+            rows = self._conn.execute(
+                "SELECT * FROM tasks WHERE " + " AND ".join(clauses) +
+                " ORDER BY created_at DESC, id DESC LIMIT ?", params).fetchall()
         return [dict(r) for r in rows]
 
     def delete_task(self, task_id: str) -> bool:
@@ -319,6 +357,15 @@ class TaskStore:
             "queued": row["queued"] or 0,
         }
 
+    def bind_account_uuids(self, accounts):
+        """Pin historical task ownership once, including hidden/deleted task records."""
+        with _LOCK, self._conn:
+            for account in accounts:
+                self._conn.execute(
+                    "UPDATE tasks SET account_uuid=? WHERE account_uuid IS NULL AND account IN (?, ?)",
+                    (account["uuid"], account["name"], account["uuid"]),
+                )
+
     def stats(self) -> dict:
         """Daily completed/failed stats, success rate, 7-day trend, and total generated per account."""
         days = [(datetime.date.today() - datetime.timedelta(days=i)).isoformat()
@@ -333,8 +380,9 @@ class TaskStore:
                 per_day.append({"day": d[5:], "completed": row[0] or 0, "failed": row[1] or 0})
             t = per_day[-1]
             per_account = self._conn.execute(
-                "SELECT account, sum(status='completed') FROM tasks "
-                "WHERE account IS NOT NULL GROUP BY account"
+                "SELECT account_uuid, sum(status='completed') FROM tasks "
+                "WHERE account_uuid IS NOT NULL "
+                "AND id NOT IN (SELECT task_id FROM generated_reset_tasks) GROUP BY account_uuid"
             ).fetchall()
         completed, failed = t["completed"], t["failed"]
         total = completed + failed

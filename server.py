@@ -32,6 +32,7 @@ from account_import import parse_netscape, imported_account_flow, cookie_identit
 from add_account import add_account_flow
 from browser_pool import AllAccountsLimitedError, AllAccountsQuotaBlockedError, BrowserPool
 from media import download_reference_images, validate_reference_urls
+from reference_aliases import resolve_reference_aliases
 from store import PendingTaskLimitExceeded, TaskQuotaExceeded, TaskStore
 
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -41,6 +42,7 @@ app = FastAPI(title="Video Rendering", version="0.4.0")
 
 store = TaskStore(config.DB_PATH)
 pool = BrowserPool(max_concurrency=config.MAX_CONCURRENCY)
+store.bind_account_uuids(pool.list_accounts())
 
 app.mount("/videos", StaticFiles(directory=config.DOWNLOAD_DIR), name="videos")
 
@@ -170,7 +172,9 @@ class VideoGenRequest(BaseModel):
     duration: int | None = Field(None, ge=10, le=30)
     # Accepts durations: 10, 15, 30 seconds.
     reference_images: list[str] = Field(default_factory=list)
+    reference_aliases: list[str] = Field(default_factory=list)
     start_end: bool = False
+    count: int = Field(1, ge=1, le=5, strict=True)
 
 
 class TaskResponse(BaseModel):
@@ -181,6 +185,11 @@ class TaskResponse(BaseModel):
     prompt: str | None = None
     video_url: str | None = None
     error: str | None = None
+
+
+class BatchTaskResponse(BaseModel):
+    batch_id: str
+    tasks: list[TaskResponse]
 
 
 @app.post("/api/admin/reference-images", status_code=201)
@@ -236,8 +245,11 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         acquired = True
         store.update(task_id, status="processing", started_at=time.time())
 
+        def on_account_selected(account):
+            store.update(task_id, account=account, account_uuid=pool.account_uuid(account))
+
         def on_conversation_id(account, conversation_id, deadline_at):
-            store.update(task_id, status="processing", account=account,
+            store.update(task_id, status="processing", account=account, account_uuid=pool.account_uuid(account),
                          conversation_id=conversation_id, deadline_at=deadline_at,
                          last_poll_at=time.time())
 
@@ -263,10 +275,16 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         result = await pool.generate_video(
             prompt, ratio, duration, model,
             on_conversation_id=on_conversation_id, on_poll=on_poll,
-            reference_image_paths=reference_paths, name=task_name)
-        public_url = f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
+            reference_image_paths=reference_paths, name=task_name,
+            on_account_selected=on_account_selected)
+        video_path = Path(result["local_path"])
+        from video_worker import sanitize_filename_prefix
+        scene_prefix = sanitize_filename_prefix((store.get(task_id) or {}).get("name", ""))[:100]
+        named_path = video_path.with_name(f"{scene_prefix}{task_id}{video_path.suffix}")
+        video_path.replace(named_path)
+        public_url = f"{config.PUBLIC_BASE}/videos/{named_path.name}"
         store.update(task_id, status="completed", video_url=public_url,
-                     account=result.get("account"), last_poll_at=time.time(),
+                     account=result.get("account"), account_uuid=pool.account_uuid(result["account"]) if result.get("account") else None, last_poll_at=time.time(),
                      finished_at=time.time())
     except (AllAccountsLimitedError, AllAccountsQuotaBlockedError) as e:
         store.update(task_id, status="failed", error=str(e),
@@ -310,11 +328,15 @@ async def _resume_task(row: dict):
             store.update(task_id, last_poll_at=now)
 
         result = await pool.resume_video(
-            row["account"], row["conversation_id"], remaining, on_poll=on_poll,
-            name=row.get("name") or "")
-        public_url = f"{config.PUBLIC_BASE}/videos/{Path(result['local_path']).name}"
+            row["account"], row["conversation_id"], remaining, on_poll=on_poll, name=row.get("name") or "")
+        video_path = Path(result["local_path"])
+        from video_worker import sanitize_filename_prefix
+        scene_prefix = sanitize_filename_prefix((store.get(task_id) or {}).get("name", ""))[:100]
+        named_path = video_path.with_name(f"{scene_prefix}{task_id}{video_path.suffix}")
+        video_path.replace(named_path)
+        public_url = f"{config.PUBLIC_BASE}/videos/{named_path.name}"
         store.update(task_id, status="completed", video_url=public_url,
-                     account=result.get("account"), last_poll_at=time.time(),
+                     account=result.get("account"), account_uuid=pool.account_uuid(result["account"]) if result.get("account") else None, last_poll_at=time.time(),
                      finished_at=time.time())
     except Exception as e:
         store.update(task_id, status="failed" if isinstance(e, GenerationRejectedError) else "needs_recovery", error=str(e),
@@ -363,7 +385,7 @@ async def resume_incomplete_tasks():
         ))
 
 
-@app.post("/v1/videos/generations", response_model=TaskResponse)
+@app.post("/v1/videos/generations", response_model=TaskResponse | BatchTaskResponse)
 async def create_video(req: VideoGenRequest, authorization: str | None = Header(default=None)):
     client = _auth(authorization)
     duration = req.duration or 10
@@ -394,6 +416,7 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
             raise ValueError("Too many reference images")
         if len(set(reference_images)) != len(reference_images):
             raise ValueError("Duplicate reference entries are not supported")
+        resolved_prompt = resolve_reference_aliases(req.prompt, req.reference_aliases, image_count)
         if req.start_end and image_count != 2:
             raise ValueError("Start / End requires exactly two images: start first, end second")
     except ValueError as exc:
@@ -405,21 +428,45 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
         raise HTTPException(429, "Insufficient credits: All accounts lack points, waiting for refresh")
     if not pool.accounts:
         raise HTTPException(503, "no account in pool")
-    task_id = "video_" + uuid.uuid4().hex
+    task_ids = ["video_" + uuid.uuid4().hex for _ in range(req.count)]
+    batch_id = "batch_" + uuid.uuid4().hex if req.count > 1 else None
     ratio = _resolve_ratio(req.size, req.ratio)
-    prompt = req.prompt
+    prompt = resolved_prompt
     if req.start_end:
         prompt += ("\n\nUse the first uploaded image as the opening frame and the second "
                    "uploaded image as the ending frame. Create continuous motion between "
                    "these two frames, preserving their composition and subjects.")
+    # Each runner owns its uploaded copies and can clean them independently.
+    task_references = {}
+    copied_tokens = []
+    accepted = False
     try:
-        store.create(
-            task_id,
+        for task_id in task_ids:
+            references = []
+            for reference in reference_images:
+                uploaded = UPLOADED_REFERENCES.get(reference)
+                if uploaded:
+                    root = Path(tempfile.mkdtemp(prefix="dola_upload_"))
+                    token = "uploaded://" + uuid.uuid4().hex
+                    paths = []
+                    UPLOADED_REFERENCES[token] = (root, paths)
+                    copied_tokens.append(token)
+                    for index, source in enumerate(uploaded[1]):
+                        target = root / f"image_{index}{Path(source).suffix}"
+                        shutil.copy2(source, target)
+                        paths.append(str(target))
+                    references.append(token)
+                else:
+                    references.append(reference)
+            task_references[task_id] = references
+        store.create_batch(
+            task_ids,
             req.model,
             prompt,
             ratio or "default",
             duration,
-            reference_images=json.dumps(reference_images, ensure_ascii=False),
+            reference_images={key: json.dumps(value, ensure_ascii=False) for key, value in task_references.items()},
+            batch_id=batch_id,
             start_end=req.start_end,
             api_key_hash=client["api_key_hash"],
             api_key_name=client["api_key_name"],
@@ -428,14 +475,27 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
             max_pending=config.MAX_PENDING_TASKS,
             name=req.name,
         )
+        accepted = True
     except TaskQuotaExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
     except PendingTaskLimitExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
-    asyncio.create_task(_run_task(
-        task_id, req.model, prompt, ratio, duration, reference_images, client
-    ))
-    return TaskResponse(id=task_id, name=(req.name or "").strip(), status="queued", model=req.model, prompt=prompt)
+    finally:
+        if not accepted:
+            for token in copied_tokens:
+                root, _ = UPLOADED_REFERENCES.pop(token)
+                shutil.rmtree(root, ignore_errors=True)
+    for reference in reference_images:
+        uploaded = UPLOADED_REFERENCES.pop(reference, None)
+        if uploaded:
+            shutil.rmtree(uploaded[0], ignore_errors=True)
+    for task_id in task_ids:
+        asyncio.create_task(_run_task(
+            task_id, req.model, prompt, ratio, duration, task_references[task_id], client
+        ))
+    tasks = [TaskResponse(id=task_id, name=store.get(task_id).get("name", ""), status="queued", model=req.model, prompt=prompt)
+             for task_id in task_ids]
+    return BatchTaskResponse(batch_id=batch_id, tasks=tasks) if batch_id else tasks[0]
 
 
 @app.get("/v1/videos/{task_id}", response_model=TaskResponse)
@@ -475,7 +535,7 @@ class AccountPatch(BaseModel):
 
 
 class AccountAdd(BaseModel):
-    name: str
+    name: str = ""
     email: str = ""
     password: str = ""
     totp: str = ""
@@ -514,13 +574,14 @@ async def admin_login(body: AdminLogin):
 @app.get("/api/admin/accounts")
 async def admin_accounts(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"accounts": pool.list_accounts()}
+    return {"accounts": [pool.public_account(a) for a in pool.list_accounts()]}
 
 
 @app.patch("/api/admin/accounts/{name}")
 async def admin_account_patch(name: str, body: AccountPatch,
                               x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
+    name = pool.resolve_account(name)
     if name not in pool.accounts:
         raise HTTPException(404, "account not found")
     if body.scheduling is not None:
@@ -535,6 +596,7 @@ async def admin_account_patch(name: str, body: AccountPatch,
 @app.delete("/api/admin/accounts/{name}")
 async def admin_account_delete(name: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
+    name = pool.resolve_account(name)
     logger = logging.getLogger("uvicorn.error")
     if JOBS.get(name, {}).get("status") == "running":
         raise HTTPException(409, "Account login job is running")
@@ -569,6 +631,7 @@ async def admin_account_delete(name: str, x_admin_key: str | None = Header(defau
 @app.post("/api/admin/accounts/{name}/reset-quota")
 async def admin_account_reset_quota(name: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
+    name = pool.resolve_account(name) or name
     if name not in pool.accounts:
         raise HTTPException(404, "account not found")
     pool.reset_quota(name)
@@ -577,6 +640,7 @@ async def admin_account_reset_quota(name: str, x_admin_key: str | None = Header(
 @app.post("/api/admin/accounts/{name}/verify")
 async def admin_account_verify(name: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
+    name = pool.resolve_account(name)
     if name in WEB_SESSIONS or JOBS.get(name, {}).get("status") == "running":
         raise HTTPException(409, "Account browser or login job is active")
     try:
@@ -627,6 +691,7 @@ async def _run_open_web(name: str):
 @app.post("/api/admin/accounts/{name}/open-web", status_code=202)
 async def admin_account_open_web(name: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
+    name = pool.resolve_account(name)
     if name not in pool.accounts:
         raise HTTPException(404, "account not found")
     if JOBS.get(name, {}).get("status") == "running":
@@ -649,68 +714,6 @@ async def admin_account_open_web(name: str, x_admin_key: str | None = Header(def
     WEB_SESSIONS[name] = {"status": "starting", "started_at": time.time()}
     asyncio.create_task(_run_open_web(name))
     return {"ok": True, "status": "starting"}
-
-
-class Try30Request(BaseModel):
-    start_end: bool = False
-    prompt: str = Field(min_length=1)
-    model: str = "seedance-2.0"
-    ratio: str = "16:9"
-    reference_images: list[str] = Field(default_factory=list)
-
-
-async def _run_try_30s(name, body, uploads, lock):
-    job = JOBS[name]
-    try:
-        from try_30s import run_preview
-        prompt = body.prompt
-        if body.start_end:
-            prompt += ("\n\nUse the first uploaded image as the opening frame and the second "
-                       "uploaded image as the ending frame. Create continuous motion between "
-                       "these two frames, preserving their composition and subjects.")
-        await run_preview(name, prompt, body.model, body.ratio,
-                          [path for _, paths in uploads for path in paths], job)
-    except Exception as exc:
-        job["result"] = "failed"
-        job["error"] = str(exc)[:1000]
-    finally:
-        job["status"] = job.get("result", "failed")
-        job["browser_closed"] = True
-        pool._activities.pop(name, None)
-        WEB_SESSIONS.pop(name, None)
-        lock.release()
-        for root, _ in uploads:
-            shutil.rmtree(root, ignore_errors=True)
-
-
-@app.post("/api/admin/accounts/{name}/try-30s", status_code=202)
-async def admin_try_30s(name: str, body: Try30Request,
-                       x_admin_key: str | None = Header(default=None)):
-    _admin_auth(x_admin_key)
-    if name not in pool.accounts:
-        raise HTTPException(404, "account not found")
-    if not body.prompt.strip():
-        raise HTTPException(422, "Please enter a prompt")
-    if body.model not in ("seedance-2.0", "seedance-2.5") or body.ratio not in SIZE_TO_RATIO.values():
-        raise HTTPException(422, "Unsupported model or ratio")
-    if not config.EXTENSION_ENABLED:
-        raise HTTPException(409, "Enable the Dola extension before trying 30s")
-    lock = pool._locks.setdefault(name, asyncio.Lock())
-    if lock.locked() or name in WEB_SESSIONS or JOBS.get(name, {}).get("status") == "running":
-        raise HTTPException(409, "Account is busy. Close its browser or choose another account.")
-    tokens = list(dict.fromkeys(body.reference_images))
-    if any(token not in UPLOADED_REFERENCES for token in tokens):
-        raise HTTPException(422, "Reference images expired; please try again")
-    if body.start_end and sum(len(UPLOADED_REFERENCES[token][1]) for token in tokens) != 2:
-        raise HTTPException(422, "Start / End requires exactly two images: start first, end second")
-    await lock.acquire()
-    uploads = [UPLOADED_REFERENCES.pop(token) for token in tokens]
-    pool._activities[name] = "try_30s"
-    JOBS[name] = {"kind": "try_30s", "status": "running", "result": None,
-                  "message": "Opening Chrome...", "error": "", "browser_closed": False}
-    WEB_SESSIONS[name] = {"status": "starting"}
-    WEB_SESSIONS[name]["task"] = asyncio.create_task(_run_try_30s(name, body, uploads, lock))
-    return {"ok": True, "account": name}
 
 
 def find_duplicate_account(name, identity_hash):
@@ -768,6 +771,7 @@ async def _run_add_job(name: str, email: str, password: str, totp: str, method="
 @app.post("/api/admin/accounts/{name}/retry", status_code=202)
 async def retry_account(name: str, body: AccountAdd, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
+    name = pool.resolve_account(name)
     if name not in pool.accounts:
         raise HTTPException(404, "Account not found")
     lock = pool._locks.get(name)
@@ -808,12 +812,7 @@ async def retry_account(name: str, body: AccountAdd, x_admin_key: str | None = H
 @app.post("/api/admin/accounts", status_code=202)
 async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    if not NAME_RE.match(body.name):
-        raise HTTPException(400, "invalid account name")
-    if body.name in pool.accounts:
-        raise HTTPException(409, "account exists")
-    if JOBS.get(body.name, {}).get("status") == "running":
-        raise HTTPException(409, "add job running")
+    body.name = str(uuid.uuid4())
     if body.method not in ("google", "facebook", "cookies"):
         raise HTTPException(400, "Unsupported login method")
     if body.method in ("google", "facebook") and (not body.email or not body.password):
@@ -848,19 +847,23 @@ async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(d
     pool._conn.commit()
     JOBS[body.name] = {"kind": "add", "status": "running", "error": "", "started_at": time.time()}
     asyncio.create_task(_run_add_job(body.name, body.email, body.password, body.totp, body.method, cookies))
-    return {"ok": True, "job": "running"}
+    return {"ok": True, "job": "running", "uuid": body.name, "name": body.name}
 
 
 @app.get("/api/admin/jobs")
 async def admin_jobs(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"jobs": JOBS}
+    return {"jobs": {pool.account_uuid(name): job for name, job in JOBS.items()}}
 
 
 @app.get("/api/admin/tasks")
-async def admin_tasks(x_admin_key: str | None = Header(default=None)):
+async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None), task_id: str = "",
+                      query: str = "", search_in: str = "all", status: str = "",
+                      account: str = "", duration: int = 0):
     _admin_auth(x_admin_key)
-    return {"tasks": store.recent_tasks(limit=-1)}
+    return {"tasks": [{**t, "account": t.get("account_uuid") or (pool.account_uuid(t["account"]) if t.get("account") else None)}
+                      for t in store.recent_tasks(-1, task_id=task_id, query=query, search_in=search_in,
+                                                  status=status, account=account, duration=duration)]}
 
 
 TASK_ACTION_LOCKS = {}
@@ -940,7 +943,7 @@ async def admin_stats(x_admin_key: str | None = Header(default=None)):
     st["available_accounts"] = sum(1 for a in sched if not a["busy"])
     st["total_remaining"] = sum(a["remaining"] for a in sched)
     totals = st.pop("per_account_total", {})
-    st["per_account"] = [{**a, "completed_total": totals.get(a["name"], 0)} for a in accs]
+    st["per_account"] = [{**pool.public_account(a), "completed_total": totals.get(a["uuid"], 0)} for a in accs]
     return st
 
 

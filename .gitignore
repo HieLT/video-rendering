@@ -35,3 +35,7 @@ __pycache__/
 
 # Local diagnostic browser sessions
 diagnostic_profile/
+diagnostics/
+
+# SQLite safety backups contain the same private data as databases
+*.db*.bak

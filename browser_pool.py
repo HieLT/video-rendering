@@ -1,9 +1,11 @@
 """Browser Account Pool: Manages accounts/ profiles with concurrency control and daily limits."""
 import asyncio
-from contextlib import asynccontextmanager
+import json
+from contextlib import asynccontextmanager, closing
 import shutil
 import sqlite3
 import time
+import uuid
 from datetime import date, datetime, time as dt_time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -66,6 +68,7 @@ class BrowserPool:
             """
         )
         self._conn.commit()
+        self._init_account_uuids()
         # Legacy migration: add metadata columns
         for column, definition in (
             ("auth_state", "TEXT DEFAULT 'unverified'"),
@@ -91,6 +94,76 @@ class BrowserPool:
             except sqlite3.OperationalError:
                 pass
 
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS identity_usage (account TEXT, day TEXT, used INTEGER, "
+            "PRIMARY KEY(account, day))"
+        )
+        self._conn.commit()
+        # Move legacy profile counters once, while their metadata is available.
+        for row in self._conn.execute("SELECT name FROM accounts_meta").fetchall():
+            self._usage_key(row["name"])
+        self._init_rolling_usage()
+
+    def _init_account_uuids(self):
+        # Additive migration: profile paths, task references and usage keys stay intact.
+        columns = {r[1] for r in self._conn.execute("PRAGMA table_info(accounts_meta)")}
+        if "uuid" not in columns:
+            with closing(sqlite3.connect(str(self._conn.execute("PRAGMA database_list").fetchone()[2]) + ".before_uuid.bak")) as backup:
+                self._conn.backup(backup)
+        with self._conn:
+            if "uuid" not in columns:
+                self._conn.execute("ALTER TABLE accounts_meta ADD COLUMN uuid TEXT")
+            for row in self._conn.execute("SELECT name FROM accounts_meta WHERE uuid IS NULL").fetchall():
+                self._conn.execute("UPDATE accounts_meta SET uuid=? WHERE name=?", (self._uuid_for_name(row[0]), row[0]))
+            self._conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS accounts_uuid ON accounts_meta(uuid)")
+
+    @staticmethod
+    def _uuid_for_name(name):
+        try:
+            return str(uuid.UUID(name))
+        except ValueError:
+            return str(uuid.uuid4())
+
+    def public_account(self, account):
+        return {**account, "name": account["uuid"]}
+
+    def resolve_account(self, identifier):
+        row = self._conn.execute("SELECT name FROM accounts_meta WHERE uuid=?", (identifier,)).fetchone()
+        return row[0] if row else identifier
+
+    def account_uuid(self, name):
+        row = self._meta(name)
+        return row["uuid"] if row else name
+
+    def _usage_key(self, account: str) -> str:
+        meta = self._meta(account)
+        email = (meta["email"] or "").strip().lower() if meta else ""
+        account_type = (meta["account_type"] or "unknown").strip().lower() if meta else "unknown"
+        fallback = json.dumps(["profile", account], ensure_ascii=True)
+        key = json.dumps(["identity", email, account_type], ensure_ascii=True) if email else fallback
+        # Transfer and delete in one transaction so restarts cannot double count.
+        with self._conn:
+            for row in self._conn.execute(
+                "SELECT day, used FROM usage WHERE account=?", (account,)
+            ).fetchall():
+                self._conn.execute(
+                    "INSERT INTO identity_usage(account, day, used) VALUES (?,?,?) "
+                    "ON CONFLICT(account, day) DO UPDATE SET used=used+excluded.used",
+                    (key, row["day"], row["used"]),
+                )
+            self._conn.execute("DELETE FROM usage WHERE account=?", (account,))
+            if key != fallback:
+                for row in self._conn.execute(
+                    "SELECT day, used FROM identity_usage WHERE account=?", (fallback,)
+                ).fetchall():
+                    self._conn.execute(
+                        "INSERT INTO identity_usage(account, day, used) VALUES (?,?,?) "
+                        "ON CONFLICT(account, day) DO UPDATE SET used=used+excluded.used",
+                        (key, row["day"], row["used"]),
+                    )
+                self._conn.execute("DELETE FROM identity_usage WHERE account=?", (fallback,))
+        return key
+
     @asynccontextmanager
     async def account_activity(self, account: str, activity: str):
         lock = self._locks.setdefault(account, asyncio.Lock())
@@ -105,8 +178,8 @@ class BrowserPool:
 
     def _ensure_meta(self, name: str):
         self._conn.execute(
-            "INSERT OR IGNORE INTO accounts_meta (name, created_at) VALUES (?, ?)",
-            (name, time.time()),
+            "INSERT OR IGNORE INTO accounts_meta (name, created_at, uuid) VALUES (?, ?, ?)",
+            (name, time.time(), self._uuid_for_name(name)),
         )
         self._conn.commit()
 
@@ -124,32 +197,43 @@ class BrowserPool:
         return self._conn.execute(
             "SELECT * FROM accounts_meta WHERE name=?", (name,)).fetchone()
 
+    def _init_rolling_usage(self):
+        # Keep the old day buckets intact; migrate each UUID only once.
+        with self._conn:
+            self._conn.execute("CREATE TABLE IF NOT EXISTS account_usage (uuid TEXT PRIMARY KEY, used INTEGER NOT NULL, last_used_at REAL NOT NULL)")
+        for name in self.accounts:
+            self._rolling_usage(name)
+
+    def _rolling_usage(self, account):
+        meta = self._meta(account)
+        identifier = meta["uuid"]
+        row = self._conn.execute("SELECT * FROM account_usage WHERE uuid=?", (identifier,)).fetchone()
+        if row is None:
+            last = meta["last_used_at"] or 0
+            day = datetime.fromtimestamp(last).date().isoformat() if last else date.today().isoformat()
+            legacy = self._conn.execute("SELECT used FROM identity_usage WHERE account=? AND day=?", (self._usage_key(account), day)).fetchone()
+            with self._conn:
+                self._conn.execute("INSERT OR IGNORE INTO account_usage VALUES (?, ?, ?)", (identifier, legacy[0] if legacy else 0, last))
+                # Convert existing midnight blocks to the same per-account reset deadline.
+                self._conn.execute("UPDATE accounts_meta SET rate_limited_until=CASE WHEN rate_limited_until>0 THEN ? ELSE 0 END, quota_blocked_until=CASE WHEN quota_blocked_until>0 THEN ? ELSE 0 END WHERE name=?", (last + 86400 if last else 0, last + 86400 if last else 0, account))
+            row = self._conn.execute("SELECT * FROM account_usage WHERE uuid=?", (identifier,)).fetchone()
+        return row
+
     def used_today(self, account: str) -> int:
-        row = self._conn.execute(
-            "SELECT used FROM usage WHERE account=? AND day=?",
-            (account, date.today().isoformat()),
-        ).fetchone()
-        return row[0] if row else 0
+        row = self._rolling_usage(account)
+        last = self._meta(account)["last_used_at"] or row["last_used_at"]
+        return row["used"] if last and time.time() < last + 86400 else 0
 
     def _claim(self, account: str):
-        self._conn.execute(
-            "INSERT INTO usage(account, day, used) VALUES (?,?,1) "
-            "ON CONFLICT(account, day) DO UPDATE SET used=used+1",
-            (account, date.today().isoformat()),
-        )
-        self._conn.commit()
+        used = self.used_today(account)
+        now = time.time()
+        with self._conn:
+            self._conn.execute("UPDATE account_usage SET used=?, last_used_at=? WHERE uuid=?", (used + 1, now, self.account_uuid(account)))
+            self._conn.execute("UPDATE accounts_meta SET last_used_at=? WHERE name=?", (now, account))
 
-    def _next_limit_reset(self) -> float:
-        """Calculates next daily quota reset timestamp."""
-        try:
-            tz = ZoneInfo(config.LIMIT_RESET_TZ)
-        except Exception:
-            # Fallback to fixed offset if tzdata is not installed.
-            offsets = {"Asia/Tokyo": 9, "Asia/Hong_Kong": 8, "UTC": 0}
-            tz = timezone(timedelta(hours=offsets.get(config.LIMIT_RESET_TZ, 9)))
-        now = datetime.now(tz)
-        next_day = now.date() + timedelta(days=1)
-        return datetime.combine(next_day, dt_time.min, tzinfo=tz).timestamp()
+    def _next_limit_reset(self, account: str) -> float:
+        last = self._meta(account)["last_used_at"] or time.time()
+        return last + 86400
 
     def _clear_expired_rate_limits(self):
         now = time.time()
@@ -162,24 +246,24 @@ class BrowserPool:
             self._conn.commit()
 
     def _mark_quota_blocked(self, account: str, reason: str = ""):
-        self._conn.execute(
-            "UPDATE accounts_meta SET quota_blocked_until=?, quota_reason=?, last_used_at=? WHERE name=?",
-            (self._next_limit_reset(), reason[:300], time.time(), account),
-        )
-        self._conn.commit()
+        used = self.used_today(account)
+        now = time.time()
+        with self._conn:
+            self._conn.execute("UPDATE account_usage SET used=?, last_used_at=? WHERE uuid=?", (used, now, self.account_uuid(account)))
+            self._conn.execute(
+                "UPDATE accounts_meta SET quota_blocked_until=?, quota_reason=?, last_used_at=? WHERE name=?",
+                (now + 86400, reason[:300], now, account),
+            )
 
     def _mark_daily_limit(self, account: str, reason: str = ""):
-        """Marks account as reaching daily limit until next reset."""
-        self._conn.execute(
-            "INSERT INTO usage(account, day, used) VALUES (?,?,?) "
-            "ON CONFLICT(account, day) DO UPDATE SET used=MAX(used, excluded.used)",
-            (account, date.today().isoformat(), DAILY_LIMIT),
-        )
-        self._conn.execute(
-            "UPDATE accounts_meta SET last_used_at=?, rate_limited_until=?, limit_reason=? WHERE name=?",
-            (time.time(), self._next_limit_reset(), reason[:300], account),
-        )
-        self._conn.commit()
+        used = self.used_today(account)
+        now = time.time()
+        with self._conn:
+            self._conn.execute("UPDATE account_usage SET used=?, last_used_at=? WHERE uuid=?", (max(used, DAILY_LIMIT), now, self.account_uuid(account)))
+            self._conn.execute(
+                "UPDATE accounts_meta SET last_used_at=?, rate_limited_until=?, limit_reason=? WHERE name=?",
+                (now, now + 86400, reason[:300], account),
+            )
 
     def list_accounts(self) -> list:
         """Dashboard view: combines metadata, quota, and busy status."""
@@ -192,6 +276,7 @@ class BrowserPool:
             lock = self._locks.get(a)
             out.append({
                 "name": a,
+                "uuid": m["uuid"],
                 "auth_state": m["auth_state"],
                 "auth_error": m["auth_error"],
                 "account_type": m["account_type"] if m else "unknown",
@@ -214,6 +299,7 @@ class BrowserPool:
                 "credit_balance": m["credit_balance"] if m else None,
                 "credit_checked_at": m["credit_checked_at"] if m else 0,
                 "used_today": used,
+                "usage_reset_at": (m["last_used_at"] or 0) + 86400 if used else 0,
                 "limit": DAILY_LIMIT,
                 "remaining": max(0, DAILY_LIMIT - used),
                 "busy": bool(lock and lock.locked()),
@@ -267,8 +353,8 @@ class BrowserPool:
 
     def reset_quota(self, account: str):
         self._conn.execute(
-            "UPDATE usage SET used=0 WHERE account=? AND day=?",
-            (account, date.today().isoformat()),
+            "UPDATE account_usage SET used=0 WHERE uuid=?",
+            (self.account_uuid(account),),
         )
         self._conn.execute(
             "UPDATE accounts_meta SET rate_limited_until=0, limit_reason='', quota_blocked_until=0, quota_reason='' WHERE name=?",
@@ -337,7 +423,7 @@ class BrowserPool:
         if balance < 2:
             self._conn.execute(
                 "UPDATE accounts_meta SET quota_blocked_until=?, quota_reason=? WHERE name=?",
-                (self._next_limit_reset(), source[:300] or "Insufficient credits", account),
+                (self._next_limit_reset(account), source[:300] or "Insufficient credits", account),
             )
         self._conn.commit()
 
@@ -407,7 +493,7 @@ class BrowserPool:
                              model: str = "seedance_v2.0", on_conversation_id=None,
                              on_poll=None, on_balance=None,
                              reference_image_paths: list[str] | None = None,
-                             name: str = "") -> dict:
+                             on_account_selected=None, name: str = "") -> dict:
         """Picks an idle schedulable account; automatically rotates on quota/risk limits."""
         async with self.semaphore:
             last_err = None
@@ -423,6 +509,8 @@ class BrowserPool:
                 async with self.account_activity(account, "generating"):
                     if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
                         continue  # State changed while waiting
+                    if on_account_selected:
+                        on_account_selected(account)
                     submit_attempted = False
 
                     def on_submit():

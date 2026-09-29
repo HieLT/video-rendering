@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import aiohttp
-from patchright.async_api import async_playwright
+from patchright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 from gap import find_gap_x
 
@@ -471,9 +471,11 @@ async def _preflight_balance(page, ms_token: str, fp: str, required: int) -> dic
     try:
         result = await asyncio.wait_for(page.evaluate(
             BALANCE_JS, {"msToken": ms_token, "fp": fp}), timeout=30)
-        balance, daily_limited, source = _parse_balance_texts(result.get("texts", []))
-        if daily_limited:
-            raise AccountLimitedError(f"Account daily generation limit: {source[:120]}")
+        # Historical limit notices do not describe the current request's quota.
+        # Only poll_conversation may mark a daily limit from a new response.
+        texts = [text for text in result.get("texts", [])
+                 if not DAILY_LIMIT_PATTERN.search(text)]
+        balance, _, source = _parse_balance_texts(texts)
         if balance is not None and balance < required:
             raise CreditInsufficientError(
                 f"Insufficient points: current {balance}, required {required} (source: {source[:120]})"
@@ -496,8 +498,10 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     last_callback = 0.0
     poll_failures = 0
     tab_recoveries = 0
+    accepted = False
+    idle_rejection_index = None
     while time.time() - start < timeout:
-        await asyncio.sleep(5)
+        await asyncio.sleep(5 if accepted else 2)
         try:
             if page.is_closed():
                 if tab_recoveries >= 1:
@@ -511,18 +515,30 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
                 POLL_JS, {"conversationId": conversation_id, "msToken": ms_token, "fp": fp,
                           "afterIndex": after_index}), timeout=30)
         except Exception as e:
+            idle_rejection_index = None
             poll_failures += 1
             _log(f"  Polling exception attempt={poll_failures}/3: {e}")
             if poll_failures >= 3:
                 raise RuntimeError("Conversation monitoring interrupted; open conversation to recover") from e
             continue
         poll_failures = 0
-        if poll.get("rejection"):
-            rejection = poll["rejection"]
-            _log(f"[{account}] generation rejected code={rejection['code']} reason={rejection['reason']}")
-            raise GenerationRejectedError(
-                f"Dola rejection ({rejection['code']}): {rejection['reason']}",
-                code=rejection['code'], latest_index=poll.get("latestIndex", 0))
+        if not poll.get("ok"):
+            idle_rejection_index = None
+            continue
+        if poll.get("accepted") and not accepted:
+            accepted = True
+            _log(f"[{account}] Dreamina Seedance confirmation received; waiting for video without resubmission")
+        rejection = poll.get("rejection")
+        if rejection and (not accepted or rejection.get("terminal")) and not poll.get("videos") and poll.get("responseFinished") and not poll.get("responseGenerating"):
+            current_index = poll.get("latestIndex", 0)
+            if idle_rejection_index == current_index:
+                _log(f"[{account}] response rejected code={rejection['code']}; no response generating")
+                raise GenerationRejectedError(
+                    f"Dola response ({rejection['code']}): {rejection['reason']}",
+                    code=rejection['code'], latest_index=current_index)
+            idle_rejection_index = current_index
+        else:
+            idle_rejection_index = None
         now = time.time()
         if on_poll and now - last_callback >= 30:
             on_poll(now)
@@ -531,9 +547,9 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             balance, _, source = _parse_balance_texts([text])
             if balance is not None and on_balance:
                 on_balance(balance, source)
-            if DAILY_LIMIT_PATTERN.search(text):
+            if not accepted and DAILY_LIMIT_PATTERN.search(text):
                 raise AccountLimitedError(f"Account daily limit reached: {text[:120]}")
-            if CREDIT_FAIL_PATTERN.search(text):
+            if not accepted and CREDIT_FAIL_PATTERN.search(text):
                 raise CreditError(f"Insufficient quota: {text[:80]}")
         if poll.get("videos"):
             video_models = poll.get("videoModels", [])
@@ -544,7 +560,8 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
             _log(f"[{account}] Downloaded {local} ({local.stat().st_size / 1e6:.1f} MB)")
             return {"video_url": url, "local_path": str(local),
                     "conversation_id": conversation_id, "account": account}
-        _log(f"  ...Generating ({int(time.time() - start)}s)")
+        phase = "Waiting for video" if accepted else "Waiting for completed Dola response / confirmation"
+        _log(f"[{account}] {phase} ({int(time.time() - start)}s)")
     raise TimeoutError(f"No video generated within {timeout}s (conversation_id={conversation_id})")
 
 
@@ -766,7 +783,7 @@ async def _start_composer_trace(page, account: str):
                 .map(e => (e.innerText || '').trim().slice(0, 80)) : [];
             return {path: location.pathname, controls,
                 images: root?.querySelectorAll('[data-kind="image"]').length || 0,
-                video: controls.some(t => /(?:^|\s)\d+\s*(?:s|?)(?:$|\s)/.test(t))};
+                video: controls.some(t => /(?:^|\s)\d+\s*(?:s|\u79d2)(?:$|\s)/.test(t))};
         };
         const emit = event => window.__dolaComposerTrace({time: Date.now(), ...event}).catch(() => {});
         document.addEventListener('click', e => {
@@ -802,31 +819,149 @@ async def _start_composer_trace(page, account: str):
     return finish
 
 
+def _reference_image_previews(page):
+    # Attachment cards are siblings of the inner editor/control container.
+    # Use the same outer surface as attach_reference_images.
+    surface = page.locator('.guidance-input-surface:visible').filter(
+        has=page.locator('[contenteditable="true"]')).last
+    return surface.locator('[data-kind="image"] img')
+
+
+async def _select_video_ratio(page, ratio: str, account: str, expected_images: int = 0):
+    """Recover frame throttling in minimized windows without forcing a click."""
+    try:
+        return await _select_video_ratio_once(page, ratio, account, expected_images)
+    except PlaywrightTimeoutError:
+        session = await page.context.new_cdp_session(page)
+        try:
+            window = await session.send("Browser.getWindowForTarget")
+            state = window["bounds"]["windowState"]
+            _log(f"[{account}] ratio timed out; window_state={state}; restoring focus and retrying once")
+            if state == "minimized":
+                await session.send("Browser.setWindowBounds", {
+                    "windowId": window["windowId"], "bounds": {"windowState": "normal"}})
+        finally:
+            await session.detach()
+        await page.bring_to_front()
+        await page.keyboard.press("Escape")
+        return await _select_video_ratio_once(page, ratio, account, expected_images)
+
+
+async def _select_video_ratio_once(page, ratio: str, account: str, expected_images: int = 0):
+    """Select only inside the ratio control's popup, never sidebar draft text."""
+    _, root = await _composer(page)
+    images = _reference_image_previews(page)
+    before = await images.evaluate_all("es => es.map(e => [e.getAttribute('src'), e.alt])")
+    if len(before) != expected_images:
+        raise RuntimeError(
+            f"Reference image count changed before ratio selection: expected={expected_images}, actual={len(before)}")
+
+    control = root.locator('button[data-input-engine-actionbar-control-key="video-ratio"]')
+    if not await control.count():
+        control = root.get_by_role(
+            "button", name=re.compile(r"^(?:\u6bd4\u7387|(?:Aspect )?ratio)(?:\s|$)", re.I))
+        if not await control.count():
+            control = root.get_by_role("button", name=VIDEO_DURATION_RE)
+    if await control.count() != 1:
+        raise RuntimeError("Could not identify a unique ratio control")
+    await control.click(timeout=3000)
+    popup_id = await control.get_attribute("aria-controls")
+    if popup_id:
+        popup = page.locator('[id=' + json.dumps(popup_id) + ']').locator('visible=true')
+    else:
+        popup = page.locator(
+            '[role="menu"]:visible, [role="listbox"]:visible, '
+            '[role="dialog"]:visible, [data-slot="popover-content"]:visible'
+        ).filter(has=page.get_by_text(ratio, exact=True))
+    await popup.first.wait_for(state="visible", timeout=3000)
+    if await popup.count() != 1:
+        raise RuntimeError("Could not identify a unique ratio popup")
+    option = popup.get_by_text(ratio, exact=True).locator('visible=true')
+    await option.first.wait_for(state="visible", timeout=3000)
+    if await option.count() != 1:
+        raise RuntimeError("Multiple visible ratio options in ratio popup")
+    row = option.locator(
+        'xpath=ancestor-or-self::*[self::button or @role="menuitem" '
+        'or @role="menuitemradio" or @role="option"][1]'
+    )
+    target = row if await row.count() == 1 else option
+    await target.click(timeout=3000)
+    await popup.wait_for(state="hidden", timeout=3000)
+
+    # Read back the retained setting and attachments after frontend reconciliation.
+    expected = re.compile(rf"(?<![\d:]){re.escape(ratio)}(?![\d:])")
+    stable = 0
+    for _ in range(12):
+        await page.wait_for_timeout(250)
+        _, root = await _composer(page)
+        if not await _video_composer_ready(root, bool(expected_images)):
+            raise RuntimeError("Video composer reset during ratio selection")
+        after = await _reference_image_previews(page).evaluate_all(
+            "es => es.map(e => [e.getAttribute('src'), e.alt])")
+        if after != before:
+            raise RuntimeError("Reference images changed during ratio selection")
+        stable = stable + 1 if expected.search(await control.inner_text(timeout=3000)) else 0
+        if stable >= 3:
+            _log(f"[{account}] ratio verified: {ratio}; reference_images={len(after)}")
+            return
+    raise RuntimeError(f"Ratio control did not retain requested ratio: {ratio}")
+
+
 async def _select_video_duration(page, duration: int, account: str):
     expected = re.compile(rf"^{duration}\s*(?:s|\u79d2)$", re.I)
     try:
-        _, root = await _composer(page)
-        control = root.get_by_role("button", name=VIDEO_DURATION_RE).first
-        # Ratio selection may leave the shared settings popup open.
-        # Only consider visible exact matches, never hidden or historical text.
-        options = page.get_by_text(expected).locator("visible=true")
-        if not await options.count():
-            await control.click(timeout=5000)
-        await options.first.wait_for(state="visible", timeout=10000)
-        if await options.count() != 1:
-            raise RuntimeError("Multiple visible duration options match the request")
-        await options.first.click(timeout=5000)
-        # A successful click alone does not prove React retained the selection.
-        for _ in range(20):
-            _, root = await _composer(page)
-            control = root.get_by_role("button", name=VIDEO_DURATION_RE).first
-            selected = (await control.inner_text()).strip()
-            if expected.fullmatch(selected):
+        for attempt in range(1, 4):
+            try:
+                _, root = await _composer(page)
+                control = root.get_by_role("button", name=VIDEO_DURATION_RE).first
+                selected = (await control.inner_text()).strip()
+                if not expected.fullmatch(selected):
+                    # Reopen on every attempt: React can replace the popup and its id.
+                    await page.keyboard.press("Escape")
+                    await control.click(timeout=5000)
+                    popup_id = await control.get_attribute("aria-controls")
+                    if popup_id:
+                        popup = page.locator('[id=' + json.dumps(popup_id) + ']').locator("visible=true")
+                    else:
+                        popup = page.locator(
+                            '[role="menu"]:visible, [role="listbox"]:visible, '
+                            '[role="dialog"]:visible, [data-slot="popover-content"]:visible'
+                        ).filter(has=page.get_by_text(expected))
+                    await popup.first.wait_for(state="visible", timeout=5000)
+                    # Opening animations can still be running after visibility changes.
+                    await page.wait_for_timeout(350)
+                    if await popup.count() > 1:
+                        raise RuntimeError("Could not identify a unique duration popup")
+                    options = popup.get_by_text(expected).locator("visible=true")
+                    await options.first.wait_for(state="visible", timeout=5000)
+                    if await options.count() > 1:
+                        raise RuntimeError("Multiple visible duration options in duration popup")
+                    # Click the interactive row instead of its animated text span.
+                    row = options.locator(
+                        'xpath=ancestor-or-self::*[self::button or @role="menuitem" '
+                        'or @role="menuitemradio" or @role="option"][1]'
+                    )
+                    target = row if await row.count() == 1 else options
+                    await target.click(timeout=5000)
                 await page.keyboard.press("Escape")
-                _log(f"[{account}] duration verified: {selected}")
-                return
-            await page.wait_for_timeout(250)
-        raise RuntimeError(f"Duration control still shows {selected!r}")
+                # Require several retained readings, including after the popup closes.
+                stable = 0
+                for _ in range(20):
+                    await page.wait_for_timeout(250)
+                    _, root = await _composer(page)
+                    control = root.get_by_role("button", name=VIDEO_DURATION_RE).first
+                    selected = (await control.inner_text()).strip()
+                    stable = stable + 1 if expected.fullmatch(selected) else 0
+                    if stable >= 3:
+                        _log(f"[{account}] duration verified: {selected} attempt={attempt}")
+                        return
+                raise PlaywrightTimeoutError(f"Duration control did not retain selection: {selected!r}")
+            except PlaywrightTimeoutError:
+                if attempt == 3:
+                    raise
+                _log(f"[{account}] duration UI changed or timed out; reopening attempt={attempt + 1}")
+                await page.keyboard.press("Escape")
+                await page.wait_for_timeout(500)
     except Exception as exc:
         _log(f"[{account}] duration selection failed type={type(exc).__name__}: {exc}")
         await _composer_snapshot(page, account, "duration_failed")
@@ -881,7 +1016,8 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             await _preflight_balance(page, ms_token, fp, config.VIDEO_REQUIRED_POINTS)
 
             after_index = 0
-            for retry in range(6):
+            indexed_conversation_id = None
+            for retry in range(11):
                 # ---- UI Submission ----
                 for setup_attempt in range(3):
                     try:
@@ -951,14 +1087,8 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                             raise RuntimeError(f"Failed to set model ({model_key}): {str(e)[:120]}") from e
                         if ratio:
                             try:
-                                _, root = await _composer(page)
-                                ratio_control = root.get_by_text(re.compile(r"^(?:\u6bd4\u7387|(?:Aspect )?ratio)$", re.I)).first
-                                if await ratio_control.is_visible():
-                                    await ratio_control.click(timeout=3000)
-                                else:
-                                    await root.get_by_role("button", name=VIDEO_DURATION_RE).first.click(timeout=3000)
-                                await page.wait_for_timeout(500)
-                                await page.click(f"text={ratio}", timeout=3000)
+                                await _select_video_ratio(
+                                    page, ratio, account, len(reference_image_paths or []))
                             except Exception as e:
                                 _log(f"[{account}] ratio selection failed type={type(e).__name__}: {e}")
                                 await _composer_snapshot(page, account, "ratio_failed")
@@ -972,6 +1102,8 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                         _, root = await _composer(page)
                         if not await _video_composer_ready(root, bool(reference_image_paths)):
                             raise RuntimeError("Video composer reset while applying settings")
+                        if await _reference_image_previews(page).count() != len(reference_image_paths or []):
+                            raise RuntimeError("Reference images lost while applying settings")
                         break
                     except Exception:
                         # Retry only a lost video composer, before any submission.
@@ -1026,6 +1158,10 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 if not conv_id:
                     await page.screenshot(path="no_conv.png")
                     raise TimeoutError("conversation_id not acquired within 30s")
+                # Message indices are local to each conversation.
+                if conv_id != indexed_conversation_id:
+                    after_index = 0
+                    indexed_conversation_id = conv_id
                 _log(f"[{account}] conversation_id={conv_id}, polling for video...")
 
                 deadline = time.time() + timeout
@@ -1036,12 +1172,12 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                         account, page, context, conv_id, timeout, on_poll, on_balance,
                         after_index=after_index, name=name)
                 except GenerationRejectedError as exc:
-                    if  retry >= 5:
+                    if retry >= 10:
                         raise
                     if exc.latest_index <= after_index:
                         raise RuntimeError("Cannot safely identify the rejected submission for retry") from exc
                     after_index = exc.latest_index
-                    _log(f"[{account}] Dola {exc.code}: retry {retry + 1}/5 in conversation {conv_id}; preserving request parameters")
+                    _log(f"[{account}] Dola {exc.code}: retry {retry + 1}/10 in conversation {conv_id}; preserving request parameters")
                     await page.wait_for_timeout(5000)
         finally:
             if finish_composer_trace:
