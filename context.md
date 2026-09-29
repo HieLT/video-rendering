@@ -32,6 +32,11 @@ Luồng chính: Dashboard/API → lưu task → chọn tài khoản trong pool �
 
 ### Ảnh reference, batch và các phần custom
 
+- Đánh dấu từng video hoàn thành bằng **⭐ Chọn để edit**, lưu theo Task ID. Nút đổi thành **⭐ Đã chọn để edit** sau khi copy thành công.
+- Chọn sẽ copy video gốc từ `downloads/` sang `tag/` tại thư mục dự án, tên gồm scene + Task ID. Bỏ chọn chỉ xóa bản copy; file gốc và URL xem không thay đổi. Chọn lại không tạo bản trùng.
+- Bộ lọc Edit selection có Tất cả / Đã chọn / Chưa chọn và dùng chung với các bộ lọc khác. Cần bỏ chọn trước khi xóa bản ghi để không mất dấu video đã chọn.
+- `tag/` được bỏ qua trong Git. Thiếu file gốc hoặc copy lỗi sẽ báo lỗi, không ghi nhận chọn thành công. Nên giữ file gốc trong `downloads/`.
+
 - Đã bỏ Try 30s theo yêu cầu: không còn nút, API hoặc worker thử riêng.
 - Ảnh reference hỗ trợ sắp xếp, đặt alias và gợi ý khi gõ `@`. Backend đổi alias sang `@ImageN` theo thứ tự ảnh cuối cùng.
 - Batch mới từ main tạo 1–5 video trong một request, kiểm tra quota nguyên batch và sao chép ảnh độc lập cho từng task. Thay thế ô Concurrent 1–100 cũ; pool/API key vẫn quyết định mức chạy đồng thời thực tế.
@@ -65,6 +70,7 @@ Hiển thị hoặc click được 30s không chứng minh server Dola chấp nh
 | `video_worker_ui.py` | Luồng tạo video qua giao diện, upload ảnh, polling |
 | `video_worker.py` | Các hàm protocol/polling, tải video và phân loại lỗi |
 | `reference_aliases.py` | Kiểm tra alias và ánh xạ tên ảnh sang `@ImageN` |
+| `video_tags.py` | Quản lý bản copy đã chọn để edit và khôi phục khi thao tác lưu lỗi |
 | `media.py` | Kiểm tra URL và tải ảnh tham chiếu |
 | `account_import.py`, `add_account.py` | Nhập/đăng nhập tài khoản |
 | `web/index.html` | Toàn bộ dashboard |
@@ -136,6 +142,8 @@ Từ thư mục dự án:
 
 ```cmd
 C:\dola\.venv\Scripts\python.exe -m unittest test_merge_compatibility test_reference_aliases test_account_uuid -v
+C:\dola\.venv\Scripts\python.exe -m unittest test_video_tags -v
+C:\dola\.venv\Scripts\python.exe test_video_tags_ui.py
 ```
 
 Các test này kiểm tra tên scene/start-end, alias, batch, danh sách không giới hạn và UUID bằng database tạm/mock; không tạo video thật. Các script `test_video_batch.py`, `test_video_duration.py`, `test_video_ratio.py`, `test_ratio_recovery.py`, `test_dashboard_delete.py` kiểm tra offline với dữ liệu/trang giả lập. Chưa xác nhận end-to-end tạo video trên Dola sau lần gộp 30/09.

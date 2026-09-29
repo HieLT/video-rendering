@@ -307,7 +307,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
       </div>
     </div>
     <div class="card">
-      <div class="task-list-heading"><h3>Recent Video Tasks</h3><span class="tiny">Latest 50 matches</span></div>
+      <div class="task-list-heading"><h3>All Video Tasks</h3><span class="tiny">All matching tasks</span></div>
       <div class="task-search-panel" role="search" aria-label="Search video tasks">
         <div class="task-search-main">
           <div class="task-search-input"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="taskSearch" name="video-task-filter" type="search" readonly onfocus="this.removeAttribute('readonly')" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" aria-label="Search tasks" placeholder="Search Task ID, prompt, client, batch or error..." autocomplete="off" oninput="searchTasks()"></div>
@@ -315,11 +315,13 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
         </div>
         <div class="task-search-filters">
           <label>Status<select id="taskStatus" onchange="searchTasks()"><option value="">All statuses</option><option value="queued">Queued</option><option value="processing">Processing</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="stopped">Stopped</option><option value="needs_recovery">Needs recovery</option></select></label>
+          <label>Edit selection<select id="taskEditSelected" onchange="searchTasks()"><option value="">Tất cả</option><option value="true">⭐ Đã chọn để edit</option><option value="false">Chưa chọn</option></select></label>
           <label>Account<select id="taskAccount" onchange="searchTasks()"><option value="">All accounts</option></select></label>
           <label>Duration<select id="taskDuration" onchange="searchTasks()"><option value="">All durations</option><option value="10">10s</option><option value="15">15s</option><option value="30">30s</option></select></label>
           <button type="button" class="btn" onclick="clearTaskSearch()">Clear filters</button>
         </div>
         <div id="taskSearchSummary" class="tiny" role="status" aria-live="polite">Search across your task history</div>
+        <div class="tiny">⭐ Chọn để edit: copy video vào thư mục tag/. Bỏ chọn chỉ xóa bản copy, giữ file gốc.</div>
       </div>
       <button id="deleteSelectedTasks" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('tasks')">Delete selected (0)</button><div id="tasksTable"></div>
     </div>
@@ -866,8 +868,20 @@ async function deleteTask(id){
   try{await api('/api/admin/tasks/'+encodeURIComponent(id),{method:'DELETE'});await loadTasks();}
   catch(e){alert(e.message);}
 }
+async function setEditSelection(id,selected,button){
+  button.disabled=true;
+  button.textContent=selected?'Đang copy…':'Đang bỏ chọn…';
+  try{
+    await api('/api/admin/tasks/'+encodeURIComponent(id)+'/edit-selection',{method:'PATCH',body:{selected}});
+    await loadTasks();
+  }catch(e){alert(e.message);await loadTasks();}
+  finally{button.disabled=false;}
+}
 function taskControls(t){
   const controls=[];
+  if(t.status==='completed'||t.edit_selected){
+    controls.push('<button class="btn'+(t.edit_selected?' btn-p':'')+'" aria-pressed="'+Boolean(t.edit_selected)+'" title="'+esc(t.edit_selected?'Bỏ chọn và xóa bản copy trong tag/':'Copy vào tag/ để dựng video')+'" data-task-id="'+esc(t.id)+'" onclick="setEditSelection(this.dataset.taskId,'+(!t.edit_selected)+',this)">'+(t.edit_selected?'⭐ Đã chọn để edit':'☆ Chọn để edit')+'</button>');
+  }
   if(t.video_url){
     controls.push('<button class="btn video-preview" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">Preview</button>');
     controls.push('<a class="btn" href="'+esc(t.video_url)+'" target="_blank" rel="noopener">Open</a>');
@@ -879,7 +893,7 @@ function taskControls(t){
     const hints=['Show the conversation; restart monitoring if stopped','Resume monitoring the saved conversation without submitting a new video','Stop local monitoring; generation on Dola is not cancelled'];
     controls.push(...['open','resume','stop'].map((action,i)=>'<button class="btn'+(action==='stop'?' btn-danger':'')+'" title="'+hints[i]+'" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;'+action+'&quot;)">'+['Open chat','Continue','Stop'][i]+'</button>'));
   }
-  if(['completed','failed','stopped','needs_recovery'].includes(t.status)){
+  if(!t.edit_selected&&['completed','failed','stopped','needs_recovery'].includes(t.status)){
     controls.push('<button class="btn btn-danger" title="Delete this record" onclick="deleteTask(&quot;'+esc(t.id)+'&quot;)">Delete</button>');
   }
   return controls.length?'<div class="task-actions">'+controls.join('')+'</div>':'';
@@ -905,7 +919,7 @@ async function copyTaskPrompt(button,id){
 }
 let taskSearchTimer, taskLoadVersion=0;
 function resetTaskSearchDefaults(){
-  for(const id of ['taskSearch','taskStatus','taskAccount','taskDuration'])q('#'+id).value='';
+  for(const id of ['taskSearch','taskStatus','taskAccount','taskDuration','taskEditSelected'])q('#'+id).value='';
   q('#taskSearchIn').value='all';
 }
 resetTaskSearchDefaults();
@@ -922,6 +936,7 @@ async function loadTasks(){
   const version=++taskLoadVersion;
   const search=q('#taskSearch').value.trim();
   const params=new URLSearchParams({query:search,search_in:q('#taskSearchIn').value,status:q('#taskStatus').value,account:q('#taskAccount').value,duration:q('#taskDuration').value||'0'});
+  if(q('#taskEditSelected').value)params.set('edit_selected',q('#taskEditSelected').value);
   const [r,a]=await Promise.all([api('/api/admin/tasks?'+params),api('/api/admin/accounts')]);
   if(version!==taskLoadVersion)return;
   const accountNumbers=new Map(a.accounts.map((account,index)=>[account.uuid,index+1]));
@@ -930,9 +945,9 @@ async function loadTasks(){
   a.accounts.forEach((account,index)=>accountSelect.add(new Option('Account '+(index+1)+(account.email?' - '+account.email:''),account.uuid)));
   if(selectedAccount&&!a.accounts.some(account=>account.uuid===selectedAccount))accountSelect.add(new Option('Previous account',selectedAccount));
   accountSelect.value=selectedAccount;
-  const filtered=search||params.get('status')||params.get('account')||params.get('duration')!=='0';
+  const filtered=search||params.get('status')||params.get('account')||params.has('edit_selected')||params.get('duration')!=='0';
   q('#taskSearchSummary').textContent=r.tasks.length?(r.tasks.length+' task'+(r.tasks.length===1?'':'s'))+(filtered?' matching your filters':' in recent history'):'No tasks match your search. Try another keyword or clear filters.';
-  deleteVisible.tasks=r.tasks.filter(t=>['completed','failed','stopped','needs_recovery'].includes(t.status)).map(t=>t.id);
+  deleteVisible.tasks=r.tasks.filter(t=>!t.edit_selected&&['completed','failed','stopped','needs_recovery'].includes(t.status)).map(t=>t.id);
   const sb={'queued':'<span class="badge b-gray">Queued</span>','processing':'<span class="badge b-blue">Processing</span>','completed':'<span class="badge b-green">Completed</span>','failed':'<span class="badge b-red">Failed</span>'};
   taskPromptCopies.clear();
   const rows=r.tasks.map(t=>[

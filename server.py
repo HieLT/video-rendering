@@ -859,14 +859,47 @@ async def admin_jobs(x_admin_key: str | None = Header(default=None)):
 @app.get("/api/admin/tasks")
 async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None), task_id: str = "",
                       query: str = "", search_in: str = "all", status: str = "",
-                      account: str = "", duration: int = 0):
+                      account: str = "", duration: int = 0, edit_selected: bool | None = None):
     _admin_auth(x_admin_key)
     return {"tasks": [{**t, "account": t.get("account_uuid") or (pool.account_uuid(t["account"]) if t.get("account") else None)}
                       for t in store.recent_tasks(-1, task_id=task_id, query=query, search_in=search_in,
-                                                  status=status, account=account, duration=duration)]}
+                                                  status=status, account=account, duration=duration, edit_selected=edit_selected)]}
 
 
 TASK_ACTION_LOCKS = {}
+
+
+class EditSelectionRequest(BaseModel):
+    selected: bool
+
+
+@app.patch("/api/admin/tasks/{task_id}/edit-selection")
+async def admin_edit_selection(task_id: str, body: EditSelectionRequest,
+                               x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    async with TASK_ACTION_LOCKS.setdefault(task_id, asyncio.Lock()):
+        row = store.get(task_id)
+        if not row or row.get('deleted_at') is not None:
+            raise HTTPException(404, 'Task not found')
+        from video_tags import set_edit_selection
+        try:
+            # Copy off the event loop; keep the lock until the operation finishes.
+            operation = asyncio.create_task(asyncio.to_thread(
+                set_edit_selection, store, row, body.selected, config.DOWNLOAD_DIR,
+                Path(__file__).resolve().parent / 'tag'))
+            try:
+                filename = await asyncio.shield(operation)
+            except asyncio.CancelledError:
+                await operation
+                raise
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except OSError as exc:
+            logging.getLogger('uvicorn.error').exception('Could not update tag copy for %s', task_id)
+            raise HTTPException(500, 'Could not update tag copy. Check disk space and file permissions.') from exc
+        return {'ok': True, 'edit_selected': body.selected, 'tag_filename': filename}
 
 
 @app.delete("/api/admin/tasks/{task_id}")
@@ -876,6 +909,8 @@ async def admin_task_delete(task_id: str, x_admin_key: str | None = Header(defau
         row = store.get(task_id)
         if not row or row.get("deleted_at") is not None:
             raise HTTPException(404, "Task not found")
+        if row.get('edit_selected'):
+            raise HTTPException(409, 'Unselect this video for editing before deleting its record')
         runner = TASK_RUNNERS.get(task_id)
         if row["status"] in ("queued", "processing") or (runner and not runner.done()):
             raise HTTPException(409, "Stop monitoring this task before deleting its record")

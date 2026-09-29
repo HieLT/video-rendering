@@ -62,6 +62,8 @@ class TaskStore:
             # Legacy migration: add missing columns for task recovery, client usage, and timing stats.
             for column, definition in (
                 ("name", "TEXT DEFAULT ''"),
+                ("edit_selected", "INTEGER NOT NULL DEFAULT 0"),
+                ("tag_filename", "TEXT"),
                 ("account", "TEXT"),
                 ("account_uuid", "TEXT"),
                 ("deleted_at", "REAL"),
@@ -292,7 +294,8 @@ class TaskStore:
 
     def recent_tasks(self, limit: int = 50, api_key_hash: str | None = None,
                      task_id: str = "", query: str = "", search_in: str = "all",
-                     status: str = "", account: str = "", duration: int = 0) -> list:
+                     status: str = "", account: str = "", duration: int = 0,
+                     edit_selected: bool | None = None) -> list:
         fields = {"name": ["name"], "id": ["id"], "prompt": ["prompt"], "client": ["api_key_name"],
                   "batch": ["batch_id"], "error": ["error"]}
         clauses, params = [], []
@@ -317,6 +320,9 @@ class TaskStore:
         if duration:
             clauses.append("duration=?")
             params.append(duration)
+        if edit_selected is not None:
+            clauses.append("COALESCE(edit_selected,0)=?")
+            params.append(int(edit_selected))
         params.append(limit)
         with _LOCK:
             rows = self._conn.execute(
