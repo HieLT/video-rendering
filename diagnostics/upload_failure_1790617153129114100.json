@@ -1,0 +1,80 @@
+{
+  "error_type": "TargetClosedError",
+  "error": "Locator.evaluate: Target page, context or browser has been closed\nCall log:\n  - waiting for locator(\".guidance-input-surface:visible\").filter(has=locator(\"[contenteditable=\\\"true\\\"]\")).last\n    - locator resolved to visible <div class=\"guidance-input-surface relative flex flex-col max-h-(--input-guidance-input-container-max-height,unset) rounded-[inherit] border-(--input-guidance-input-container-border) bg-(--input-guidance-input-container-background)\">…</div>\n",
+  "files": [
+    {
+      "index": 1,
+      "file": "image_0.png",
+      "bytes": 1824460
+    },
+    {
+      "index": 2,
+      "file": "image_1.png",
+      "bytes": 2564072
+    },
+    {
+      "index": 3,
+      "file": "image_2.png",
+      "bytes": 2293148
+    }
+  ],
+  "composer": {
+    "text": "0%\n動画を作成\nモデル\n2.5\n10s\n比率\n\n\n",
+    "images": [
+      {
+        "alt": "image_0.png",
+        "complete": true,
+        "width": 1536
+      }
+    ],
+    "indicators": [
+      {
+        "title": null,
+        "aria": "upload progress percent",
+        "role": "progressbar",
+        "state": null,
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": null,
+        "role": null,
+        "state": "closed",
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": null,
+        "role": null,
+        "state": "closed",
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": null,
+        "role": null,
+        "state": "closed",
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": null,
+        "role": null,
+        "state": "closed",
+        "text": ""
+      },
+      {
+        "title": null,
+        "aria": "",
+        "role": null,
+        "state": null,
+        "text": ""
+      }
+    ]
+  },
+  "statuses": [
+    200,
+    200
+  ],
+  "network_failures": []
+}

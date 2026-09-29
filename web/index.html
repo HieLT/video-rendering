@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -90,7 +90,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 
 .tiny{font-size:12px;color:var(--sub)}
 .account-id{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#52615d;font-weight:600}
-.generate-form{display:grid;grid-template-columns:minmax(260px,1fr) 150px 120px 120px;gap:14px;align-items:end}
+.generate-form{display:grid;grid-template-columns:minmax(180px,1.2fr) 110px 100px 130px minmax(180px,1fr);gap:14px;align-items:end}
 .generate-form .field{display:flex;flex-direction:column;gap:5px}
 .generate-form label{font-size:12px;color:var(--sub)}
 .generate-form input,.generate-form select,.generate-form textarea{width:100%;padding:10px 12px;border:1px solid #d8e2de;border-radius:9px;font:inherit;font-size:13px;background:#fbfdfc;color:var(--text);transition:border-color .2s,box-shadow .2s}
@@ -107,7 +107,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .image-preview button{position:absolute;top:3px;right:3px;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:rgba(180,45,45,.9);color:#fff;cursor:pointer;font-size:15px;line-height:18px}
 .form-note{color:var(--sub);font-size:12px;line-height:1.4}
 .generate-form .actions{display:flex;justify-content:flex-end;gap:8px;grid-column:1 / -1}
-@media (max-width:760px){.generate-form{grid-template-columns:1fr 1fr}.generate-form .prompt-field,.generate-form textarea,.generate-form .actions{grid-column:1 / -1}}
+@media (max-width:850px){.generate-form{grid-template-columns:1fr 1fr}.generate-form .prompt-field,.generate-form textarea,.generate-form .actions{grid-column:1 / -1}}
 </style>
 </head>
 <body>
@@ -196,6 +196,21 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
         <div class="field">
           <label for="videoDuration">Duration</label>
           <select id="videoDuration"><option value="10">10s</option><option value="15">15s</option><option value="30">30s</option></select>
+        </div>
+        <div class="field">
+          <label for="videoConcurrent">Concurrent</label>
+          <select id="videoConcurrent">
+            <option value="1" selected>1 video</option>
+            <option value="2">2 videos</option>
+            <option value="3">3 videos</option>
+            <option value="4">4 videos</option>
+            <option value="5">5 videos</option>
+            <option value="6">6 videos</option>
+            <option value="7">7 videos</option>
+            <option value="8">8 videos</option>
+            <option value="9">9 videos</option>
+            <option value="10">10 videos</option>
+          </select>
         </div>
         <div class="field">
           <label for="videoApiKey">Gateway API Key (optional)</label>
@@ -482,41 +497,90 @@ async function submitVideoTask(){
   const files=startEnd?[q('#startImage').files[0],q('#endImage').files[0]]:[...q('#referenceImages').files];
   const apiKey=q('#videoApiKey').value.trim();
   const headers=apiKey?{Authorization:'Bearer '+apiKey}:{};
+  const count=Math.max(1, Math.min(10, parseInt(q('#videoConcurrent')?.value, 10) || 1));
+  const baseName=q('#videoName').value.trim();
+
   const btn=q('#generateBtn');
-  btn.disabled=true;btn.textContent='Submitting...';
+  btn.disabled=true;btn.textContent='Checking accounts...';
+
   try{
-    let referenceImages=[];
-    if(files.length){
-      const form=new FormData();
-      for(const file of files)form.append('files',file);
-      const uploadResponse=await fetch('/api/admin/reference-images',{
-        method:'POST',headers:{'X-Admin-Key':adminKey},body:form
-      });
-      const uploadText=await uploadResponse.text();
-      let uploadData={};try{uploadData=uploadText?JSON.parse(uploadText):{};}catch(e){}
-      if(!uploadResponse.ok)throw new Error(uploadData.detail||'Reference image upload failed');
-      referenceImages=uploadData.reference_images||[];
+    // Kiểm tra số lượng tài khoản khả dụng trước khi tạo task
+    const accRes=await api('/api/admin/accounts');
+    const availableAccounts=(accRes.accounts||[]).filter(a=>
+      a.scheduling &&
+      a.login_ok===1 &&
+      a.auth_state==='active' &&
+      !a.cooling &&
+      !a.rate_limited &&
+      !a.quota_blocked &&
+      a.used_today < (a.limit||2) &&
+      !a.busy &&
+      (a.credit_balance===null || a.credit_balance===undefined || a.credit_balance>=2)
+    );
+
+    if(availableAccounts.length < count){
+      alert(`⚠️ Không đủ tài khoản rảnh!\n\nBạn yêu cầu tạo ${count} video cùng lúc trên ${count} tài khoản khác nhau, nhưng hiện tại chỉ có ${availableAccounts.length} tài khoản đang rảnh và sẵn sàng.\n\nVui lòng kiểm tra lại tab Accounts hoặc giảm số lượng concurrent.`);
+      return;
     }
-    const body={
-      name:q('#videoName').value.trim(),
-      model:q('#videoModel').value,
-      prompt,
-      ratio:q('#videoRatio').value,
-      duration:Number(q('#videoDuration').value),
-      reference_images:referenceImages,
-      start_end:startEnd
-    };
-    const task=await api('/v1/videos/generations',{method:'POST',headers,body});
+
+    const createdTasks=[];
+    for(let i=0; i<count; i++){
+      btn.textContent=count>1?`Submitting (${i+1}/${count})...`:'Submitting...';
+
+      let referenceImages=[];
+      if(files.length){
+        const form=new FormData();
+        for(const file of files)form.append('files',file);
+        const uploadResponse=await fetch('/api/admin/reference-images',{
+          method:'POST',headers:{'X-Admin-Key':adminKey},body:form
+        });
+        const uploadText=await uploadResponse.text();
+        let uploadData={};try{uploadData=uploadText?JSON.parse(uploadText):{};}catch(e){}
+        if(!uploadResponse.ok)throw new Error(uploadData.detail||'Reference image upload failed');
+        referenceImages=uploadData.reference_images||[];
+      }
+
+      const taskName=count>1
+        ?(baseName?`${baseName} (${i+1}/${count})`:`(${i+1}/${count})`)
+        :baseName;
+
+      const body={
+        name:taskName,
+        model:q('#videoModel').value,
+        prompt,
+        ratio:q('#videoRatio').value,
+        duration:Number(q('#videoDuration').value),
+        reference_images:referenceImages,
+        start_end:startEnd
+      };
+
+      const task=await api('/v1/videos/generations',{method:'POST',headers,body});
+      createdTasks.push(task);
+
+      if(i < count - 1){
+        await new Promise(r=>setTimeout(r, 400));
+      }
+    }
+
     q('#videoName').value='';
     q('#videoPrompt').value='';
     q('#referenceImages').value='';
     q('#imagePreview').innerHTML='';
     for(const id of ['startImage','endImage'])q('#'+id).value='';
     for(const id of ['startPreview','endPreview'])q('#'+id).innerHTML='';
-    alert('Task created: '+task.id);
+
+    if(createdTasks.length===1){
+      alert('Task created: '+createdTasks[0].id);
+    }else{
+      alert(`Đã tạo thành công ${createdTasks.length} video tasks chạy song song trên các account khác nhau!`);
+    }
     await loadTasks();
-  }catch(e){alert(e.message);}
-  finally{btn.disabled=false;btn.textContent='Generate Video';}
+  }catch(e){
+    alert(e.message);
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Generate Video';
+  }
 }
 
 function toggleImageMode(){

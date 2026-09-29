@@ -858,10 +858,10 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
         raise ValueError("Dola supports durations of 10s, 15s, and 30s via extension")
     if duration == 30 and not use_extension:
         raise ValueError("30s generation requires Dola30 extension enabled")
-    # 30s videos require extended generation timeout
+    # 30s videos require indefinite generation timeout (monitored manually)
     if duration == 30:
-        timeout = max(timeout, 1800)
-    if reference_image_paths:
+        timeout = 86400 * 7
+    elif reference_image_paths:
         timeout = max(timeout, config.REFERENCE_VIDEO_TIMEOUT)
     async with async_playwright() as p:
         context = await launch_account_context(

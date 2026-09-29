@@ -288,9 +288,11 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
 async def _resume_task(row: dict):
     task_id = row["id"]
     TASK_RUNNERS[task_id] = asyncio.current_task()
-    deadline = row.get("deadline_at") or (
-        time.time() + (1800 if row.get("duration") == 30 else config.VIDEO_TIMEOUT)
-    )
+    deadline = row.get("deadline_at") or 0
+    if deadline < time.time() + 60:
+        timeout_val = 86400 * 7 if row.get("duration") == 30 else max(1800, config.VIDEO_TIMEOUT)
+        deadline = time.time() + timeout_val
+        store.update(task_id, deadline_at=deadline)
     remaining = max(1, int(deadline - time.time()))
     api_key_hash = row.get("api_key_hash")
     acquired = False
@@ -916,8 +918,9 @@ async def admin_task_action(task_id: str, action: str, x_admin_key: str | None =
         if (lock and lock.locked()) or row["account"] in WEB_SESSIONS:
             raise HTTPException(409, "Account is busy in another browser session")
         # Only reopen the saved conversation. Never repeat generation submission.
+        timeout_val = 86400 * 7 if row.get("duration") == 30 else max(1800, config.VIDEO_TIMEOUT)
         store.update(task_id, status="processing", error=None, finished_at=None,
-                     deadline_at=time.time() + max(1800, config.VIDEO_TIMEOUT))
+                     deadline_at=time.time() + timeout_val)
         TASK_RUNNERS[task_id] = asyncio.create_task(_resume_task(store.get(task_id)))
         logging.getLogger("uvicorn.error").info(
             "[task-recovery] task=%s action=%s conversation=%s", task_id, action, row["conversation_id"])
