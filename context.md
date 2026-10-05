@@ -87,14 +87,14 @@ Môi trường Python đã có: `C:\dola\.venv` (nằm ngoài thư mục dự á
 
 ```cmd
 cd /d C:\dola\video-rendering
-C:\dola\.venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8000
+C:\dola\.venv\Scripts\python.exe run_server.py --host 127.0.0.1 --port 8000
 ```
 
 ### PowerShell
 
 ```powershell
 Set-Location C:\dola\video-rendering
-& C:\dola\.venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8000
+& C:\dola\.venv\Scripts\python.exe run_server.py --host 127.0.0.1 --port 8000
 ```
 
 - Dashboard: http://127.0.0.1:8000/ — **không phải `/web`** như README cũ.

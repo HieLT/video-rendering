@@ -574,7 +574,15 @@ async def admin_login(body: AdminLogin):
 @app.get("/api/admin/accounts")
 async def admin_accounts(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"accounts": [pool.public_account(a) for a in pool.list_accounts()]}
+    accounts = []
+    for account in pool.list_accounts():
+        public = pool.public_account(account)
+        public["ready_to_generate"] = bool(
+            pool._schedulable(account) and not account["busy"]
+            and JOBS.get(account["name"], {}).get("status") != "running"
+        )
+        accounts.append(public)
+    return {"accounts": accounts}
 
 
 @app.patch("/api/admin/accounts/{name}")
@@ -848,6 +856,48 @@ async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(d
     JOBS[body.name] = {"kind": "add", "status": "running", "error": "", "started_at": time.time()}
     asyncio.create_task(_run_add_job(body.name, body.email, body.password, body.totp, body.method, cookies))
     return {"ok": True, "job": "running", "uuid": body.name, "name": body.name}
+
+
+from bulk_accounts import parse_accounts, run_import
+
+ACCOUNT_IMPORTS = {}
+ACCOUNT_IMPORT_TASKS = set()
+
+
+class GoogleBulkAdd(BaseModel):
+    text: str = Field(max_length=200_000, repr=False)
+    concurrency: int = Field(default=2, ge=1, le=20, strict=True)
+
+
+@app.post("/api/admin/accounts/google-bulk", status_code=202)
+async def google_bulk_add(body: GoogleBulkAdd, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if any(p['status'] == 'running' for p in ACCOUNT_IMPORTS.values()):
+        raise HTTPException(409, 'A Google import is already running')
+    try:
+        accounts = parse_accounts(body.text)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    identifier = str(uuid.uuid4())
+    progress = {'status': 'running', 'rows': [{'email': email, 'status': 'queued'} for email, _ in accounts]}
+    ACCOUNT_IMPORTS.clear()
+    ACCOUNT_IMPORTS[identifier] = progress
+
+    async def submit(email, password):
+        result = await admin_account_add(AccountAdd(email=email, password=password), x_admin_key)
+        return result['uuid']
+
+    task = asyncio.create_task(run_import(accounts, body.concurrency, progress, submit,
+        lambda name: JOBS.get(name, {}).get('status')))
+    ACCOUNT_IMPORT_TASKS.add(task)
+    task.add_done_callback(ACCOUNT_IMPORT_TASKS.discard)
+    return {'id': identifier}
+
+
+@app.get("/api/admin/accounts/google-bulk/progress")
+async def google_bulk_progress(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return {'imports': ACCOUNT_IMPORTS}
 
 
 @app.get("/api/admin/jobs")

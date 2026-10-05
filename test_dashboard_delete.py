@@ -43,8 +43,32 @@ async def main():
         await page.route("**/*",route)
         await page.goto("http://dashboard.test/")
         await page.wait_for_selector("#loginMask",state="hidden")
-        await run_script("clearInterval(timer); switchTab('accounts')")
+        await run_script("clearInterval(timer); switchTab('accounts'); switchAccountGroup('other')")
         await page.wait_for_selector('#accountsTable tbody tr')
+        accounts.append(dict(name='gmail-fixture', email=' Scene@GMAIL.COM ', busy=False, ready_to_generate=True, used_today=0, limit=2))
+        await run_script('await loadAccounts()')
+        assert '1 tài khoản · 1 sẵn sàng gen' in await page.locator('#accountGroupGmail').inner_text()
+        assert '3 tài khoản · 0 sẵn sàng gen' in await page.locator('#accountGroupOther').inner_text()
+        await page.locator('#selectAllaccounts').check()
+        await page.locator('#accountGroupGmail').click()
+        assert await page.locator('#accountsTable tbody tr').count()==1
+        assert not await page.locator('#deleteSelectedAccounts').is_visible()
+        await run_script('await loadAccounts()')
+        assert await page.locator('#accountGroupGmail').get_attribute('aria-pressed')=='true'
+        await page.locator('#accountGroupOther').click()
+        accounts.pop()
+        accounts.append(dict(name='gmail-fixture', email=' Scene@GMAIL.COM ', busy=False, ready_to_generate=True, used_today=0, limit=2))
+        await run_script('await loadAccounts()')
+        assert '1 tài khoản · 1 sẵn sàng gen' in await page.locator('#accountGroupGmail').inner_text()
+        assert '3 tài khoản · 0 sẵn sàng gen' in await page.locator('#accountGroupOther').inner_text()
+        await page.locator('#selectAllaccounts').check()
+        await page.locator('#accountGroupGmail').click()
+        assert await page.locator('#accountsTable tbody tr').count()==1
+        assert not await page.locator('#deleteSelectedAccounts').is_visible()
+        await run_script('await loadAccounts()')
+        assert await page.locator('#accountGroupGmail').get_attribute('aria-pressed')=='true'
+        await page.locator('#accountGroupOther').click()
+        accounts.pop()
         assert await page.locator('#accountsTable tbody tr').count()==3
         assert await page.locator('#accountsTable tbody tr:first-child td:nth-child(2)').inner_text()=="1"
         assert await page.locator('#accountsTable tbody tr:first-child button').all_text_contents()==['Open Web','Verify','Reset','Retry','Delete']
@@ -83,6 +107,21 @@ async def main():
         assert not await page.locator('#deleteSelectedTasks').is_visible()
         assert await page.locator('#tasksTable tbody tr').count()==1
         assert tasks[0]['status']=='processing'
+        tasks[:]=[dict(id='batch-video-'+str(i),batch_id=batch,batch_index=idx,batch_count=2,name='Scene (1/2)',status='completed',created_at=stamp,prompt='Fixture') for i,(batch,idx,stamp) in enumerate([('batch-a',2,100),('batch-b',2,200),('batch-a',1,100),('batch-b',1,200)])]
+        await run_script('await loadTasks()')
+        assert await page.locator('tbody.batch-group').count()==2
+        assert await page.locator('tbody.batch-group').first.get_attribute('data-batch-id')=='batch-b'
+        assert await page.locator('tbody.batch-group').first.locator('[data-delete-id]').first.get_attribute('data-delete-id')=='batch-video-3'
+        assert 'Task ID' not in await page.locator('#tasksTable thead').inner_text()
+        assert 'Client' not in await page.locator('#tasksTable thead').inner_text()
+        assert '2/2 video' in await page.locator('.batch-toggle').first.inner_text()
+        await page.locator('.batch-toggle').first.click()
+        assert not await page.locator('tbody.batch-group').first.locator('.task-row').first.is_visible()
+        await run_script('await loadTasks()')
+        assert await page.locator('.batch-toggle').first.get_attribute('aria-expanded')=='false'
+        tasks[:]=tasks[:1]
+        await run_script('await loadTasks()')
+        assert '1/2 video' in await page.locator('.batch-toggle').inner_text()
         assert not errors, errors
         print('Browser checks passed: STT, actions preserved, no name form, selection survives refresh, bulk delete skips active rows, partial failures remain selected')
         await browser.close()

@@ -44,6 +44,11 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 #deleteSelectedAccounts,#deleteSelectedTasks{margin-bottom:12px}
 .toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
 .toolbar .hint{color:var(--sub);font-size:12px}
+.account-groups{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:14px}
+.account-group{flex:1;min-width:220px;text-align:left;padding:16px;border:1px solid #dce4e2;border-radius:12px;background:transparent;color:inherit;cursor:pointer;font:inherit}
+.account-group[aria-pressed="true"]{border-color:#00ad7c;background:#e7f7f1}
+.account-group strong{display:block;margin-bottom:10px}
+.account-group span{display:block;margin-top:5px}
 .sw{position:relative;display:inline-block;width:36px;height:20px}
 .sw input{opacity:0;width:0;height:0}
 .sw i{position:absolute;inset:0;background:#cfd8d5;border-radius:999px;transition:.2s;cursor:pointer}
@@ -71,21 +76,31 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .empty{padding:34px;text-align:center;color:var(--sub)}
 .video-wrap{display:flex;gap:8px;align-items:center}
 #tasksTable{overflow-x:auto}
-#tasksTable table{table-layout:fixed;min-width:1030px}
+#tasksTable table{border-collapse:separate;border-spacing:0}
+#tasksTable tbody.batch-group td:first-child{border-left:2px solid #81b9a7}
+#tasksTable tbody.batch-group td:last-child{border-right:2px solid #81b9a7}
+#tasksTable tbody.batch-group tr:last-child td{border-bottom:2px solid #81b9a7}
+#tasksTable tbody.batch-group .batch-heading td{border-top:2px solid #81b9a7;background:#eaf5f0;padding:12px}
+#tasksTable .batch-toggle{border:0;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer;width:100%;white-space:normal}
+#tasksTable .batch-toggle strong{display:block;margin-bottom:5px;overflow-wrap:anywhere}
+#tasksTable tbody.batch-collapsed .task-row{display:none}
+#tasksTable tbody.batch-collapsed .batch-heading td{border-bottom:2px solid #81b9a7}
+#tasksTable tbody.batch-gap td{height:16px;padding:0;border:0;background:var(--bg,#f5f8f7)}
+#tasksTable table{table-layout:fixed;min-width:900px;width:100%}
 #tasksTable th,#tasksTable td{padding:12px 6px;overflow-wrap:normal}
 #tasksTable th{background:#f8faf9;font-size:11px;letter-spacing:.2px}
 #tasksTable tbody tr:hover{background:#fafcfb}
+#tasksTable .task-row>td{background:#fff}
+#tasksTable .task-row.row-gray>td{background:#f1f3f4}
+#tasksTable .task-row:hover>td{background:#e8efec}
 #tasksTable th:first-child{width:30px}
-#tasksTable th:nth-child(2){width:115px}
-#tasksTable th:nth-child(3){width:120px}
-#tasksTable th:nth-child(4){width:160px}
-#tasksTable th:nth-child(5){width:75px}
-#tasksTable th:nth-child(6){width:75px}
-#tasksTable td:nth-child(6){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#tasksTable th:nth-child(7){width:65px}
-#tasksTable th:nth-child(8){width:115px}
-#tasksTable th:nth-child(9){width:100px}
-#tasksTable th:nth-child(10){width:125px}
+#tasksTable th:nth-child(2){width:120px}
+#tasksTable th:nth-child(3){width:auto}
+#tasksTable th:nth-child(4){width:65px}
+#tasksTable th:nth-child(5){width:65px}
+#tasksTable th:nth-child(6){width:105px}
+#tasksTable th:nth-child(7){width:100px}
+#tasksTable th:nth-child(8){width:110px}
 #tasksTable th:last-child{width:170px}
 .task-id{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:0;background:transparent;padding:4px 0;color:#52615d;font:12px ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;text-align:left}
 .task-id:hover{color:var(--accent)}
@@ -110,9 +125,9 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 #tasksTable .video-wrap .video-preview{grid-column:1 / -1;grid-row:1;min-height:34px}
 #tasksTable .task-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px;align-items:stretch}
 #tasksTable .task-actions .btn{padding:7px 4px;min-height:32px;text-align:center}
-#tasksTable .task-actions .btn:first-child,#tasksTable .task-actions a.btn{grid-column:1 / -1}
-#tasksTable .task-actions .btn:last-child{grid-column:1 / -1}
-#tasksTable td:nth-child(10),#tasksTable td:last-child{vertical-align:middle}
+#tasksTable .task-actions .btn{grid-column:auto}
+#tasksTable td:nth-child(8),#tasksTable td:last-child{vertical-align:middle}
+#tasksTable .task-actions .btn{white-space:normal;overflow-wrap:anywhere;min-width:0}
 .video-file{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:#52615d;margin-bottom:5px}
 #tasksTable .task-actions .video-preview{background:#e6f7f0;border-color:#cdeadd;color:var(--accent-d)}
 #tasksTable .video-wrap .btn{padding:7px 9px}
@@ -257,7 +272,13 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
         <button class="btn btn-p" onclick="openAddAccount()">＋ Add Account</button>
       </div>
       <button id="deleteSelectedAccounts" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('accounts')">Delete selected (0)</button>
+      <div class="account-groups" aria-label="Account email groups">
+        <button class="account-group" id="accountGroupGmail" aria-pressed="true" onclick="switchAccountGroup('gmail')"><strong>Gmail (@gmail.com)</strong><span class="account-counts">Loading…</span></button>
+        <button class="account-group" id="accountGroupOther" aria-pressed="false" onclick="switchAccountGroup('other')"><strong>Non-Gmail (không phải Gmail)</strong><span class="account-counts">Loading…</span></button>
+      </div>
+      <p class="tiny">Sẵn sàng gen: Dispatch bật, đăng nhập hợp lệ, còn quota/credit và không bận hoặc bị giới hạn. Tài khoản chưa có email thuộc nhóm Non-Gmail.</p>
       <div id="accountsTable"></div>
+      <div id="googleImportProgress" class="tiny" aria-live="polite"></div>
     </div>
   </section>
 
@@ -511,12 +532,37 @@ async function deleteSelectedRows(kind){
 }
 
 /* ---- Accounts ---- */
+let accountGroup='gmail', accountSnapshot=[], accountJobs={};
+function accountEmailGroup(account){return /^[^@\s]+@gmail\.com$/i.test((account.email||'').trim())?'gmail':'other';}
+function switchAccountGroup(group){
+  if(bulkDeleting.accounts)return;
+  accountGroup=group;
+  deleteSelection.accounts.clear();
+  renderAccounts();
+}
 async function loadAccounts(){
   if(bulkDeleting.accounts)return;
-  const [a,j]=await Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs')]);
-  const jobs=j.jobs||{};
-  deleteVisible.accounts=a.accounts.filter(x=>!x.busy&&jobs[x.name]?.status!=='running').map(x=>x.name);
-  const rows=a.accounts.map((x,index)=>{
+  const [a,j,imports]=await Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs'),api('/api/admin/accounts/google-bulk/progress')]);
+  q('#googleImportProgress').innerHTML=Object.values(imports.imports||{}).map(p=>{
+    const count=status=>p.rows.filter(r=>r.status===status).length;
+    return '<h3>Google import: '+(p.status==='running'?'Đang chạy':'Đã xong')+'</h3><p>'+count('queued')+' chờ · '+count('running')+' đang chạy · '+count('success')+' thành công · '+count('failed')+' thất bại</p><details><summary>Chi tiết</summary>'+p.rows.map(r=>'<div>'+esc(r.email)+' — '+esc(r.status)+(r.error?' · '+esc(r.error):'')+'</div>').join('')+'</details>';
+  }).join('');
+  if(bulkDeleting.accounts)return;
+  accountSnapshot=a.accounts;accountJobs=j.jobs||{};
+  renderAccounts();
+}
+function renderAccounts(){
+  const jobs=accountJobs;
+  for(const [group,id] of [['gmail','accountGroupGmail'],['other','accountGroupOther']]){
+    const members=accountSnapshot.filter(x=>accountEmailGroup(x)===group);
+    const ready=members.filter(x=>x.ready_to_generate&&!x.busy&&jobs[x.name]?.status!=='running').length;
+    const button=q('#'+id);
+    button.setAttribute('aria-pressed',String(group===accountGroup));
+    button.querySelector('.account-counts').textContent=`${members.length} tài khoản · ${ready} sẵn sàng gen`;
+  }
+  const visible=accountSnapshot.filter(x=>accountEmailGroup(x)===accountGroup);
+  deleteVisible.accounts=visible.filter(x=>!x.busy&&jobs[x.name]?.status!=='running').map(x=>x.name);
+  const rows=visible.map((x,index)=>{
     const jb=jobs[x.name];
     const addFailed=jb&&jb.kind==='add'&&jb.status==='failed'&&x.login_ok!==1;
     const badge=(jb&&jb.kind==='add'&&jb.status==='running')?'<span class="badge b-blue">Adding</span>'
@@ -563,7 +609,8 @@ let accountRetryUuid=null;
 function openAddAccount(retryName=null){
   accountRetryUuid=retryName;
   showDlg(`<h2>${retryName?"Retry Account":"Add Account"}</h2>
-    <label>Login method</label><select id="f_method" onchange="accountMethodChanged()"><option value="cookies">Import cookies</option><option value="google">Google</option><option value="facebook">Facebook</option></select>
+    <label>Login method</label><select id="f_method" onchange="accountMethodChanged()"><option value="cookies">Import cookies</option><option value="google">Google</option>${retryName?'':'<option value="google_bulk">Google nhanh / nhiều account</option>'}<option value="facebook">Facebook</option></select>
+    <div id="f_google_bulk" hidden><label>Mỗi dòng: email|password</label><textarea id="f_bulk_text" rows="8" autocomplete="off" spellcheck="false" placeholder="email@example.com|password"></textarea><label>Số phiên song song (1–20)</label><input id="f_bulk_concurrency" type="number" min="1" max="20" value="2"><p class="tiny">Bỏ qua dòng trống và gộp email trùng. Tiến trình tiếp tục khi đóng hộp thoại; dừng nếu tắt server. CAPTCHA/2FA cần hoàn tất trong trình duyệt.</p></div>
     <div id="f_google" hidden><label>Google Email</label><input id="f_email" autocomplete="off"><label>Password</label><input id="f_pass" type="password" autocomplete="new-password"><label>TOTP Secret (optional)</label><input id="f_totp" type="password"></div>
     <div id="f_cookies"><label>Netscape cookie file (.txt)</label><input id="f_cookie_file" type="file" accept=".txt"><p class="tiny">Choose the original cookie export for one Dola account. The session will be checked before enabling the account.</p></div>
     <div id="f_facebook" hidden><label>Facebook email or phone number</label><input id="f_fb_account" autocomplete="off"><label>Facebook password</label><input id="f_fb_password" type="password" autocomplete="new-password"><p class="tiny">Login is submitted once. Complete any verification in the browser within 5 minutes.</p></div>
@@ -572,11 +619,20 @@ function openAddAccount(retryName=null){
 function accountMethodChanged(){
   const method=q('#f_method').value;
   q('#f_google').hidden=method!=='google';q('#f_cookies').hidden=method!=='cookies';q('#f_facebook').hidden=method!=='facebook';
+  q('#f_google_bulk').hidden=method!=='google_bulk';
 }
 async function submitAddAccount(){
   const body={method:q('#f_method').value};
   const button=q('#f_submit');button.disabled=true;
   try{
+    if(body.method==='google_bulk'){
+      const text=q('#f_bulk_text').value;
+      const concurrency=Number(q('#f_bulk_concurrency').value);
+      if(!text.trim())throw new Error('Paste email|password, one account per line');
+      if(!Number.isInteger(concurrency)||concurrency<1||concurrency>20)throw new Error('Số phiên song song phải từ 1 đến 20');
+      await api('/api/admin/accounts/google-bulk',{method:'POST',body:{text,concurrency}});
+      q('#f_bulk_text').value='';hide('dlg');refresh();return;
+    }
     if(body.method==='google'){
       Object.assign(body,{email:q('#f_email').value.trim(),password:q('#f_pass').value,totp:q('#f_totp').value.trim()});
       if(!body.email||!body.password)throw new Error('Please enter Google email and password');
@@ -918,6 +974,40 @@ async function copyTaskPrompt(button,id){
   }catch(e){alert('Could not copy prompt: '+e.message);}
 }
 let taskSearchTimer, taskLoadVersion=0;
+const collapsedTaskBatches=new Set();
+function toggleTaskBatch(button){
+  const group=button.closest('tbody'),id=group.dataset.batchId;
+  if(collapsedTaskBatches.has(id))collapsedTaskBatches.delete(id);else collapsedTaskBatches.add(id);
+  const collapsed=collapsedTaskBatches.has(id);
+  group.classList.toggle('batch-collapsed',collapsed);
+  button.setAttribute('aria-expanded',String(!collapsed));
+  button.querySelector('.batch-arrow').textContent=collapsed?'▶':'▼';
+}
+function groupedTaskTable(tasks,rows,heads){
+  if(!tasks.length)return table(heads,rows);
+  const groups=new Map();
+  tasks.forEach((task,index)=>{
+    const key=task.batch_id?'batch:'+task.batch_id:'task:'+task.id;
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push({task,row:rows[index]});
+  });
+  const ordered=[...groups.values()].sort((a,b)=>Math.max(...b.map(x=>Number(x.task.created_at)||0))-Math.max(...a.map(x=>Number(x.task.created_at)||0)));
+  let taskRowIndex=0;
+  const bodies=ordered.map(members=>{
+    const batch=members[0].task.batch_id;
+    if(batch)members.sort((a,b)=>(a.task.batch_index||0)-(b.task.batch_index||0));
+    const rowHtml=members.map(x=>'<tr class="task-row'+(taskRowIndex++%2?' row-gray':'')+'">'+x.row.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('');
+    if(!batch)return '<tbody>'+rowHtml+'</tbody>';
+    const first=members[0].task,collapsed=collapsedTaskBatches.has(batch);
+    const total=Math.max(members.length,...members.map(x=>Number(x.task.batch_count)||0));
+    const counts={};members.forEach(x=>counts[x.task.status]=(counts[x.task.status]||0)+1);
+    const labels={completed:'hoàn thành',processing:'đang tạo',queued:'đang chờ',failed:'lỗi',stopped:'đã dừng',needs_recovery:'cần khôi phục'};
+    const summary=Object.entries(counts).map(([state,count])=>count+' '+(labels[state]||state)).join(' · ');
+    const name=(first.name||'Batch video').replace(/\s*\(\d+\/\d+\)\s*$/,'');
+    return '<tbody class="batch-group'+(collapsed?' batch-collapsed':'')+'" data-batch-id="'+esc(batch)+'"><tr class="batch-heading"><td colspan="'+heads.length+'"><button class="batch-toggle" aria-expanded="'+!collapsed+'" onclick="toggleTaskBatch(this)"><strong><span class="batch-arrow">'+(collapsed?'▶':'▼')+'</span> '+esc(name)+' · Batch '+esc(batch.slice(-6))+'</strong><span>'+members.length+'/'+total+' video hiển thị · '+esc(summary)+' · '+fmt(first.created_at)+'</span></button></td></tr>'+rowHtml+'</tbody>';
+  });
+  return '<table><thead><tr>'+heads.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead>'+bodies.map((body,index)=>(index&&(ordered[index][0].task.batch_id||ordered[index-1][0].task.batch_id)?'<tbody class="batch-gap" aria-hidden="true"><tr><td colspan="'+heads.length+'"></td></tr></tbody>':'')+body).join('')+'</table>';
+}
 function resetTaskSearchDefaults(){
   for(const id of ['taskSearch','taskStatus','taskAccount','taskDuration','taskEditSelected'])q('#'+id).value='';
   q('#taskSearchIn').value='all';
@@ -952,11 +1042,9 @@ async function loadTasks(){
   taskPromptCopies.clear();
   const rows=r.tasks.map(t=>[
     selectionBox('tasks',t.id,deleteVisible.tasks.includes(t.id)),
-    '<button class="task-id" title="Copy '+esc(t.id)+'" aria-label="Copy task ID '+esc(t.id)+'" onclick="copy(this.dataset.taskId)" data-task-id="'+esc(t.id)+'">'+esc(t.id)+'</button>',
     '<span style="overflow-wrap:anywhere">'+esc(t.name||'?')+'</span>',
     taskPromptCell(t),
     accountNumbers.get(t.account)||'?',
-    t.api_key_name||'—',
     (t.duration||10)+'s',
     ({needs_recovery:'<span class="badge b-red">Needs recovery</span>',stopped:'<span class="badge b-gray">Stopped</span>'})[t.status]||sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
     fmt(t.created_at),
@@ -965,7 +1053,7 @@ async function loadTasks(){
       :(['failed','needs_recovery','stopped'].includes(t.status)?'<details><summary class="tiny" style="cursor:pointer">View error details</summary><div style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto">'+esc(t.error||'')+'</div></details>':'—')
     ,taskControls(t)
   ]);
-  q('#tasksTable').innerHTML=table([selectionHeader('tasks'),'Task ID','Name','Prompt','Account','Client','Duration','Status','Created At','Video','Actions'],rows);
+  q('#tasksTable').innerHTML=groupedTaskTable(r.tasks,rows,[selectionHeader('tasks'),'Name','Prompt','Account','Duration','Status','Created At','Video','Actions']);
   updateDeleteSelection('tasks');
 }
 
