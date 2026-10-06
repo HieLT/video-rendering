@@ -7,6 +7,9 @@ import sqlite3
 import threading
 import time
 
+from production_store import ProductionStoreMixin
+from review_store import production_status
+
 _LOCK = threading.Lock()
 SUPPORTED_DURATIONS = (10, 15, 30)
 DEFAULT_ALLOWED_DURATIONS = list(SUPPORTED_DURATIONS)
@@ -20,99 +23,107 @@ class PendingTaskLimitExceeded(RuntimeError):
     """Server pending task queue is full."""
 
 
-class TaskStore:
+class TaskStore(ProductionStoreMixin):
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA busy_timeout=5000")
-        self._init()
+        self._lock = _LOCK
+        self._conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            self._init()
+        except BaseException:
+            self._conn.close()
+            raise
 
     def _init(self):
         with _LOCK:
-            self._conn.execute(
-                "CREATE TABLE IF NOT EXISTS generated_reset_tasks (task_id TEXT PRIMARY KEY)"
-            )
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS tasks (
-                    id TEXT PRIMARY KEY,
-                    model TEXT,
-                    prompt TEXT,
-                    ratio TEXT,
-                    duration INTEGER,
-                    status TEXT,
-                    video_url TEXT,
-                    error TEXT,
-                    created_at REAL,
-                    updated_at REAL,
-                    conversation_id TEXT,
-                    deadline_at REAL,
-                    last_poll_at REAL,
-                    failure_code TEXT,
-                    reference_images TEXT,
-                    api_key_hash TEXT,
-                    api_key_name TEXT,
-                    started_at REAL,
-                    finished_at REAL,
-                    client_concurrency_limit INTEGER DEFAULT 0
+            self._backup_before_migration()
+            with self._conn:
+                self._conn.execute("BEGIN IMMEDIATE")
+                self._conn.execute(
+                    "CREATE TABLE IF NOT EXISTS generated_reset_tasks (task_id TEXT PRIMARY KEY)"
                 )
-                """
-            )
-            # Legacy migration: add missing columns for task recovery, client usage, and timing stats.
-            for column, definition in (
-                ("name", "TEXT DEFAULT ''"),
-                ("edit_selected", "INTEGER NOT NULL DEFAULT 0"),
-                ("tag_filename", "TEXT"),
-                ("account", "TEXT"),
-                ("account_uuid", "TEXT"),
-                ("deleted_at", "REAL"),
-                ("start_end", "INTEGER DEFAULT 0"),
-                ("batch_id", "TEXT"),
-                ("batch_index", "INTEGER"),
-                ("batch_count", "INTEGER"),
-                ("conversation_id", "TEXT"),
-                ("deadline_at", "REAL"),
-                ("last_poll_at", "REAL"),
-                ("failure_code", "TEXT"),
-                ("reference_images", "TEXT"),
-                ("api_key_hash", "TEXT"),
-                ("api_key_name", "TEXT"),
-                ("started_at", "REAL"),
-                ("finished_at", "REAL"),
-                ("client_concurrency_limit", "INTEGER DEFAULT 0"),
-            ):
-                try:
-                    self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
-                except sqlite3.OperationalError:
-                    pass
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS api_keys (
-                    key TEXT PRIMARY KEY,
-                    name TEXT,
-                    enabled INTEGER DEFAULT 1,
-                    created_at REAL,
-                    last_used_at REAL DEFAULT 0,
-                    daily_limit INTEGER DEFAULT 0,
-                    concurrency_limit INTEGER DEFAULT 0,
-                    allowed_durations TEXT DEFAULT '[10, 15, 30]',
-                    expires_at REAL DEFAULT 0
+                self._conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS tasks (
+                        id TEXT PRIMARY KEY,
+                        model TEXT,
+                        prompt TEXT,
+                        ratio TEXT,
+                        duration INTEGER,
+                        status TEXT,
+                        video_url TEXT,
+                        error TEXT,
+                        created_at REAL,
+                        updated_at REAL,
+                        conversation_id TEXT,
+                        deadline_at REAL,
+                        last_poll_at REAL,
+                        failure_code TEXT,
+                        reference_images TEXT,
+                        api_key_hash TEXT,
+                        api_key_name TEXT,
+                        started_at REAL,
+                        finished_at REAL,
+                        client_concurrency_limit INTEGER DEFAULT 0
+                    )
+                    """
                 )
-                """
-            )
-            # Legacy migration: add client-level policy columns to existing API Keys.
-            for column, definition in (
-                ("daily_limit", "INTEGER DEFAULT 0"),
-                ("concurrency_limit", "INTEGER DEFAULT 0"),
-                ("allowed_durations", "TEXT DEFAULT '[10, 15, 30]'"),
-                ("expires_at", "REAL DEFAULT 0"),
-            ):
-                try:
-                    self._conn.execute(f"ALTER TABLE api_keys ADD COLUMN {column} {definition}")
-                except sqlite3.OperationalError:
-                    pass
-            self._conn.commit()
+                # Legacy migration: add missing columns for task recovery, client usage, and timing stats.
+                for column, definition in (
+                    ("name", "TEXT DEFAULT ''"),
+                    ("edit_selected", "INTEGER NOT NULL DEFAULT 0"),
+                    ("tag_filename", "TEXT"),
+                    ("account", "TEXT"),
+                    ("account_uuid", "TEXT"),
+                    ("deleted_at", "REAL"),
+                    ("start_end", "INTEGER DEFAULT 0"),
+                    ("batch_id", "TEXT"),
+                    ("batch_index", "INTEGER"),
+                    ("batch_count", "INTEGER"),
+                    ("conversation_id", "TEXT"),
+                    ("deadline_at", "REAL"),
+                    ("last_poll_at", "REAL"),
+                    ("failure_code", "TEXT"),
+                    ("reference_images", "TEXT"),
+                    ("api_key_hash", "TEXT"),
+                    ("api_key_name", "TEXT"),
+                    ("started_at", "REAL"),
+                    ("finished_at", "REAL"),
+                    ("client_concurrency_limit", "INTEGER DEFAULT 0"),
+                ):
+                    columns = {row[1] for row in self._conn.execute("PRAGMA table_info(tasks)")}
+                    if column not in columns:
+                        self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
+                self._conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS api_keys (
+                        key TEXT PRIMARY KEY,
+                        name TEXT,
+                        enabled INTEGER DEFAULT 1,
+                        created_at REAL,
+                        last_used_at REAL DEFAULT 0,
+                        daily_limit INTEGER DEFAULT 0,
+                        concurrency_limit INTEGER DEFAULT 0,
+                        allowed_durations TEXT DEFAULT '[10, 15, 30]',
+                        expires_at REAL DEFAULT 0
+                    )
+                    """
+                )
+                # Legacy migration: add client-level policy columns to existing API Keys.
+                for column, definition in (
+                    ("daily_limit", "INTEGER DEFAULT 0"),
+                    ("concurrency_limit", "INTEGER DEFAULT 0"),
+                    ("allowed_durations", "TEXT DEFAULT '[10, 15, 30]'"),
+                    ("expires_at", "REAL DEFAULT 0"),
+                ):
+                    columns = {row[1] for row in self._conn.execute("PRAGMA table_info(api_keys)")}
+                    if column not in columns:
+                        self._conn.execute(f"ALTER TABLE api_keys ADD COLUMN {column} {definition}")
+                self._migrate_v2()
+
 
     @staticmethod
     def hash_api_key(key: str) -> str:
@@ -171,12 +182,19 @@ class TaskStore:
         start_end=False,
         batch_id=None,
         name=None,
+        *,
+        scene_id=None,
+        reference_snapshot=None,
     ):
         if not 1 <= len(task_ids) <= 5 or len(set(task_ids)) != len(task_ids):
             raise ValueError("Expected 1 to 5 unique task IDs")
         now = time.time()
         with _LOCK, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
+            if scene_id is not None:
+                self._require("scenes", scene_id)
+            snapshot_json = (self._validate_reference_snapshot(scene_id, reference_snapshot)
+                             if reference_snapshot is not None else None)
             if max_pending > 0:
                 pending = self._conn.execute(
                     "SELECT COUNT(*) FROM tasks WHERE status IN ('queued','processing')"
@@ -196,13 +214,7 @@ class TaskStore:
                     raise TaskQuotaExceeded(
                         f"API Key daily quota exceeded ({daily_limit} tasks)"
                     )
-            self._conn.executemany(
-                "INSERT INTO tasks ("
-                "id,model,prompt,ratio,duration,status,account,created_at,updated_at,"
-                "conversation_id,deadline_at,last_poll_at,failure_code,reference_images,"
-                "api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,start_end,batch_id,batch_index,batch_count,name"
-                ") VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?,?,?,?,?)",
-                [(
+            self._insert_task_rows([(
                     task_id,
                     model,
                     prompt,
@@ -222,19 +234,101 @@ class TaskStore:
                     index,
                     len(task_ids),
                     ((name or "").strip() + (f" ({index}/{len(task_ids)})" if len(task_ids) > 1 and name else "")),
-                ) for index, task_id in enumerate(task_ids, 1)],
-            )
+                    scene_id,
+                    snapshot_json,
+                ) for index, task_id in enumerate(task_ids, 1)])
             self._conn.commit()
+
+    def _insert_task_rows(self, rows):
+        self._conn.executemany("INSERT INTO tasks (id,model,prompt,ratio,duration,status,account,created_at,updated_at,conversation_id,deadline_at,last_poll_at,failure_code,reference_images,api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,start_end,batch_id,batch_index,batch_count,name,scene_id,reference_snapshot) VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+
+    def _project_generation_status(self, project_id):
+        self._require('projects', project_id)
+        ids = [r[0] for r in self._conn.execute('SELECT id FROM scenes WHERE project_id=? ORDER BY scene_number,id', (project_id,))]
+        result = []
+        for scene_id in ids:
+            scene = self._scene_details(scene_id)
+            attempts = [dict(r) for r in self._conn.execute("SELECT * FROM tasks WHERE scene_id=? AND deleted_at IS NULL ORDER BY created_at DESC,batch_index DESC,id DESC", (scene_id,))]
+            active = next((r for r in attempts if r['status'] in ('queued','processing')), None)
+            selected = next((r for r in attempts if r['id']==scene['selected_task_id'] and r['status']=='completed' and (r['video_url'] or '').strip()), None)
+            latest = attempts[0] if attempts else None
+            reason = 'ACTIVE_GENERATION_EXISTS' if active else ('ALREADY_SELECTED' if selected else (scene['readiness'] if not scene['ready'] else None))
+            status = active['status'].upper() if active else ('SELECTED' if selected else (scene['readiness'] if not scene['ready'] else (latest['status'].upper() if latest else 'READY')))
+            result.append({**scene, 'generation_status':status, 'latest_task':latest,
+                           'active_task':active, 'selected_task':selected, 'skip_reason':reason,
+                           'production_status':production_status(scene,attempts,active,selected),
+                           'completed_attempt_count':sum(row['status']=='completed' for row in attempts)})
+        return result
+
+    def project_generation_status(self, project_id):
+        with self._lock, self._conn:
+            self._conn.execute('BEGIN')
+            return self._project_generation_status(project_id)
+
+    def create_project_batch(self, project_id, plans, client, max_pending=0):
+        """One creation transaction; recheck active/selected before admitting attempts."""
+        import uuid
+        plans = {p['scene_id']:p for p in plans}
+        with self._lock, self._conn:
+            self._conn.execute('BEGIN IMMEDIATE')
+            scenes = self._project_generation_status(project_id)
+            skipped, accepted = [], []
+            for scene in scenes:
+                reason = scene['skip_reason']
+                plan = plans.get(scene['id'])
+                if not reason and plan is None:
+                    reason = 'NOT_IN_REQUEST'
+                if reason:
+                    skipped.append(dict(scene_id=scene['id'], scene_number=scene['scene_number'], reason=reason))
+                    continue
+                if scene['updated_at'] != plan['scene_updated_at']:
+                    raise sqlite3.IntegrityError('Scene changed while preparing the batch; retry Generate All')
+                snapshot_json = self._validate_reference_snapshot(scene['id'], plan['reference_snapshot'])
+                accepted.append({**plan, 'scene_number':scene['scene_number'], 'snapshot_json':snapshot_json,
+                                 'task_id':'video_'+uuid.uuid4().hex})
+            count = len(accepted)
+            if max_pending > 0:
+                pending = self._conn.execute("SELECT count(*) FROM tasks WHERE status IN ('queued','processing')").fetchone()[0]
+                if count and pending + count > max_pending:
+                    raise PendingTaskLimitExceeded(f'Pending task queue has reached server limit ({max_pending})')
+            daily_limit = client['daily_limit']
+            if count and daily_limit > 0 and client['api_key_hash']:
+                day = datetime.date.today().isoformat()
+                used = self._conn.execute("SELECT count(*) FROM tasks WHERE api_key_hash=? AND date(created_at,'unixepoch','localtime')=?", (client['api_key_hash'],day)).fetchone()[0]
+                if used + count > daily_limit:
+                    raise TaskQuotaExceeded(f'API Key daily quota exceeded ({daily_limit} tasks)')
+            now = time.time()
+            batch_id = 'batch_'+uuid.uuid4().hex if count else None
+            self._insert_task_rows([(
+                p['task_id'],p['model'],p['prompt'],p['ratio'],p['duration'],None,now,now,
+                json.dumps(p['reference_images'],ensure_ascii=False),client['api_key_hash'],client['api_key_name'],
+                None,None,max(0,int(client['concurrency_limit'] or 0)),int(p['start_end']),
+                batch_id,index,count,(p['name'] or '').strip(),p['scene_id'],p['snapshot_json']
+            ) for index,p in enumerate(accepted,1)])
+            result = dict(project_id=project_id, requested=len(scenes), created=count, skipped=len(skipped),
+                          batch_id=batch_id, tasks=[dict(scene_id=p['scene_id'],scene_number=p['scene_number'],task_id=p['task_id']) for p in accepted], skipped_scenes=skipped)
+            return result, accepted
 
     def update(self, task_id, **fields):
         if not fields:
             return
+        if {"scene_id", "reference_snapshot"} & set(fields):
+            raise ValueError("Task scene_id and reference_snapshot are immutable; set them when creating the task")
         fields["updated_at"] = time.time()
         cols = ", ".join(f"{k}=?" for k in fields)
         vals = list(fields.values()) + [task_id]
-        with _LOCK:
+        with _LOCK, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in self._conn.execute("PRAGMA table_info(tasks)")}
+            if set(fields) - columns or "id" in fields:
+                raise ValueError("Invalid task update fields")
+            selected = self._conn.execute("SELECT 1 FROM scenes WHERE selected_task_id=?", (task_id,)).fetchone()
+            if selected:
+                row = self._require("tasks", task_id)
+                merged = {**row, **fields}
+                if merged["deleted_at"] is not None or merged["status"] != "completed" or not (merged["video_url"] or "").strip():
+                    raise ValueError("Clear scene selection before invalidating its selected task")
             self._conn.execute(f"UPDATE tasks SET {cols} WHERE id=?", vals)
-            self._conn.commit()
 
     def get(self, task_id):
         with _LOCK:
@@ -271,7 +365,7 @@ class TaskStore:
         with _LOCK:
             rows = self._conn.execute(
                 "SELECT * FROM tasks WHERE status='queued' "
-                "AND conversation_id IS NULL ORDER BY created_at"
+                "AND conversation_id IS NULL ORDER BY created_at,batch_index,id"
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -332,7 +426,10 @@ class TaskStore:
 
     def delete_task(self, task_id: str) -> bool:
         """Hide a finished record while preserving usage accounting and media."""
-        with _LOCK:
+        with _LOCK, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            if self._conn.execute("SELECT 1 FROM scenes WHERE selected_task_id=?", (task_id,)).fetchone():
+                raise ValueError("Clear scene selection before deleting its selected task")
             cur = self._conn.execute(
                 "UPDATE tasks SET deleted_at=?, updated_at=? WHERE id=? "
                 "AND deleted_at IS NULL AND status IN ('completed','failed','stopped','needs_recovery')",

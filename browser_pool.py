@@ -1,5 +1,6 @@
 """Browser Account Pool: Manages accounts/ profiles with concurrency control and daily limits."""
 import asyncio
+from collections import deque
 import json
 from contextlib import asynccontextmanager, closing
 import shutil
@@ -31,6 +32,14 @@ class AllAccountsLimitedError(RuntimeError):
 
 class AllAccountsQuotaBlockedError(RuntimeError):
     """All active schedulable accounts are known to have insufficient credits."""
+
+
+class AccountTemporarilyUnavailable(RuntimeError):
+    """Busy/cooling accounts can serve a task later in the current window."""
+
+
+class NoUsableAccountsError(RuntimeError):
+    """No account can serve a new generation in the current window."""
 
 
 class BrowserPool:
@@ -242,8 +251,8 @@ class BrowserPool:
             "quota_blocked_until=0, quota_reason='' "
             "WHERE (rate_limited_until > 0 AND rate_limited_until <= ?) "
             "OR (quota_blocked_until > 0 AND quota_blocked_until <= ?)", (now, now))
-        if cur.rowcount:
-            self._conn.commit()
+        # UPDATE acquires a write lock even when no rows match.
+        self._conn.commit()
 
     def _mark_quota_blocked(self, account: str, reason: str = ""):
         used = self.used_today(account)
@@ -439,14 +448,16 @@ class BrowserPool:
     @property
     def all_accounts_limited(self) -> bool:
         """Returns True if all active accounts have reached daily limit."""
-        candidates = [a for a in self.list_accounts() if a["scheduling"] and not a["cooling"]]
+        candidates = [a for a in self.list_accounts() if a["scheduling"]
+                      and a.get("login_ok") == 1 and a.get("auth_state") == "active"]
         return bool(candidates) and all(
             a["rate_limited"] or a["used_today"] >= DAILY_LIMIT for a in candidates
         )
 
     @property
     def all_accounts_quota_blocked(self) -> bool:
-        candidates = [a for a in self.list_accounts() if a["scheduling"] and not a["cooling"]]
+        candidates = [a for a in self.list_accounts() if a["scheduling"]
+                      and a.get("login_ok") == 1 and a.get("auth_state") == "active"]
         return bool(candidates) and all(
             a["quota_blocked"] or a["rate_limited"] or a["used_today"] >= DAILY_LIMIT
             for a in candidates
@@ -493,15 +504,58 @@ class BrowserPool:
                              model: str = "seedance_v2.0", on_conversation_id=None,
                              on_poll=None, on_balance=None,
                              reference_image_paths: list[str] | None = None,
+                             on_account_selected=None, name: str = "", on_wait=None):
+        # FIFO admission gates are released as soon as an account lock is held,
+        # so running workers retain the existing parallelism.
+        if not hasattr(self, '_admission_waiters'):
+            self._admission_waiters = deque()
+        callback = on_account_selected
+        while True:
+            gate = asyncio.Event()
+            self._admission_waiters.append(gate)
+            if len(self._admission_waiters) == 1:
+                gate.set()
+
+            def release_gate():
+                if gate in self._admission_waiters:
+                    self._admission_waiters.remove(gate)
+                    if self._admission_waiters:
+                        self._admission_waiters[0].set()
+
+            def selected(account):
+                if callback:
+                    callback(account)
+                release_gate()
+
+            try:
+                await gate.wait()
+                try:
+                    return await self._generate_video_once(
+                        prompt, ratio, duration, model, on_conversation_id=on_conversation_id,
+                        on_poll=on_poll, on_balance=on_balance,
+                        reference_image_paths=reference_image_paths,
+                        on_account_selected=selected, name=name)
+                except AccountTemporarilyUnavailable:
+                    if on_wait:
+                        on_wait()
+                    # One bounded recheck per admission head, no semaphore held.
+                    await asyncio.sleep(1.0)
+            finally:
+                release_gate()
+
+    async def _generate_video_once(self, prompt: str, ratio: str = None, duration: int = None,
+                             model: str = "seedance_v2.0", on_conversation_id=None,
+                             on_poll=None, on_balance=None,
+                             reference_image_paths: list[str] | None = None,
                              on_account_selected=None, name: str = "") -> dict:
         """Picks an idle schedulable account; automatically rotates on quota/risk limits."""
         async with self.semaphore:
             last_err = None
+            invalid_profiles = set()
             for a in self.list_accounts():
                 if not self._schedulable(a):
                     continue
                 account = a["name"]
-                _log(f"[pool] selected account={account} for generation")
                 lock = self._locks.setdefault(account, asyncio.Lock())
                 # Skip busy accounts to prevent concurrent collisions on same profile.
                 if lock.locked():
@@ -509,6 +563,7 @@ class BrowserPool:
                 async with self.account_activity(account, "generating"):
                     if not self._schedulable(next(x for x in self.list_accounts() if x['name'] == account)):
                         continue  # State changed while waiting
+                    _log(f"[pool] selected account={account} for generation")
                     if on_account_selected:
                         on_account_selected(account)
                     submit_attempted = False
@@ -568,7 +623,16 @@ class BrowserPool:
                     except FileNotFoundError as e:
                         _log(f"[pool] {account} profile missing, skipping: {e}")
                         last_err = e
+                        invalid_profiles.add(account)
                         continue
+            candidates = [a for a in self.list_accounts()
+                          if a["name"] not in invalid_profiles and a["scheduling"]
+                          and a.get("login_ok") == 1 and a.get("auth_state") == "active"
+                          and not a["rate_limited"] and not a["quota_blocked"]
+                          and a["used_today"] < DAILY_LIMIT
+                          and (a["credit_balance"] is None or a["credit_balance"] >= 2)]
+            if any(a["cooling"] or a["busy"] for a in candidates):
+                raise AccountTemporarilyUnavailable("Waiting for account release/cooldown")
             if self.all_accounts_quota_blocked:
                 raise AllAccountsQuotaBlockedError(
                     f"429: All schedulable accounts have insufficient points: {last_err or 'No accounts'}"
@@ -577,4 +641,4 @@ class BrowserPool:
                 raise AllAccountsLimitedError(
                     f"429: All schedulable accounts have reached Dola daily limit: {last_err or 'No accounts'}"
                 )
-            raise RuntimeError(f"No available accounts in pool: {last_err or 'No accounts'}")
+            raise NoUsableAccountsError(f"No usable accounts in pool: {last_err or 'Empty pool, disabled/invalid credentials, missing profiles, or daily/credit limits'}")

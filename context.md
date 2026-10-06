@@ -149,3 +149,40 @@ C:\dola\.venv\Scripts\python.exe test_video_tags_ui.py
 Các test này kiểm tra tên scene/start-end, alias, batch, danh sách không giới hạn và UUID bằng database tạm/mock; không tạo video thật. Các script `test_video_batch.py`, `test_video_duration.py`, `test_video_ratio.py`, `test_ratio_recovery.py`, `test_dashboard_delete.py` kiểm tra offline với dữ liệu/trang giả lập. Chưa xác nhận end-to-end tạo video trên Dola sau lần gộp 30/09.
 
 Không chạy toàn bộ `test_*.py` một cách mặc định: một số script từ main là thử nghiệm live, có thể mở profile, gửi request và tạo video thật.
+
+## V2 foundation (06/10/2026)
+
+V2 data model/storage is implemented; see V2_DATA_MODEL.md for schema and methods.
+TaskStore migrates tasks.db to user_version=2 on next initialization, with a
+pre-migration SQLite backup, foreign keys, and one transactional additive migration.
+Old tasks keep scene_id=NULL. Scenes own editable configuration and selected_task_id;
+tasks remain generation attempts. Persistent asset metadata uses DOLA_ASSET_DIR=assets
+and relative .jpg/.jpeg/.png/.webp paths. Engine, public generation API, and UI were
+not changed. 52 temporary/offline tests pass. The currently running server/database
+was not restarted or migrated during implementation; stop it before the next start.
+
+## Persistent Reference Library — Step 2 (06/10/2026)
+
+Real V2 migration verification passed before Step 2: normal entrypoint started twice,
+user_version=2, all new tables/scene_id present, FK check clean, tasks count 0->0,
+original backup preserved. Real history is empty; nonempty history is tested offline.
+
+Step 2 adds persistent asset upload/list/get/safe-delete and scene attach/detach/order/
+alias/generate APIs. Reuses the task pipeline and unchanged generation worker.
+TaskStore now migrates to version 3 for immutable reference_snapshot JSON; real
+version 2->3 startup/restart verification also passed with before_v3 backup preserved.
+Scene prompt stays editable; each task keeps resolved prompt and ordered asset/path/
+alias snapshot. Assets used by scenes or task snapshots cannot be deleted.
+
+83 offline/HTTP/mocked-worker tests passed. Latest service is running at localhost:8000;
+no Dola generation was performed. See REFERENCE_LIBRARY.md for endpoint contracts,
+verification reports, storage behavior and scope boundaries. No dashboard UI/Generate
+All/final-frame/GPT integration has been added.
+
+Step 3: Project/Scene workflow and atomic Template 5 JSON import implemented. Current schema 4; persistent scene_reference_requirements keeps missing names/aliases/positions without fake assets. Explicit resolve, computed readiness, case-insensitive asset uniqueness and collision-safe migration. Contract and endpoints: SCENE_IMPORT.md. 40 new tests + 83 prior regression tests passed (123). Generation engine unchanged in Step 3.
+
+Step 4: Reliable asyncio queue + Generate All Ready implemented. BrowserPool FIFO admission gates wait on busy/cooldown without holding semaphore; processing starts after account lock. Added atomic project batch creation, active/selected rechecks, project generation-status read model and queued stop guards/temporary cleanup. Schema remains 4. Contract: GENERATE_ALL.md. 40 new tests + 123 prior regressions pass (163 total). Runtime two-start smoke passed with no live generation; service localhost:8000.
+
+Step 5: Project review/scene versions and selected-output workflow implemented. Schema remains 4. Added generations/selection/final-videos APIs and explicit optional bulk latest-completed selection. Computed production_status + summary/completion, preserving legacy generation_status. New vanilla Projects tab supports review MP4/select/unselect/regenerate and bounded status polling; Generate/History kept. Contract: PROJECT_REVIEW.md. 34 new backend tests + 163 prior regressions pass (197); project MP4 browser smoke + all 3 legacy browser suites pass. Runtime two-start smoke passed with unchanged counts/backups; no live Dola generation.
+
+UI supplement: Complete project production workflow is now exposed in the existing vanilla Projects tab. Create/rename, read-only JSON validation/import, authenticated persistent thumbnails, reference library/upload, aggregate missing names with prefill and automatic resolve, Generate All confirmation/result, status/review/select and ordered selected outputs all work through browser controls. Only backend addition: GET /api/admin/assets/{id}/image; schema remains 4 and generation engine unchanged. See PROJECT_WORKFLOW_UI.md. 201 backend tests, full 40-scene browser acceptance, existing project-review browser test and all 3 legacy browser suites passed; no live Dola quota. Tests use fixture stores/assets only. User-owned running server was left untouched; manual restart loads the new asset image route.

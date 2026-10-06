@@ -229,6 +229,31 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .task-search-filters label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--sub);min-width:140px}
 .task-search-filters .btn{margin-left:auto;min-height:36px;background:transparent}
 @media(max-width:600px){.task-search-main{flex-direction:column}.task-search-filters label{min-width:0;flex:1 1 40%}.task-search-filters .btn{margin-left:0}.task-search-panel{padding:12px}}
+
+/* Minimal project review, scoped away from the existing generation form/history. */
+.project-scene{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:16px 0;border-top:1px solid var(--line)}
+.project-scene h4,.project-version h4{margin:0 0 8px;font-size:15px}
+.project-scene p{margin:6px 0;color:var(--sub);overflow-wrap:anywhere}
+.project-actions,.project-list{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.project-actions{align-self:start}
+.project-summary{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}
+.project-version{border:1px solid var(--line);border-radius:10px;padding:14px;margin:12px 0}
+.project-version[data-selected=true]{border-color:var(--accent);background:#f5fcf8}
+.project-version video{display:block;width:min(100%,560px);max-height:340px;margin:10px 0;background:#111;border-radius:8px}
+.project-version pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0;color:var(--text);font:inherit}
+.project-error{color:var(--red);margin:10px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.project-key input{padding:8px;border:1px solid var(--line);border-radius:8px;margin:8px 0;width:min(100%,340px)}
+.project-progress{font-size:20px;font-weight:600;margin:12px 0}
+
+.project-list{align-items:stretch}.project-home-card{border:1px solid var(--line);border-radius:10px;padding:16px;min-width:220px;flex:1;max-width:400px;overflow-wrap:anywhere}
+.project-home-card h4{margin:0 0 12px}.project-form{display:grid;gap:12px;max-width:740px}.project-form label{display:grid;gap:6px;font-weight:600}
+.project-form input,.project-form select,.project-form textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font:inherit;box-sizing:border-box}
+.project-form textarea{min-height:300px;font-family:monospace}.project-assets{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;margin:16px 0}
+.project-asset{border:1px solid var(--line);border-radius:10px;padding:12px;overflow-wrap:anywhere}.project-asset img{width:100%;height:160px;object-fit:contain;background:#f3f5f6;border-radius:6px}
+.project-missing{border:1px solid #e8b54e;background:#fff9eb;padding:14px;border-radius:10px;margin:18px 0}.project-ref{display:block;margin:5px 0}.project-ref small{color:var(--sub)}
+.project-output video{width:min(100%,560px);max-height:340px;background:#111}.project-output{border-top:1px solid var(--line);padding:16px 0}.project-form small{font-weight:400;color:var(--sub)}
+
+@media(max-width:700px){.project-scene{grid-template-columns:1fr}nav{overflow-x:auto}}
 </style>
 </head>
 <body>
@@ -246,7 +271,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
   <div class="head-r">
     <label><input type="checkbox" id="autoCk" checked onchange="autoRefresh=this.checked">Auto Refresh</label>
     <span id="lastUpdate"></span>
-    <button class="btn" onclick="refresh()">Refresh</button>
+    <button class="btn" onclick="refresh(true)">Refresh</button>
     <button class="btn" onclick="logout()" title="Logout">Logout</button>
   </div>
 </header>
@@ -255,6 +280,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
   <button class="on" data-tab="dash" onclick="switchTab('dash')">Dashboard</button>
   <button data-tab="accounts" onclick="switchTab('accounts')">Accounts</button>
   <button data-tab="tasks" onclick="switchTab('tasks')">Video Tasks</button>
+  <button data-tab="projects" onclick="switchTab('projects')">Projects</button>
   <button data-tab="keys" onclick="switchTab('keys')">API Keys</button>
 </nav>
 
@@ -348,6 +374,28 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
     </div>
   </section>
 
+  <section id="tab-projects" style="display:none">
+    <div class="card">
+      <div id="projectHome"><div class="toolbar"><h3>Projects</h3><div class="project-actions"><button class="btn btn-p" data-action="create">+ Create Project</button><button class="btn" id="projectRefresh">Refresh projects</button></div></div>
+      <div id="projectList" class="project-list" aria-label="Projects"></div></div>
+      <p id="projectMessage" role="status" aria-live="polite"></p>
+      <p id="projectError" class="project-error" role="alert"></p>
+    </div>
+    <div class="card" id="projectDetail" hidden>
+      <div class="toolbar"><h3 id="projectTitle"></h3><button class="btn" id="projectBack">Back to projects</button></div>
+      <div id="projectProgress" class="project-progress" aria-live="polite"></div>
+      <div id="projectSummary" class="project-summary"></div>
+      <div class="project-actions"><button class="btn" data-action="import">Import Scenes</button><button class="btn" data-action="library">Reference Library</button><button class="btn" data-action="outputs">View Selected Outputs</button><button class="btn" data-action="rename">Rename</button><button class="btn" data-action="refresh">Refresh project</button><button class="btn btn-p" id="projectGenerateAll">Generate All Ready</button><button class="btn" id="projectSelectLatest" data-loading="Selecting...">Select latest completed for unselected scenes</button></div>
+      <details class="project-key"><summary>Gateway API Key (optional)</summary><label for="projectGatewayKey">Only if generation API authentication is enabled</label><br><input id="projectGatewayKey" type="password" autocomplete="off"></details>
+      <div id="projectMissing"></div><div id="projectScenes"></div>
+    </div>
+    <div class="card" id="projectPanel" hidden aria-label="Project workflow panel"><div class="toolbar"><h3 id="projectPanelTitle"></h3><button class="btn" id="projectPanelBack" data-action="close-panel">Back to project</button></div><div id="projectPanelBody"></div><p id="projectPanelError" class="project-error" role="alert"></p></div>
+    <div class="card" id="projectVersions" hidden aria-label="Scene versions">
+      <div class="toolbar"><h3 id="projectVersionsTitle"></h3><button class="btn" id="projectCloseVersions">Close versions</button></div>
+      <div id="projectVersionList"></div>
+    </div>
+  </section>
+
   <section id="tab-keys" style="display:none">
     <div class="card">
       <div class="toolbar">
@@ -386,7 +434,7 @@ async function api(path,opts={}){
   if(r.status===401){showLogin();throw new Error('unauthorized');}
   const text=await r.text();
   let data={};try{data=text?JSON.parse(text):{};}catch(e){}
-  if(!r.ok)throw new Error(data.detail||(`${r.status} ${text.slice(0,120)}`));
+  if(!r.ok)throw new Error((typeof data.detail==='string'?data.detail:JSON.stringify(data.detail))||(`${r.status} ${text.slice(0,120)}`));
   return data;
 }
 
@@ -403,11 +451,12 @@ function logout(){adminKey='';localStorage.removeItem(LS_KEY);showLogin();}
 function switchTab(t){
   curTab=t;
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
-  ['dash','accounts','tasks','keys'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
+  ['dash','accounts','tasks','keys','projects'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
+  if(t==='projects')ProjectReview.invalidate();
   refresh();
 }
 
-async function refresh(){
+async function refresh(force=false){
   if(q('#loginMask').style.display!=='none')return;
   q('#lastUpdate').textContent='Updated at '+new Date().toLocaleTimeString();
   try{
@@ -415,6 +464,7 @@ async function refresh(){
     else if(curTab==='accounts')await loadAccounts();
     else if(curTab==='tasks')await loadTasks();
     else if(curTab==='keys')await loadKeys();
+    else if(curTab==='projects')await ProjectReview.refresh(force);
   }catch(e){if(e.message!=='unauthorized'){/* silent */}}
 }
 
@@ -1144,5 +1194,377 @@ function showDlg(html){q('#dlgBox').innerHTML=html;show('dlg');}
 })();
 timer=setInterval(()=>{if(autoRefresh)refresh();},10000);
 </script>
+
+<script>
+/* Project review shares the dashboard auth/API helper and ten-second polling timer. */
+window.ProjectReview = (() => {
+  const state = {projects:null, project:null, data:null, scene:null, dirty:true,
+    loading:false, request:0, versionsRequest:0, signature:null, home:{}, panel:null, panelRequest:0, blobs:[], busy:false, validated:null};
+  const root = document.getElementById('tab-projects');
+  const el = id => document.getElementById(id);
+  const path = id => encodeURIComponent(id);
+  const label = value => String(value || '').replaceAll('_',' ');
+  const badge = status => {
+    const color = status === 'SELECTED' || status === 'completed' ? 'green' :
+      ['QUEUED','PROCESSING','NEEDS_REVIEW','queued','processing'].includes(status) ? 'blue' :
+      ['MISSING_REFERENCES','INVALID_CONFIGURATION','failed'].includes(status) ? 'orange' : 'gray';
+    return `<span class="badge b-${color}">${esc(label(status).toUpperCase())}</span>`;
+  };
+  function videoURL(value) {
+    if(!value || !String(value).trim())return '';
+    try {
+      const url = new URL(value, location.origin);
+      return ['http:','https:'].includes(url.protocol) ? url.href : '';
+    } catch(e) { return ''; }
+  }
+  function error(e) { el(state.panel ? 'projectPanelError' : 'projectError').textContent = e.message || String(e); }
+  function message(text) { el('projectMessage').textContent = text; }
+  function auth() {
+    const key = el('projectGatewayKey').value.trim() || el('videoApiKey').value.trim();
+    return key ? {Authorization:'Bearer '+key} : {};
+  }
+  function renderProjects() {
+    el('projectHome').hidden=!!state.project || !!state.panel;
+    el('projectList').innerHTML=state.projects.length ? state.projects.map(p=>{
+      const data=state.home[p.id];const sum=data && data.summary;
+      return `<article class="project-home-card"><h4>${esc(p.name)}</h4>
+        <p>Scenes: ${sum ? sum.total_scenes : 'Loading...'}</p>
+        <p>Selected: ${sum ? `${sum.selected} / ${sum.total_scenes}` : 'Loading...'}</p>
+        <p>Production Status: ${data && data.production_complete ? 'COMPLETE' : 'IN PROGRESS'}</p>
+        <button class="btn btn-p" data-action="open" data-project-id="${esc(p.id)}" aria-label="${esc(p.name)}">Open Project</button></article>`;
+    }).join('') : '<p>No projects yet.</p><button class="btn btn-p" data-action="create">+ Create Project</button>';
+  }
+  function sceneSignature(scene) {
+    if(!scene)return '';
+    const t=scene.latest_task;
+    return JSON.stringify([scene.id, scene.selected_task_id, t && [t.id,t.status,t.video_url,t.error,t.deleted_at], scene.completed_attempt_count]);
+  }
+  function renderScenes() {
+    const data=state.data;
+    const project=state.projects.find(p=>p.id===state.project);
+    el('projectDetail').hidden=!!state.panel;
+    el('projectTitle').textContent=project ? project.name : 'Project';
+    el('projectProgress').textContent=`${data.summary.selected} / ${data.summary.total_scenes} SELECTED${data.production_complete ? ' - Production complete' : ''}`;
+    el('projectSummary').innerHTML=`<span class="badge b-gray">Scenes: ${data.summary.total_scenes}</span>`+Object.entries(data.summary).filter(([key])=>key!=='total_scenes')
+      .map(([key,count])=>`<span class="badge b-gray">${esc(label(key))}: ${count}</span>`).join('');
+    renderMissing();
+    el('projectGenerateAll').disabled=!data.scenes.some(s=>!s.skip_reason);
+    el('projectSelectLatest').disabled=!data.scenes.some(s=>!s.selected_task && s.completed_attempt_count>0);
+    el('projectScenes').innerHTML=data.scenes.length ? data.scenes.map(scene=>{
+      const selected=scene.selected_task;
+      const url=selected && videoURL(selected.video_url);
+      const refs=scene.missing_references || [];
+      return `<article class="project-scene" data-scene-id="${esc(scene.id)}">
+        <div><h4>Scene ${esc(String(scene.scene_number).padStart(2,'0'))} - ${esc(scene.scene_name)}</h4>
+          <div>${badge(scene.production_status)}${scene.active_task && scene.production_status==='SELECTED' ? ` ${badge(scene.active_task.status)} new version` : ''}</div>
+          <p>References: ${refs.length ? `Missing ${refs.length}: ${esc(refs.map(r=>r.name).join(', '))}` : 'READY'}</p>
+          <div>${(scene.references||[]).map(r=>`<span class="project-ref">${r.asset_id ? '&#10003;' : '&#10007;'} ${esc(r.name)} <small>Alias: ${esc(r.alias)} - ${r.asset_id ? 'Resolved' : 'Missing'}</small></span>`).join('')}</div>
+          <p>Latest generation: ${scene.latest_task ? esc(label(scene.latest_task.status).toUpperCase()) : 'None'}</p>
+          ${selected ? `<p>&#9733; SELECTED ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open selected video</a>` : ''}</p>` : ''}
+          ${(scene.validation_errors||[]).length ? `<p>${esc(scene.validation_errors.join('; '))}</p>` : ''}
+        </div>
+        <div class="project-actions">
+          <button class="btn btn-p" data-action="generate" data-loading="Generating..." ${!scene.ready || scene.active_task ? 'disabled' : ''}>${scene.latest_task ? 'Regenerate' : 'Generate'}</button>
+          <button class="btn" data-action="review">Review Versions</button>
+          ${selected ? '<button class="btn" data-action="unselect">Unselect</button>' : ''}
+          ${refs.length ? `<button class="btn" data-action="upload-missing" data-name="${esc(refs[0].name)}">Upload Missing Reference</button>` : ''}
+        </div></article>`;
+    }).join('') : '<p>No scenes in this project yet.</p>';
+  }
+  async function loadVersions(sceneId, force=false) {
+    const scene=(state.data && state.data.scenes || []).find(s=>s.id===sceneId);
+    const signature=sceneSignature(scene);
+    if(!force && signature===state.signature)return;
+    const request=++state.versionsRequest;
+    const data=await projectRequest(`/api/admin/scenes/${path(sceneId)}/generations`);
+    if(request!==state.versionsRequest || state.scene!==sceneId)return;
+    state.signature=signature;
+    el('projectVersions').hidden=!!state.panel;
+    el('projectVersionsTitle').textContent=scene ? `Scene ${String(scene.scene_number).padStart(2,'0')} - ${scene.scene_name}: Versions` : 'Versions';
+    el('projectVersionList').innerHTML=data.generations.length ? data.generations.map(task=>{
+      const url=videoURL(task.video_url);
+      const deleted=task.deleted_at!==null && task.deleted_at!==undefined;
+      const selectable=task.status==='completed' && !deleted && url;
+      const refs=Array.isArray(task.reference_snapshot) ? task.reference_snapshot.map(r=>r.reference_alias).join(', ') : '';
+      return `<article class="project-version" data-task-id="${esc(task.task_id)}" data-scene-id="${esc(sceneId)}" data-selected="${!!task.selected}">
+        <h4>Generation #${task.generation_number}${task.selected ? ' - &#9733; SELECTED' : ''}</h4>
+        <div>${badge(task.status)} ${deleted ? '<span class="badge b-gray">DELETED</span>' : ''}</div>
+        <p>${esc(fmt(task.created_at))} | ${esc(task.model)} | ${esc(task.ratio)} | ${esc(task.duration)}s</p>
+        ${task.status==='completed' && url && !deleted ? `<video controls preload="metadata" src="${esc(url)}" aria-label="Generation ${task.generation_number} video"></video>` : ''}
+        ${task.status==='completed' && !url && !deleted ? '<p>Completed attempt has no playable video URL.</p>' : ''}
+        ${task.error || task.failure_code ? `<pre class="project-error">${esc([task.failure_code,task.error].filter(Boolean).join(': '))}</pre>` : ''}
+        ${refs ? `<p>References used: ${esc(refs)}</p>` : ''}
+        <details><summary>Generation prompt</summary><pre>${esc(task.prompt || '')}</pre></details>
+        <div class="project-actions">
+          ${task.selected ? '<button class="btn" data-action="unselect">Unselect</button>' : selectable ? `<button class="btn btn-p" data-action="select" data-task-id="${esc(task.task_id)}">Select</button>` : ''}
+        </div></article>`;
+    }).join('') : '<p>No generation attempts yet.</p>';
+  }
+  async function refresh(force=false) {
+    if(state.loading && !force)return;
+    if(!state.projects)el('projectList').innerHTML='<p>Loading...</p>';
+    const active=state.data && state.data.scenes.some(s=>s.active_task);
+    if(!force && !state.dirty && state.projects && !active)return;
+    const request=++state.request;
+    const projectId=state.project;
+    state.loading=true;
+    try {
+      if(force || state.dirty || !state.projects) {
+        const data=await projectRequest('/api/admin/projects');
+        if(request!==state.request)return;
+        state.projects=data.projects;
+        if(!projectId) {
+          const summaries=await Promise.all(state.projects.map(async p=>[p.id,await projectRequest(`/api/admin/projects/${path(p.id)}/generation-status`)]));
+          if(request!==state.request)return;
+          state.home=Object.fromEntries(summaries);
+        }
+        renderProjects();
+      }
+      if(projectId) {
+        const data=await projectRequest(`/api/admin/projects/${path(projectId)}/generation-status`);
+        if(request!==state.request || state.project!==projectId)return;
+        state.data=data;state.home[projectId]=data;
+        renderScenes();
+        if(state.scene)await loadVersions(state.scene, force);
+      }
+      state.dirty=false;
+    } catch(e) { if(request===state.request)error(e); }
+    finally { if(request===state.request)state.loading=false; }
+  }
+  async function act(button, operation) {
+    if(state.busy)return;state.busy=true;
+    const caption=button.textContent;button.disabled=true;
+    if(button.dataset.loading)button.textContent=button.dataset.loading;
+    el('projectError').textContent='';el('projectPanelError').textContent='';
+    try { await operation(); }
+    catch(e) { error(e); }
+    finally { state.busy=false;if(button.isConnected){button.disabled=false;button.textContent=caption;
+      if(button.id==='projectSelectLatest' && state.data)button.disabled=!state.data.scenes.some(s=>!s.selected_task && s.completed_attempt_count>0);
+      if(button.id==='projectGenerateAll' && state.data)button.disabled=!state.data.scenes.some(s=>!s.skip_reason);
+    } }
+  }
+  function closeVersions() {
+    state.scene=null;state.signature=null;state.versionsRequest++;
+    el('projectVersions').hidden=true;
+    el('projectVersionList').replaceChildren();
+  }
+  root.addEventListener('click', event=>{
+    const button=event.target.closest('button[data-action]');
+    if(!button || button.disabled)return;
+    const action=button.dataset.action;
+    const row=button.closest('[data-scene-id]');
+    const sceneId=row && row.dataset.sceneId;
+    act(button, async()=>{
+      if(await workflowAction(action,button))return;
+      if(action==='open') {
+        closePanel();closeVersions();state.project=button.dataset.projectId;state.data=null;
+        await refresh(true);return;
+      }
+      if(action==='review') {
+        state.scene=sceneId;state.signature=null;
+        await loadVersions(sceneId,true);
+        el('projectVersions').scrollIntoView({block:'start',behavior:'smooth'});return;
+      }
+      if(action==='generate') {
+        await projectRequest(`/api/admin/scenes/${path(sceneId)}/generate`,{method:'POST',body:{},headers:auth()});
+        message('Scene generation queued.');
+      } else if(action==='select') {
+        await projectRequest(`/api/admin/scenes/${path(sceneId)}/selected-generation`,{method:'PUT',body:{task_id:button.dataset.taskId}});
+        message('Selected output updated.');
+      } else if(action==='unselect') {
+        await projectRequest(`/api/admin/scenes/${path(sceneId)}/selected-generation`,{method:'DELETE'});
+        message('Selection cleared.');
+      }
+      await refresh(true);
+    });
+  });
+  el('projectRefresh').addEventListener('click',()=>{el('projectError').textContent='';refresh(true);});
+  el('projectGatewayKey').addEventListener('input',()=>{el('videoApiKey').value=el('projectGatewayKey').value;});
+  el('projectCloseVersions').addEventListener('click',closeVersions);
+  el('projectBack').addEventListener('click',()=>{
+    if(state.busy)return;closePanel();closeVersions();state.project=null;state.data=null;state.request++;
+    el('projectDetail').hidden=true;state.dirty=true;refresh(true);
+  });
+  el('projectGenerateAll').addEventListener('click',event=>act(event.target,async()=>{
+    await refresh(true);
+    const counts={ready:0,selected:0,active:0,missing:0,invalid:0};
+    for(const scene of state.data.scenes){
+      if(!scene.skip_reason)counts.ready++;
+      else if(scene.skip_reason==='ALREADY_SELECTED')counts.selected++;
+      else if(scene.skip_reason==='ACTIVE_GENERATION_EXISTS')counts.active++;
+      else if(scene.skip_reason==='MISSING_REFERENCES')counts.missing++;
+      else counts.invalid++;
+    }
+    panel('generate','Generate all READY scenes?',`<p>Ready: ${counts.ready}</p><p>Missing References: ${counts.missing}</p><p>Invalid: ${counts.invalid}</p><p>Already Selected: ${counts.selected}</p><p>Active Generation: ${counts.active}</p><div class="project-actions"><button class="btn" data-action="close-panel">Cancel</button><button class="btn btn-p" data-action="confirm-generate" data-loading="Generating..." ${counts.ready ? '' : 'disabled'}>Generate ${counts.ready} Scenes</button></div>`);
+  }));
+  el('projectSelectLatest').addEventListener('click',event=>act(event.target,async()=>{
+    const result=await projectRequest(`/api/admin/projects/${path(state.project)}/select-latest-completed`,{method:'POST'});
+    message(`${result.changed} scenes selected; existing selections kept.`);
+    await refresh(true);
+  }));
+  function validationLocation(value){
+    const match=String(value||'').match(/^scenes\[(\d+)\](.*)$/);
+    if(!match)return value;
+    try{const scene=JSON.parse(el('projectImportJSON').value).scenes[Number(match[1])];return `Scene ${scene.scene_number}${match[2]}`;}catch(e){return value;}
+  }
+  function explain(data) {
+    if(typeof data==='string')return data;
+    if(Array.isArray(data))return data.map(explain).join('\n');
+    if(!data || typeof data!=='object')return String(data || 'Request failed');
+    if(data.detail)return explain(data.detail);
+    if(data.validation_errors || data.conflicts){
+      return [...(data.validation_errors||[]).map(e=>`${validationLocation(e.path)}: ${e.message}`),
+        ...(data.conflicts||[]).map(e=>`Scene ${e.scene_number} already exists.`)].join('\n');
+    }
+    if(data.message || data.error)return explain(data.message || data.error);
+    if(data.msg)return `${(data.loc||[]).join('.')}: ${data.msg}`;
+    return JSON.stringify(data);
+  }
+  async function projectRequest(url,options={}) {
+    const form=options.body instanceof FormData;
+    const response=await fetch(url,{method:options.method || 'GET',headers:{'X-Admin-Key':adminKey,
+      ...(form ? {} : {'Content-Type':'application/json'}),...(options.headers||{})},
+      body:options.body ? (form ? options.body : JSON.stringify(options.body)) : undefined});
+    if(response.status===401){showLogin();throw new Error('Please sign in with your admin key.');}
+    const data=await response.json();
+    if(!response.ok)throw new Error(explain(data));
+    return data;
+  }
+  function closePanel(){
+    state.panel=null;state.panelRequest++;state.validated=null;
+    state.blobs.forEach(URL.revokeObjectURL);state.blobs=[];
+    el('projectPanel').hidden=true;el('projectPanelBody').replaceChildren();el('projectPanelError').textContent='';
+    el('projectHome').hidden=!!state.project;el('projectDetail').hidden=!state.project;el('projectVersions').hidden=!state.scene;
+  }
+  function panel(kind,title,body){
+    closePanel();state.panel=kind;el('projectPanel').hidden=false;
+    el('projectPanelTitle').textContent=title;el('projectPanelBody').innerHTML=body;
+    el('projectPanelBack').textContent=state.project ? 'Back to project' : 'Back to Projects';
+    el('projectHome').hidden=true;el('projectDetail').hidden=true;el('projectVersions').hidden=true;
+    el('projectPanel').scrollIntoView({block:'start',behavior:'smooth'});
+  }
+  function missingGroups(){
+    const groups=new Map();
+    for(const scene of (state.data && state.data.scenes || []))for(const ref of scene.missing_references || []){
+      const key=ref.name.trim().toLocaleLowerCase();
+      if(!groups.has(key))groups.set(key,{name:ref.name,scenes:[]});
+      groups.get(key).scenes.push(scene.scene_number);
+    }
+    return [...groups.values()];
+  }
+  function renderMissing(){
+    const groups=missingGroups();
+    el('projectMissing').innerHTML=groups.length ? `<section class="project-missing"><h4>Missing References - ${groups.length}</h4>${groups.map(ref=>`<div class="project-asset"><strong>${esc(ref.name)}</strong><p>Used by Scenes: ${ref.scenes.join(', ')}</p><button class="btn" data-action="upload-missing" data-name="${esc(ref.name)}">Upload</button></div>`).join('')}</section>` : '';
+  }
+  function projectForm(rename=false){
+    const project=state.projects.find(p=>p.id===state.project);
+    panel(rename ? 'rename' : 'create',rename ? 'Rename Project' : 'Create Project',`<form class="project-form" id="projectNameForm"><label>Project Name<input id="projectNameInput" maxlength="200" required value="${rename ? esc(project.name) : ''}"></label><div class="project-actions"><button type="button" class="btn" data-action="close-panel">Cancel</button><button type="submit" class="btn btn-p" data-loading="${rename ? 'Saving...' : 'Creating...'}">${rename ? 'Save Name' : 'Create Project'}</button></div></form>`);
+    el('projectNameInput').focus();
+  }
+  function importPanel(){
+    panel('import','Import Scenes',`<div class="project-form"><label>Paste Tool Import JSON<textarea id="projectImportJSON" spellcheck="false"></textarea></label><div class="project-actions"><button class="btn" data-action="validate-import" data-loading="Validating...">Validate</button><button class="btn btn-p" id="projectImportSubmit" data-action="submit-import" data-loading="Importing..." disabled>Import</button></div></div><div id="projectImportPreview" aria-live="polite"></div>`);
+  }
+  function importPayload(){
+    try{return JSON.parse(el('projectImportJSON').value);}catch(e){throw new Error('Invalid JSON. Check the pasted text and try again.');}
+  }
+  async function validateImport(){
+    state.validated=null;el('projectImportSubmit').disabled=true;
+    const payload=importPayload();const text=el('projectImportJSON').value;
+    const data=await projectRequest(`/api/admin/projects/${path(state.project)}/scenes/import/validate`,{method:'POST',body:payload});
+    if(el('projectImportJSON').value!==text)return;
+    el('projectImportPreview').innerHTML=`<h4>Import Preview</h4><p>Scenes: ${data.scene_count}</p><p>References: ${data.unique_reference_count} unique</p><p>Matched: ${data.matched_reference_count}</p><p>Missing: ${data.missing_reference_count}</p>${data.references_missing.length ? `<h4>Missing References</h4><ul>${data.references_missing.map(r=>`<li>${esc(r.name)}</li>`).join('')}</ul><p>These references can be uploaded after import.</p>` : ''}${data.valid ? '' : `<pre class="project-error">${esc(explain(data))}</pre>`}`;
+    if(data.valid){state.validated=text;el('projectImportSubmit').disabled=false;el('projectImportSubmit').textContent=`Import ${data.scene_count} Scenes`;}
+  }
+  function uploadPanel(name=''){
+    panel('upload','Upload Reference',`<form class="project-form" id="projectUploadForm"><label>Reference Name<input id="projectAssetName" maxlength="200" required value="${esc(name)}"><small>Name must match the reference name used in imported Scenes.</small></label><label>Type<select id="projectAssetType"><option value="character">Character</option><option value="environment">Environment</option><option value="prop">Prop</option><option value="special_state">Special State</option></select></label><label>Image<input id="projectAssetFile" type="file" accept=".jpg,.jpeg,.png,.webp" required></label><div class="project-actions"><button type="button" class="btn" data-action="library">Reference Library</button><button type="submit" class="btn btn-p" data-loading="Uploading...">Upload</button></div></form>`);
+  }
+  async function resolveReferences(projectId){
+    const data=await projectRequest(`/api/admin/projects/${path(projectId)}/generation-status`);
+    // Resolve by name using the existing backend operation, including aliases/order.
+    for(const scene of data.scenes)if((scene.missing_references||[]).length)
+      await projectRequest(`/api/admin/scenes/${path(scene.id)}/references/resolve`,{method:'POST'});
+  }
+  async function libraryPanel(){
+    panel('library','Reference Library','<p>Loading...</p>');const ticket=state.panelRequest;
+    const projectId=state.project;
+    const result=await projectRequest(`/api/admin/projects/${path(projectId)}/assets`);
+    if(ticket!==state.panelRequest || projectId!==state.project)return;
+    el('projectPanelBody').innerHTML=`<button class="btn btn-p" data-action="upload">+ Upload Reference</button><button class="btn" data-action="resolve-references" data-loading="Resolving...">Refresh references</button><div class="project-assets">${result.assets.map(asset=>{
+      const used=state.data.scenes.filter(scene=>(scene.references||[]).some(r=>r.asset_id===asset.id)).map(s=>s.scene_number);
+      return `<article class="project-asset"><img data-asset-image="${esc(asset.id)}" alt="${esc(asset.name)}"><h4>${esc(asset.name)}</h4><p>Type: ${esc(label(asset.type).toUpperCase())}</p><p>Used by: ${used.length ? 'Scenes '+used.join(', ') : 'No scenes yet'}</p><span data-image-error></span></article>`;
+    }).join('') || '<p>No references yet. Upload your first reference.</p>'}</div>`;
+    await Promise.all(result.assets.map(async asset=>{
+      try{
+        const response=await fetch(`/api/admin/assets/${path(asset.id)}/image`,{headers:{'X-Admin-Key':adminKey}});
+        if(!response.ok)throw new Error('Preview unavailable');
+        const blob=await response.blob();if(ticket!==state.panelRequest)return;
+        const img=[...el('projectPanelBody').querySelectorAll('[data-asset-image]')].find(img=>img.dataset.assetImage===asset.id);
+        if(img){const url=URL.createObjectURL(blob);state.blobs.push(url);img.src=url;}
+      }catch(e){if(ticket===state.panelRequest){const img=[...el('projectPanelBody').querySelectorAll('[data-asset-image]')].find(img=>img.dataset.assetImage===asset.id);if(img)img.parentElement.querySelector('[data-image-error]').textContent=e.message;}}
+    }));
+  }
+  async function outputsPanel(){
+    panel('outputs','Selected Outputs','<p>Loading...</p>');const ticket=state.panelRequest;
+    const data=await projectRequest(`/api/admin/projects/${path(state.project)}/selected-videos`);
+    if(ticket!==state.panelRequest)return;
+    el('projectPanelBody').innerHTML=`<p>${data.selected_count} / ${data.total_scenes} selected${data.complete ? ' - Production complete' : ''}</p>${data.videos.map(video=>{
+      const url=videoURL(video.video_url);
+      return `<article class="project-output"><h4>Scene ${String(video.scene_number).padStart(2,'0')} - ${esc(video.scene_name)}</h4>${url ? `<video controls preload="metadata" src="${esc(url)}" aria-label="Scene ${video.scene_number} selected video"></video>` : '<p>Video unavailable.</p>'}</article>`;
+    }).join('') || '<p>No selected outputs yet. Review completed versions and select an output.</p>'}`;
+  }
+  async function workflowAction(action,button){
+    if(action==='create'){projectForm();return true;}
+    if(action==='rename'){projectForm(true);return true;}
+    if(action==='close-panel'){closePanel();el(state.project ? 'projectDetail' : 'projectHome').scrollIntoView({block:'start',behavior:'smooth'});return true;}
+    if(action==='import'){importPanel();return true;}
+    if(action==='library'){await libraryPanel();return true;}
+    if(action==='outputs'){await outputsPanel();return true;}
+    if(action==='upload' || action==='upload-missing'){uploadPanel(button.dataset.name||'');return true;}
+    if(action==='refresh'){await refresh(true);return true;}
+    if(action==='resolve-references'){
+      await resolveReferences(state.project);await refresh(true);await libraryPanel();message('Reference readiness updated.');return true;
+    }
+    if(action==='validate-import'){await validateImport();return true;}
+    if(action==='submit-import'){
+      if(state.validated!==el('projectImportJSON').value)throw new Error('Validate the current JSON before importing.');
+      const data=await projectRequest(`/api/admin/projects/${path(state.project)}/scenes/import`,{method:'POST',body:importPayload()});
+      closePanel();message(`Imported ${data.imported_count} scenes. Missing references can now be uploaded.`);await refresh(true);return true;
+    }
+    if(action==='confirm-generate'){
+      const result=await projectRequest(`/api/admin/projects/${path(state.project)}/generate`,{method:'POST',headers:auth()});
+      const reasons={};for(const scene of result.skipped_scenes)reasons[scene.reason]=(reasons[scene.reason]||0)+1;
+      panel('result','Generation submitted',`<p>Created: ${result.created}</p><p>Skipped: ${result.skipped}</p>${Object.entries(reasons).map(([reason,count])=>`<p>${count} ${esc(label(reason))}</p>`).join('')}<p>Progress appears in the scene list below.</p>`);
+      message(`${result.created} generation attempts queued; ${result.skipped} scenes skipped.`);await refresh(true);return true;
+    }
+    return false;
+  }
+  root.addEventListener('input',event=>{
+    if(event.target.id==='projectImportJSON'){state.validated=null;el('projectImportSubmit').disabled=true;el('projectImportSubmit').textContent='Import';el('projectImportPreview').replaceChildren();}
+  });
+  root.addEventListener('submit',event=>{
+    if(!['projectNameForm','projectUploadForm'].includes(event.target.id))return;
+    event.preventDefault();const form=event.target;const button=form.querySelector('[type=submit]');
+    act(button,async()=>{
+      if(form.id==='projectNameForm'){
+        const name=el('projectNameInput').value.trim();if(!name)throw new Error('Project name cannot be empty.');
+        const rename=state.panel==='rename';
+        const project=await projectRequest(rename ? `/api/admin/projects/${path(state.project)}` : '/api/admin/projects',{method:rename ? 'PATCH' : 'POST',body:{name}});
+        closePanel();closeVersions();state.project=project.id;state.data=null;await refresh(true);message(rename ? 'Project renamed.' : 'Project created. Import scenes to get started.');
+      }else{
+        const name=el('projectAssetName').value.trim();if(!name)throw new Error('Reference name cannot be empty.');
+        const file=el('projectAssetFile').files[0];if(!file)throw new Error('Choose a reference image.');
+        const projectId=state.project;const body=new FormData();body.append('name',name);body.append('type',el('projectAssetType').value);body.append('file',file);
+        await projectRequest(`/api/admin/projects/${path(projectId)}/assets`,{method:'POST',body});
+        let resolveError=null;
+        try{await resolveReferences(projectId);}catch(e){resolveError=e;}
+        await refresh(true);await libraryPanel();message('Reference uploaded.');
+        if(resolveError)throw new Error('Reference uploaded, but readiness could not be refreshed. Click Refresh references to retry. '+resolveError.message);
+      }
+    });
+  });
+  return {refresh, invalidate(){state.dirty=true;el('projectGatewayKey').value=el('videoApiKey').value;}};
+})();
+</script>
+
 </body>
 </html>

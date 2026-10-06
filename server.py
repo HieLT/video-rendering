@@ -28,9 +28,12 @@ from pydantic import BaseModel, Field
 from PIL import Image
 
 import config
+from asset_api import register_asset_routes
+from scene_generation import task_reference_paths
+from project_generation import submit_project_generation
 from account_import import parse_netscape, imported_account_flow, cookie_identity
 from add_account import add_account_flow
-from browser_pool import AllAccountsLimitedError, AllAccountsQuotaBlockedError, BrowserPool
+from browser_pool import AllAccountsLimitedError, AllAccountsQuotaBlockedError, NoUsableAccountsError, BrowserPool
 from media import download_reference_images, validate_reference_urls
 from reference_aliases import resolve_reference_aliases
 from store import PendingTaskLimitExceeded, TaskQuotaExceeded, TaskStore
@@ -243,10 +246,21 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
     try:
         await key_limiter.acquire(api_key_hash, client.get("concurrency_limit", 0))
         acquired = True
-        store.update(task_id, status="processing", started_at=time.time())
+        def check_live():
+            row = store.get(task_id)
+            if not row or row.get("deleted_at") is not None or row["status"] == "stopped":
+                raise asyncio.CancelledError()
+
+        check_live()
 
         def on_account_selected(account):
-            store.update(task_id, account=account, account_uuid=pool.account_uuid(account))
+            check_live()
+            store.update(task_id, status="processing", started_at=time.time(),
+                         account=account, account_uuid=pool.account_uuid(account))
+
+        def on_wait():
+            check_live()
+            store.update(task_id, status="queued")
 
         def on_conversation_id(account, conversation_id, deadline_at):
             store.update(task_id, status="processing", account=account, account_uuid=pool.account_uuid(account),
@@ -256,27 +270,32 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         def on_poll(now):
             store.update(task_id, last_poll_at=now)
 
-        reference_paths = []
-        # Resolve in submission order, including mixed uploaded and remote images.
-        for reference in reference_images or []:
-            uploaded = UPLOADED_REFERENCES.pop(reference, None)
-            if uploaded:
-                root, paths = uploaded
-                reference_roots.append(root)
-                reference_paths.extend(paths)
-            else:
-                reference_root, downloaded = await download_reference_images(
-                    [reference], task_id)
-                if reference_root:
-                    reference_roots.append(reference_root)
-                reference_paths.extend(downloaded)
+        task_row = store.get(task_id)
+        if task_row and task_row.get("reference_snapshot") is not None:
+            # Persistent source files are never registered as temporary cleanup roots.
+            reference_paths = task_reference_paths(task_row)
+        else:
+            reference_paths = []
+            # Resolve in submission order, including mixed uploaded and remote images.
+            for reference in reference_images or []:
+                uploaded = UPLOADED_REFERENCES.pop(reference, None)
+                if uploaded:
+                    root, paths = uploaded
+                    reference_roots.append(root)
+                    reference_paths.extend(paths)
+                else:
+                    reference_root, downloaded = await download_reference_images(
+                        [reference], task_id)
+                    if reference_root:
+                        reference_roots.append(reference_root)
+                    reference_paths.extend(downloaded)
         task_row = store.get(task_id)
         task_name = task_row.get("name") if task_row else ""
         result = await pool.generate_video(
             prompt, ratio, duration, model,
             on_conversation_id=on_conversation_id, on_poll=on_poll,
             reference_image_paths=reference_paths, name=task_name,
-            on_account_selected=on_account_selected)
+            on_account_selected=on_account_selected, on_wait=on_wait)
         video_path = Path(result["local_path"])
         from video_worker import sanitize_filename_prefix
         scene_prefix = sanitize_filename_prefix((store.get(task_id) or {}).get("name", ""))[:100]
@@ -286,6 +305,9 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
         store.update(task_id, status="completed", video_url=public_url,
                      account=result.get("account"), account_uuid=pool.account_uuid(result["account"]) if result.get("account") else None, last_poll_at=time.time(),
                      finished_at=time.time())
+    except NoUsableAccountsError as e:
+        store.update(task_id, status="failed", error=str(e),
+                     failure_code="NO_USABLE_ACCOUNTS", finished_at=time.time())
     except (AllAccountsLimitedError, AllAccountsQuotaBlockedError) as e:
         store.update(task_id, status="failed", error=str(e),
                      failure_code="429", finished_at=time.time())
@@ -299,6 +321,10 @@ async def _run_task(task_id, model, prompt, ratio, duration, reference_images, c
     finally:
         if TASK_RUNNERS.get(task_id) is asyncio.current_task():
             TASK_RUNNERS.pop(task_id, None)
+        for reference in reference_images or []:
+            pending_upload = UPLOADED_REFERENCES.pop(reference, None)
+            if pending_upload:
+                shutil.rmtree(pending_upload[0], ignore_errors=True)
         for reference_root in reference_roots:
             shutil.rmtree(reference_root, ignore_errors=True)
         if acquired:
@@ -387,7 +413,13 @@ async def resume_incomplete_tasks():
 
 @app.post("/v1/videos/generations", response_model=TaskResponse | BatchTaskResponse)
 async def create_video(req: VideoGenRequest, authorization: str | None = Header(default=None)):
-    client = _auth(authorization)
+    return await _submit_video(req, _auth(authorization))
+
+
+async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, prepare_only=False, project_id=None):
+    """Shared admission, task snapshots and scheduling for legacy and scene inputs."""
+    if project_id is not None:
+        return await submit_project_generation(project_id, client, store, VideoGenRequest, _submit_video, _run_task, config.MAX_PENDING_TASKS)
     duration = req.duration or 10
     if duration not in SUPPORTED_DURATIONS:
         raise HTTPException(422, "Currently supports durations of 10s, 15s, and 30s")
@@ -402,16 +434,22 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
     try:
         reference_images = []
         image_count = 0
-        for reference in req.reference_images:
-            if reference.startswith("uploaded://"):
-                uploaded = UPLOADED_REFERENCES.get(reference)
-                if not uploaded:
-                    raise ValueError("Uploaded images expired; please upload them again")
-                image_count += len(uploaded[1])
-                reference_images.append(reference)
-            else:
-                reference_images.extend(await validate_reference_urls([reference]))
-                image_count += 1
+        if reference_snapshot is not None:
+            # Validate stable paths before accepting the task; no uploaded:// tokens.
+            persistent_paths = task_reference_paths({"reference_snapshot": reference_snapshot})
+            image_count = len(persistent_paths)
+            reference_images = ["asset://" + ref["asset_id"] for ref in reference_snapshot]
+        else:
+            for reference in req.reference_images:
+                if reference.startswith("uploaded://"):
+                    uploaded = UPLOADED_REFERENCES.get(reference)
+                    if not uploaded:
+                        raise ValueError("Uploaded images expired; please upload them again")
+                    image_count += len(uploaded[1])
+                    reference_images.append(reference)
+                else:
+                    reference_images.extend(await validate_reference_urls([reference]))
+                    image_count += 1
         if image_count > config.REFERENCE_IMAGE_MAX_COUNT:
             raise ValueError("Too many reference images")
         if len(set(reference_images)) != len(reference_images):
@@ -436,6 +474,12 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
         prompt += ("\n\nUse the first uploaded image as the opening frame and the second "
                    "uploaded image as the ending frame. Create continuous motion between "
                    "these two frames, preserving their composition and subjects.")
+    if prepare_only:
+        if scene_id is None or reference_snapshot is None:
+            raise ValueError("Project batch preparation requires persistent scene references")
+        return dict(scene_id=scene_id, model=req.model, prompt=prompt, ratio=ratio or "default",
+                    duration=duration, start_end=req.start_end, name=req.name,
+                    reference_images=reference_images, reference_snapshot=reference_snapshot)
     # Each runner owns its uploaded copies and can clean them independently.
     task_references = {}
     copied_tokens = []
@@ -474,6 +518,8 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
             concurrency_limit=client["concurrency_limit"],
             max_pending=config.MAX_PENDING_TASKS,
             name=req.name,
+            scene_id=scene_id,
+            reference_snapshot=reference_snapshot,
         )
         accepted = True
     except TaskQuotaExceeded as exc:
@@ -964,7 +1010,11 @@ async def admin_task_delete(task_id: str, x_admin_key: str | None = Header(defau
         runner = TASK_RUNNERS.get(task_id)
         if row["status"] in ("queued", "processing") or (runner and not runner.done()):
             raise HTTPException(409, "Stop monitoring this task before deleting its record")
-        if not store.delete_task(task_id):
+        try:
+            deleted = store.delete_task(task_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if not deleted:
             raise HTTPException(409, "Task cannot be deleted in its current state")
         return {"ok": True}
 
@@ -978,7 +1028,7 @@ async def admin_task_action(task_id: str, action: str, x_admin_key: str | None =
         row = store.get(task_id)
         if not row or row.get("deleted_at") is not None:
             raise HTTPException(404, "Task not found")
-        if not row.get("account") or not row.get("conversation_id"):
+        if action != "stop" and (not row.get("account") or not row.get("conversation_id")):
             raise HTTPException(409, "Task has no saved conversation")
         if row["status"] == "completed":
             raise HTTPException(409, "Task already completed")
@@ -1094,5 +1144,8 @@ async def admin_key_delete(key: str, x_admin_key: str | None = Header(default=No
 
 
 # Dashboard single-file frontend
+# Register API routes before the dashboard catch-all mount.
+register_asset_routes(app, store, _admin_auth, _auth, VideoGenRequest, _submit_video)
+
 app.mount("/", StaticFiles(directory="web", html=True), name="web")
 

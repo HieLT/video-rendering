@@ -40,3 +40,10 @@ diagnostics/
 
 # SQLite safety backups contain the same private data as databases
 *.db*.bak
+
+# Persistent project reference images
+assets/
+
+# Incomplete migration backup work files
+*.before_v*.bak.*
+!requirements-dev.txt

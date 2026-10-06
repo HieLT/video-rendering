@@ -15,13 +15,15 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 from patchright.async_api import async_playwright
 from reference_aliases import resolve_reference_aliases
+from scene_generation import task_reference_paths
+from project_generation import submit_project_generation
 from store import TaskStore, TaskQuotaExceeded, PendingTaskLimitExceeded
 
 
 def isolated_api():
     # Load only request/worker code; importing server would open production DBs.
     tree = ast.parse(Path("server.py").read_text(encoding="utf-8"))
-    names = {"VideoGenRequest", "TaskResponse", "BatchTaskResponse", "create_video", "_run_task", "_resolve_ratio"}
+    names = {"VideoGenRequest", "TaskResponse", "BatchTaskResponse", "create_video", "_submit_video", "_run_task", "_resolve_ratio"}
     selected = [node for node in tree.body if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
     class LimitedError(Exception): pass
     class CreditsError(Exception): pass
@@ -33,7 +35,7 @@ def isolated_api():
               _auth=lambda _: client, SUPPORTED_DURATIONS=(10,15,30), SIZE_TO_RATIO={},
               UPLOADED_REFERENCES={}, TASK_RUNNERS={},
               key_limiter=SimpleNamespace(acquire=AsyncMock(), release=AsyncMock()),
-              AllAccountsLimitedError=LimitedError, AllAccountsQuotaBlockedError=CreditsError,
+              NoUsableAccountsError=type("NoUsableAccountsError",(RuntimeError,),{}), AllAccountsLimitedError=LimitedError, AllAccountsQuotaBlockedError=CreditsError,
               GenerationRejectedError=RejectedError, validate_reference_urls=AsyncMock(side_effect=lambda x:x))
     exec(compile(ast.Module(body=selected, type_ignores=[]), "server.py", "exec"), ns)
     return ns, client

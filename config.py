@@ -70,3 +70,6 @@ REFERENCE_IMAGE_MAX_COUNT = int(os.getenv("DOLA_REFERENCE_IMAGE_MAX_COUNT", "30"
 
 # Extended generation window for reference image tasks (seconds)
 REFERENCE_VIDEO_TIMEOUT = int(os.getenv("DOLA_REFERENCE_VIDEO_TIMEOUT", "900"))
+
+# Persistent reusable scene images; separate from temporary references and video outputs.
+ASSET_DIR = os.getenv("DOLA_ASSET_DIR", "assets")

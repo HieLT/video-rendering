@@ -3,6 +3,7 @@ import asyncio
 import ipaddress
 import socket
 import tempfile
+import warnings
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -99,15 +100,24 @@ async def _read_response_image(resp: aiohttp.ClientResponse) -> tuple[bytes, str
             raise ValueError("Reference image exceeds single file size limit")
         chunks.append(chunk)
     data = b"".join(chunks)
+    return data, validate_reference_image(data)
+
+
+def validate_reference_image(data: bytes) -> str:
+    """Validate bytes independently of filename/MIME; return canonical image suffix."""
+    if len(data) > config.REFERENCE_IMAGE_MAX_BYTES:
+        raise ValueError("Reference image exceeds single file size limit")
     try:
-        with Image.open(BytesIO(data)) as image:
-            image.verify()
-            fmt = image.format
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(data)) as image:
+                image.verify()
+                fmt = image.format
     except Exception as exc:
         raise ValueError("Reference file is not a valid image") from exc
     if fmt not in _ALLOWED_IMAGE_FORMATS:
         raise ValueError("Reference image only supports JPEG, PNG, WEBP")
-    return data, _ALLOWED_IMAGE_FORMATS[fmt]
+    return _ALLOWED_IMAGE_FORMATS[fmt]
 
 
 async def download_one_image(session: aiohttp.ClientSession, url: str, dest: Path) -> Path:
