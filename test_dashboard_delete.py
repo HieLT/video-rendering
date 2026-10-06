@@ -3,12 +3,12 @@ import asyncio
 import json
 from pathlib import Path
 from urllib.parse import urlsplit
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 
 
 async def main():
     identifiers = ["00000000-0000-4000-8000-00000000000"+str(i) for i in range(1, 4)]
-    accounts = [dict(name=identifier, uuid=identifier, email="test"+str(i)+"@example.com", account_type="google", busy=i==2, used_today=1, limit=2, scheduling=False) for i, identifier in enumerate(identifiers)]
+    accounts = [dict(name=identifier, uuid=identifier, email="test"+str(i)+"@example.com", account_type="google", busy=i==2, used_today=i, limit=2, scheduling=False) for i, identifier in enumerate(identifiers)]
     tasks = [dict(id="video_"+str(i), account=identifiers[0], status=status, prompt="Fixture", duration=10) for i,status in enumerate(["completed","failed","processing"])]
     deletes=[]
     errors=[]
@@ -47,7 +47,9 @@ async def main():
         await page.wait_for_selector('#accountsTable tbody tr')
         assert await page.locator('#accountsTable tbody tr').count()==3
         assert await page.locator('#accountsTable tbody tr:first-child td:nth-child(2)').inner_text()=="1"
-        assert await page.locator('#accountsTable tbody tr:first-child button').all_text_contents()==['Open Web','Verify','Retry','Delete']
+        assert await page.locator('#accountsTable tbody tr:first-child button').all_text_contents()==['Open Web','Verify','Retry','Delete','Renew Credit']
+        assert await page.locator('#accountsTable .btn-renew').count()==3
+        assert await page.locator('#accountsTable .btn-renew:disabled').count()==1
         assert not await page.locator('#deleteSelectedAccounts').is_visible()
         assert await page.locator('#accountsTable th').first.evaluate('(el)=>getComputedStyle(el).textAlign')=='left'
         await page.locator('#selectAllaccounts').check()

@@ -95,3 +95,61 @@ Open **http://127.0.0.1:8000/web** to access the Admin Dashboard.
 
 ## 📜 License
 For educational and internal testing purposes.
+
+### Renew Dola account (Google)
+
+Accounts with Used Today 2/2 and type Google expose `Renew Dola account`. It deletes the remote Dola account and then signs in again using the same persistent Google browser profile. No password is stored. Complete password, verification, consent, or onboarding prompts directly in the browser (10-minute timeout). Facebook is not supported by this action.
+
+The profile is locked during the job. A successful re-login is checked against Dola before dispatch resumes. Failed jobs remain unavailable for dispatch. A confirmed deletion can be continued using `Resume renewal`, including after a server restart; an uncertain deletion is blocked from automatic retry. After verified re-login, local usage resets to 0/2 and stale quota, cooldown, and credit state are cleared. Failed or unverified logins do not reset usage. The ordinary Delete button still removes the local profile.
+
+
+### Browser queue and persisted video monitoring
+
+All Python Playwright entry points use browser_queue.async_playwright.
+The process-shared FIFO queue admits at most 10 driver sessions. Each retry,
+scheduled check and manual browser operation takes a new ticket at the tail.
+Run one uvicorn worker per workspace; a scheduler lock rejects a second server.
+
+Video jobs persist their account reservation, ordered reference-image copies,
+dispatch checkpoint, generation retry count and next check in SQLite.
+After Dola confirms generation, Chromium closes. The first check uses the
+ETA from the original API text minus five minutes (minimum zero wait).
+If ETA is unavailable, the default 30-minute ETA means a 25-minute wait.
+Each inspection polls for up to 20 seconds after page navigation. If pending,
+there are at most three additional inspections, five minutes apart.
+Jobs still unresolved move to the dashboard review filter (needs_recovery).
+
+Review jobs keep their account reservation and count toward the 100 unfinished
+job admission limit. Manual Check/Continue starts a fresh inspection cycle at
+the FIFO tail without resetting the generation retry count. Stop monitoring
+releases the account but does not cancel generation remotely or refund quota.
+Open chat also goes through the shared queue.
+
+There are at most 10 generation retries after the initial attempt. Transport
+failures during an uncertain dispatch are reconciled against the saved
+conversation; without sufficient evidence the job moves to review rather
+than submitting a duplicate. Recovery checks never charge generation quota.
+Generated videos with a download failure can resume their saved download.
+
+Task-owned image copies live in .job_media/; keep this directory with
+tasks.db for restart recovery. Runtime browser tickets live in .runtime/;
+stale ticket owners are reclaimed using OS file locks.
+
+Offline checks:
+- python -B test_video_schedule.py
+- python -B test_scheduler_integration.py
+- python -B test_scheduler_dashboard.py
+- python -B test_video_confirmation.py
+- python -B test_resume_usage.py
+
+### Start / End with environment references
+
+In Start / End mode, choose the opening image and optionally an ending image, then add
+Environment / extra references. The upload order is Start, End, then environment
+images. The configured `DOLA_REFERENCE_IMAGE_MAX_COUNT` limit includes all images.
+For API requests, set `start_end: true` and provide at least two images in
+`reference_images` in this order when using an End image. For Start only, provide at least
+one image and set `has_end_frame: false`; all images after Start are environment
+references. With no explicit flag, one image means Start only, while two or more
+retain the existing Start + End behavior. Additional images guide the environment,
+lighting and scene details through the prompt; exact endpoint frames are not guaranteed.

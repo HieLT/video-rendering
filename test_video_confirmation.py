@@ -2,7 +2,7 @@
 import asyncio
 import json
 from unittest.mock import patch
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 from video_worker import POLL_JS, GenerationRejectedError
 import video_worker_ui as worker
 
@@ -64,11 +64,29 @@ async def run():
                 {'status':5, 'fail_code':710082022}]})
             assert (await classify([user(), reply(EN), tool_blocked]))['rejection']['terminal']
             print('PASS terminal API rejection after acceptance, translation independence, and retry boundaries')
+            copyright_reply = reply('Copyright refusal', index=12,
+                ext={'is_finish':'1', 'ai_creation_res_code':'710092007',
+                     'ai_creation_tool_list':json.dumps([{'status':5, 'fail_code':710092007}])})
+            copyright_reply['content'] = json.dumps(copyright_reply['content'])
+            result = await classify([user(7), reply(EN, index=8), copyright_reply])
+            assert result['accepted'] and result['rejection']['code'] == '710092007'
+            assert result['rejection']['terminal'] and result['latestIndex'] == 12
+            assert not (await classify([user(7), reply(EN, index=8), copyright_reply], after=12))['rejection']
+            assert not (await classify([user(7), copyright_reply, user(13)]))['rejection']
+            assert not (await classify([user(7), reply(EN, index=8), copyright_reply, reply('Thinking', index=14, done=False)]))['rejection']
+            tool_only = reply('Tool failure', index=12, ext={'is_finish':'1',
+                'ai_creation_tool_list':json.dumps([{'status':5, 'fail_code':710092007}])})
+            assert (await classify([user(), reply(EN), tool_only]))['rejection']['code'] == '710092007'
+            for malformed in ('bad json', '{}', 'null', '[null]'):
+                other = reply('Follow-up', index=12, ext={'is_finish':'1', 'ai_creation_tool_list':malformed})
+                assert not (await classify([user(), reply(EN), other]))['rejection']
+            print('PASS delayed copyright rejection, JSON tool metadata, and retry boundaries')
             video = reply('Video done')
             video['content'].append({'block_type':2074, 'is_finish':True, 'content':{'creation_block':{'creations':[{'type':2,'video':{'download_url':'https://example.test/video.mp4'}}]}}})
             result = await classify([user(),video])
             assert result['videos'] and not result['rejection']
             assert not (await classify([user(), reply(EN), blocked, video]))['rejection']
+            assert not (await classify([user(), reply(EN), copyright_reply, video]))['rejection']
             print('PASS completed video without confirmation and video precedence')
             raw = reply(JA); raw['content'] = json.dumps(raw['content'])
             assert (await classify([user(),raw]))['accepted']
@@ -97,6 +115,32 @@ async def run():
     async def sleep(*args): pass
     async def download(*args): return Download()
     with patch.object(worker.asyncio,'sleep',sleep), patch.object(worker,'_download',download):
+        refusals = [
+            "\u3054\u5e0c\u671b\u306e\u30b3\u30f3\u30c6\u30f3\u30c4\u3092\u751f\u6210\u3067\u304d\u307e\u305b\u3093\u3002\u4ed6\u306e\u5185\u5bb9\u3092\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002",
+            "Unable to generate this content. Please try something else.",
+            "Failed to create the requested content.",
+            "\u65e0\u6cd5\u751f\u6210\u8be5\u5185\u5bb9",
+        ]
+        for text in refusals:
+            assert not worker.CREDIT_FAIL_PATTERN.search(text)
+            refusal = {**idle, 'texts': [text]}
+            page = Page([refusal, refusal])
+            try:
+                await worker.poll_conversation('test', page, Context(), 'fixture', 30)
+            except GenerationRejectedError:
+                assert page.calls == 2
+            else:
+                raise AssertionError('Content refusal must reach generation retry')
+        for text in ('Insufficient credits', 'Not enough video credits',
+                     '\u6b8b\u9ad8\u4e0d\u8db3', '\u4f59\u989d\u4e0d\u8db3'):
+            page = Page([{**idle, 'texts': [text]}])
+            try:
+                await worker.poll_conversation('test', page, Context(), 'fixture', 30)
+            except worker.CreditError:
+                assert page.calls == 1
+            else:
+                raise AssertionError('Explicit insufficient credit must remain a quota error')
+        print('PASS content refusal retries; explicit quota errors remain distinct')
         page=Page([idle,busy,idle,idle])
         try:
             await worker.poll_conversation('test',page,Context(),'fixture',30)

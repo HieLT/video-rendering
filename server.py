@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import re
 import shutil
 import tempfile
@@ -20,10 +21,11 @@ import traceback
 import uuid
 from collections import defaultdict
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 from pydantic import BaseModel, Field
 from PIL import Image
 
@@ -34,6 +36,8 @@ from browser_pool import AllAccountsLimitedError, AllAccountsQuotaBlockedError, 
 from media import download_reference_images, validate_reference_urls
 from reference_aliases import resolve_reference_aliases
 from store import PendingTaskLimitExceeded, TaskQuotaExceeded, TaskStore
+from video_schedule import VideoScheduler
+from browser_queue import lock_file, unlock_file, ROOT as RUNTIME_ROOT
 
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
@@ -43,6 +47,8 @@ app = FastAPI(title="Video Rendering", version="0.4.0")
 store = TaskStore(config.DB_PATH)
 pool = BrowserPool(max_concurrency=config.MAX_CONCURRENCY)
 store.bind_account_uuids(pool.list_accounts())
+scheduler = VideoScheduler(store, pool)
+SERVER_GUARD = None
 
 app.mount("/videos", StaticFiles(directory=config.DOWNLOAD_DIR), name="videos")
 
@@ -173,6 +179,7 @@ class VideoGenRequest(BaseModel):
     reference_images: list[str] = Field(default_factory=list)
     reference_aliases: list[str] = Field(default_factory=list)
     start_end: bool = False
+    has_end_frame: bool | None = None
     count: int = Field(1, ge=1, le=5, strict=True)
 
 
@@ -233,109 +240,31 @@ def _resolve_ratio(size, ratio):
 TASK_RUNNERS = {}
 
 
-async def _run_task(task_id, model, prompt, ratio, duration, reference_images, client):
+async def _run_task(task_id, model=None, prompt=None, ratio=None, duration=None, reference_images=None, client=None):
     TASK_RUNNERS[task_id] = asyncio.current_task()
+    row = store.get(task_id)
+    client = client or _task_client(row)
     api_key_hash = client.get("api_key_hash")
     acquired = False
-    reference_roots = []
     try:
         await key_limiter.acquire(api_key_hash, client.get("concurrency_limit", 0))
         acquired = True
-        store.update(task_id, status="processing", started_at=time.time())
-
-        def on_account_selected(account):
-            store.update(task_id, account=account, account_uuid=pool.account_uuid(account))
-
-        def on_conversation_id(account, conversation_id, deadline_at):
-            store.update(task_id, status="processing", account=account, account_uuid=pool.account_uuid(account),
-                         conversation_id=conversation_id, deadline_at=deadline_at,
-                         last_poll_at=time.time())
-
-        def on_poll(now):
-            store.update(task_id, last_poll_at=now)
-
-        reference_paths = []
-        # Resolve in submission order, including mixed uploaded and remote images.
-        for reference in reference_images or []:
-            uploaded = UPLOADED_REFERENCES.pop(reference, None)
-            if uploaded:
-                root, paths = uploaded
-                reference_roots.append(root)
-                reference_paths.extend(paths)
-            else:
-                reference_root, downloaded = await download_reference_images(
-                    [reference], task_id)
-                if reference_root:
-                    reference_roots.append(reference_root)
-                reference_paths.extend(downloaded)
-        result = await pool.generate_video(
-            prompt, ratio, duration, model,
-            on_conversation_id=on_conversation_id, on_poll=on_poll,
-            reference_image_paths=reference_paths,
-            on_account_selected=on_account_selected)
-        video_path = Path(result["local_path"])
-        named_path = video_path.with_name(f"{task_id}{video_path.suffix}")
-        video_path.replace(named_path)
-        public_url = f"{config.PUBLIC_BASE}/videos/{named_path.name}"
-        store.update(task_id, status="completed", video_url=public_url,
-                     account=result.get("account"), account_uuid=pool.account_uuid(result["account"]) if result.get("account") else None, last_poll_at=time.time(),
-                     finished_at=time.time())
-    except (AllAccountsLimitedError, AllAccountsQuotaBlockedError) as e:
-        store.update(task_id, status="failed", error=str(e),
-                     failure_code="429", finished_at=time.time())
-    except Exception as e:
-        print(f"[task:{task_id}] failed type={type(e).__name__}: "
-              f"{str(e).encode('ascii', 'backslashreplace').decode('ascii')}", flush=True)
-        print(traceback.format_exc().encode('ascii', 'backslashreplace').decode('ascii'), flush=True)
-        row = store.get(task_id)
-        status = "failed" if isinstance(e, GenerationRejectedError) else ("needs_recovery" if row.get("conversation_id") else "failed")
-        store.update(task_id, status=status, error=str(e), finished_at=time.time())
-    finally:
-        if TASK_RUNNERS.get(task_id) is asyncio.current_task():
-            TASK_RUNNERS.pop(task_id, None)
-        for reference_root in reference_roots:
-            shutil.rmtree(reference_root, ignore_errors=True)
-        if acquired:
-            await key_limiter.release(api_key_hash)
-
-
-async def _resume_task(row: dict):
-    task_id = row["id"]
-    TASK_RUNNERS[task_id] = asyncio.current_task()
-    deadline = row.get("deadline_at") or (
-        time.time() + (1800 if row.get("duration") == 30 else config.VIDEO_TIMEOUT)
-    )
-    remaining = max(1, int(deadline - time.time()))
-    api_key_hash = row.get("api_key_hash")
-    acquired = False
-    try:
-        await key_limiter.acquire(
-            api_key_hash, int(row.get("client_concurrency_limit") or 0)
-        )
-        acquired = True
-        store.update(task_id, status="processing", last_poll_at=time.time(),
-                     started_at=row.get("started_at") or time.time())
-
-        def on_poll(now):
-            store.update(task_id, last_poll_at=now)
-
-        result = await pool.resume_video(
-            row["account"], row["conversation_id"], remaining, on_poll=on_poll)
-        video_path = Path(result["local_path"])
-        named_path = video_path.with_name(f"{task_id}{video_path.suffix}")
-        video_path.replace(named_path)
-        public_url = f"{config.PUBLIC_BASE}/videos/{named_path.name}"
-        store.update(task_id, status="completed", video_url=public_url,
-                     account=result.get("account"), account_uuid=pool.account_uuid(result["account"]) if result.get("account") else None, last_poll_at=time.time(),
-                     finished_at=time.time())
-    except Exception as e:
-        store.update(task_id, status="failed" if isinstance(e, GenerationRejectedError) else "needs_recovery", error=str(e),
-                     finished_at=time.time())
+        await scheduler.run(task_id, UPLOADED_REFERENCES)
+    except asyncio.CancelledError:
+        # Shutdown preserves the durable checkpoint. Explicit stop updates it in the action handler.
+        raise
+    except Exception as exc:
+        scheduler.review(task_id, f"{type(exc).__name__}: {exc}")
+        logging.getLogger("uvicorn.error").exception("Scheduled task failed: %s", task_id)
     finally:
         if TASK_RUNNERS.get(task_id) is asyncio.current_task():
             TASK_RUNNERS.pop(task_id, None)
         if acquired:
             await key_limiter.release(api_key_hash)
+
+
+async def _resume_task(row):
+    return await _run_task(row["id"])
 
 
 def _task_client(row: dict) -> dict:
@@ -359,20 +288,35 @@ def _task_reference_images(raw) -> list[str]:
 
 @app.on_event("startup")
 async def resume_incomplete_tasks():
-    """Recovers accepted sessions on startup and requeues pending tasks."""
-    orphaned = store.fail_orphaned_processing_tasks()
-    if orphaned:
-        print(f"[startup] marked {orphaned} orphaned processing task(s) as failed", flush=True)
-    for row in store.recoverable_tasks():
-        asyncio.create_task(_resume_task(row))
-    for row in store.recoverable_queued_tasks():
-        ratio = row.get("ratio")
-        if ratio == "default":
-            ratio = None
-        asyncio.create_task(_run_task(
-            row["id"], row["model"], row["prompt"], ratio, row["duration"],
-            _task_reference_images(row.get("reference_images")), _task_client(row),
-        ))
+    global SERVER_GUARD
+    SERVER_GUARD = lock_file(RUNTIME_ROOT / "scheduler.lock")
+    if SERVER_GUARD is None:
+        raise RuntimeError("Only one scheduler server may run per workspace; use one uvicorn worker")
+    scheduler.recover_reservations()
+    rows = store._conn.execute(
+        "SELECT * FROM tasks WHERE status IN ('queued','processing') AND deleted_at IS NULL ORDER BY created_at"
+    ).fetchall()
+    for raw in rows:
+        row = dict(raw)
+        # Legacy records predate the persisted dispatch checkpoint.
+        if row.get("conversation_id") and row.get("phase") == "ready":
+            store.update(row["id"], phase="checking")
+        elif row["status"] == "processing" and not row.get("conversation_id") and row.get("phase") == "ready":
+            scheduler.review(row["id"], "Legacy interrupted job has no dispatch checkpoint; inspect before resubmitting")
+            continue
+        TASK_RUNNERS[row["id"]] = asyncio.create_task(_run_task(row["id"]))
+
+
+@app.on_event("shutdown")
+async def stop_task_runners():
+    global SERVER_GUARD
+    runners = list(TASK_RUNNERS.values())
+    for runner in runners:
+        runner.cancel()
+    if runners:
+        await asyncio.gather(*runners, return_exceptions=True)
+    unlock_file(SERVER_GUARD)
+    SERVER_GUARD = None
 
 
 @app.post("/v1/videos/generations", response_model=TaskResponse | BatchTaskResponse)
@@ -407,8 +351,11 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
         if len(set(reference_images)) != len(reference_images):
             raise ValueError("Duplicate reference entries are not supported")
         resolved_prompt = resolve_reference_aliases(req.prompt, req.reference_aliases, image_count)
-        if req.start_end and image_count != 2:
-            raise ValueError("Start / End requires exactly two images: start first, end second")
+        has_end_frame = req.has_end_frame if req.has_end_frame is not None else image_count >= 2
+        if req.start_end and image_count < 1:
+            raise ValueError("Start / End requires a start image")
+        if req.start_end and has_end_frame and image_count < 2:
+            raise ValueError("An end frame was specified but fewer than two images were provided")
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     # Queue task when accounts are busy; reject only when pool is fully exhausted.
@@ -422,10 +369,18 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
     batch_id = "batch_" + uuid.uuid4().hex if req.count > 1 else None
     ratio = _resolve_ratio(req.size, req.ratio)
     prompt = resolved_prompt
-    if req.start_end:
+    if req.start_end and not has_end_frame:
+        prompt += '\n\nUse the first uploaded image as the opening frame. Continue the motion naturally from this frame, preserving its composition and subjects. No ending frame is specified.'
+        if image_count > 1:
+            prompt += ' Use all remaining uploaded images only as environment and scene references for background, lighting, and scene details; do not treat them as an ending frame.'
+    elif req.start_end:
         prompt += ("\n\nUse the first uploaded image as the opening frame and the second "
                    "uploaded image as the ending frame. Create continuous motion between "
                    "these two frames, preserving their composition and subjects.")
+        if image_count > 2:
+            prompt += (" Use uploaded images from the third onward only as additional environment "
+                       "and scene references. Use them to guide the background, lighting, and scene "
+                       "details without replacing the opening or ending frame or overriding their subjects.")
     # Each runner owns its uploaded copies and can clean them independently.
     task_references = {}
     copied_tokens = []
@@ -436,7 +391,9 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
             for reference in reference_images:
                 uploaded = UPLOADED_REFERENCES.get(reference)
                 if uploaded:
-                    root = Path(tempfile.mkdtemp(prefix="dola_upload_"))
+                    job_root = Path(".job_media") / task_id
+                    job_root.mkdir(parents=True, exist_ok=True)
+                    root = Path(tempfile.mkdtemp(prefix="upload_", dir=job_root)).resolve()
                     token = "uploaded://" + uuid.uuid4().hex
                     paths = []
                     UPLOADED_REFERENCES[token] = (root, paths)
@@ -445,7 +402,7 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
                         target = root / f"image_{index}{Path(source).suffix}"
                         shutil.copy2(source, target)
                         paths.append(str(target))
-                    references.append(token)
+                    references.extend("local://" + path for path in paths)
                 else:
                     references.append(reference)
             task_references[task_id] = references
@@ -474,6 +431,8 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
             for token in copied_tokens:
                 root, _ = UPLOADED_REFERENCES.pop(token)
                 shutil.rmtree(root, ignore_errors=True)
+    for token in copied_tokens:
+        UPLOADED_REFERENCES.pop(token, None)
     for reference in reference_images:
         uploaded = UPLOADED_REFERENCES.pop(reference, None)
         if uploaded:
@@ -563,7 +522,12 @@ async def admin_login(body: AdminLogin):
 @app.get("/api/admin/accounts")
 async def admin_accounts(x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    return {"accounts": [pool.public_account(a) for a in pool.list_accounts()]}
+    from dola_account_lifecycle import read_checkpoint
+    accounts = []
+    for account in pool.list_accounts():
+        phase = read_checkpoint(account["name"]).get("phase", "")
+        accounts.append({**pool.public_account(account), "dola_delete_phase": phase})
+    return {"accounts": accounts}
 
 
 @app.patch("/api/admin/accounts/{name}")
@@ -616,6 +580,63 @@ async def admin_account_delete(name: str, x_admin_key: str | None = Header(defau
     return {"ok": True}
 
 
+async def _run_dola_delete(name: str, resume: bool = False):
+    from dola_account_lifecycle import delete_and_relogin, checkpoint, read_checkpoint
+    recovering_uncertain = resume and read_checkpoint(name).get("phase") == "submitting"
+    def report(stage, message):
+        JOBS[name].update(stage=stage, message=message)
+    try:
+        async with pool.account_activity(name, "delete_dola"):
+            # Keep failed/interrupted flows out of dispatch, including after restart.
+            pool.auth_result(name, "expired", "Dola deletion / Google re-login in progress")
+            await delete_and_relogin(name, pool._meta(name)["email"], report, resume=resume)
+            report("verifying", "Verifying the new Dola session")
+            from browser import inspect_account_session
+            result = await inspect_account_session(name)
+            if result["state"] != "active":
+                raise RuntimeError("Google re-login could not be verified")
+            state = pool.auth_result(name, "active", identity=result)
+            if state != "active":
+                raise RuntimeError("Re-login identity duplicates another account")
+            pool.reset_renewed_account_usage(name)
+            checkpoint(name, "complete")
+            JOBS[name].update(status="success", stage="complete", message=("Google login verified; usage reset to 0/2; previous deletion result was not confirmed" if recovering_uncertain else "Account renewed; Google login verified; usage reset to 0/2"), error="")
+    except Exception as exc:
+        # Never copy browser exception URLs (OAuth tokens) into logs / dashboard.
+        pool.auth_result(name, "expired", "Deletion / re-login incomplete; inspect the browser or resume login")
+        JOBS[name].update(status="failed", error="Dola deletion / login incomplete. Reload Accounts to check recovery options.")
+        logging.getLogger("uvicorn.error").warning("[delete-dola] account=%s failure=%s", name, type(exc).__name__)
+
+
+@app.post("/api/admin/accounts/{name}/delete-dola", status_code=202)
+async def admin_delete_dola(name: str, resume: bool = False,
+                            x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    name = pool.resolve_account(name)
+    if name not in pool.accounts:
+        raise HTTPException(404, "Account not found")
+    meta = pool._meta(name)
+    if meta["account_type"] != "google":
+        raise HTTPException(400, "Only Google accounts are supported; Facebook will be added later")
+    if not meta["email"]:
+        raise HTTPException(400, "Account email is required to select the correct Google identity")
+    from browser import ACTIVE_CONTEXTS
+    lock = pool._locks.get(name)
+    if name in WEB_SESSIONS or name in ACTIVE_CONTEXTS or (lock and lock.locked()) or JOBS.get(name, {}).get("status") == "running":
+        raise HTTPException(409, "Account is busy; close its browser first")
+    from dola_account_lifecycle import read_checkpoint
+    phase = read_checkpoint(name).get("phase")
+    if resume:
+        if phase not in ("deleted", "submitting"):
+            raise HTTPException(409, "No interrupted deletion awaiting login")
+    else:
+        if phase in ("submitting", "deleted"):
+            raise HTTPException(409, "Previous deletion requires recovery; do not delete again")
+    JOBS[name] = {"kind":"delete_dola", "status":"running", "stage":"starting", "error":"", "started_at":time.time()}
+    asyncio.create_task(_run_dola_delete(name, resume))
+    return {"ok": True}
+
+
 @app.post("/api/admin/accounts/{name}/verify")
 async def admin_account_verify(name: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
@@ -633,7 +654,7 @@ async def admin_account_verify(name: str, x_admin_key: str | None = Header(defau
     return {"ok": ok}
 
 
-async def _run_open_web(name: str):
+async def _run_open_web(name: str, conversation_id=None):
     session = WEB_SESSIONS[name]
     lock = pool._locks.setdefault(name, asyncio.Lock())
     acquired = False
@@ -652,7 +673,7 @@ async def _run_open_web(name: str):
             session["status"] = "open"
             session["started_at"] = time.time()
             page = context.pages[0] if context.pages else await context.new_page()
-            await page.goto("https://www.dola.com/chat", timeout=60000,
+            await page.goto("https://www.dola.com/chat" + ("/" + conversation_id if conversation_id else ""), timeout=60000,
                             wait_until="domcontentloaded")
             while context.pages:
                 await asyncio.sleep(1)
@@ -835,17 +856,89 @@ async def admin_jobs(x_admin_key: str | None = Header(default=None)):
     return {"jobs": {pool.account_uuid(name): job for name, job in JOBS.items()}}
 
 
+def _task_video_file(row: dict) -> Path | None:
+    """Resolve only a task's own video directly inside the download directory."""
+    task_id = row.get("id", "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", task_id):
+        return None
+    name = unquote(urlsplit(row.get("video_url") or "").path.rsplit("/", 1)[-1])
+    if not name or "/" in name or "\\" in name or Path(name).stem != task_id:
+        return None
+    root = Path(config.DOWNLOAD_DIR).resolve()
+    candidate = root / name
+    if candidate.resolve().parent != root:
+        return None
+    return candidate
+
+
+def _task_favorite_fields(row: dict) -> dict:
+    video = _task_video_file(row)
+    available = bool(video and video.is_file())
+    return {"can_favorite": available,
+            "favorite": bool(video and video.with_suffix(".fav").is_file())}
+
+
 @app.get("/api/admin/tasks")
 async def admin_tasks(limit: int = 50, x_admin_key: str | None = Header(default=None), task_id: str = "",
                       query: str = "", search_in: str = "all", status: str = "",
-                      account: str = "", duration: int = 0):
+                      account: str = "", duration: int = 0, page: int = 1, video_filter: str = "",
+                      created_from: float | None = None, created_before: float | None = None):
     _admin_auth(x_admin_key)
-    return {"tasks": [{**t, "account": t.get("account_uuid") or (pool.account_uuid(t["account"]) if t.get("account") else None)}
-                      for t in store.recent_tasks(min(max(limit, 1), 200), task_id=task_id, query=query, search_in=search_in,
-                                                  status=status, account=account, duration=duration)]}
+    if any(value is not None and not math.isfinite(value) for value in (created_from, created_before)):
+        raise HTTPException(422, "Invalid creation time")
+    if created_from is not None and created_before is not None and created_from >= created_before:
+        raise HTTPException(422, "Creation time range must start before it ends")
+    if video_filter not in ("", "available", "missing", "favorite"):
+        raise HTTPException(422, "Unknown video filter")
+    favorite_ids = None
+    if video_filter == "favorite":
+        favorite_ids = []
+        for marker in Path(config.DOWNLOAD_DIR).glob("*.fav"):
+            row = store.get(marker.stem)
+            if row and _task_favorite_fields(row)["favorite"]:
+                favorite_ids.append(row["id"])
+    result = store.recent_tasks(limit, task_id=task_id, query=query, search_in=search_in,
+                                status=status, account=account, duration=duration, page=page,
+                                video_filter=video_filter, favorite_ids=favorite_ids,
+                                created_from=created_from, created_before=created_before)
+    result["tasks"] = [{**t, **_task_favorite_fields(t), "account": t.get("account_uuid") or
+                       (pool.account_uuid(t["account"]) if t.get("account") else None)}
+                       for t in result["tasks"]]
+    return result
 
 
 TASK_ACTION_LOCKS = {}
+
+
+class TaskFavoriteRequest(BaseModel):
+    favorite: bool
+
+
+@app.put("/api/admin/tasks/{task_id}/favorite")
+async def admin_task_favorite(task_id: str, body: TaskFavoriteRequest,
+                              x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    async with TASK_ACTION_LOCKS.setdefault(task_id, asyncio.Lock()):
+        row = store.get(task_id)
+        if not row or row.get("deleted_at") is not None:
+            raise HTTPException(404, "Task not found")
+        video = _task_video_file(row)
+        if video is None:
+            raise HTTPException(409, "Task has no local video")
+        marker = video.with_suffix(".fav")
+        if marker.is_symlink():
+            raise HTTPException(409, "Favorite marker must not be a symbolic link")
+        try:
+            if body.favorite:
+                if not video.is_file():
+                    raise HTTPException(409, "Video file no longer exists in downloads")
+                marker.touch(exist_ok=True)
+            else:
+                marker.unlink(missing_ok=True)
+        except OSError:
+            logging.getLogger("uvicorn.error").exception("Cannot update favorite for task %s", task_id)
+            raise HTTPException(500, "Could not update favorite marker")
+        return {"ok": True, "favorite": body.favorite}
 
 
 @app.delete("/api/admin/tasks/{task_id}")
@@ -856,7 +949,7 @@ async def admin_task_delete(task_id: str, x_admin_key: str | None = Header(defau
         if not row or row.get("deleted_at") is not None:
             raise HTTPException(404, "Task not found")
         runner = TASK_RUNNERS.get(task_id)
-        if row["status"] in ("queued", "processing") or (runner and not runner.done()):
+        if row["status"] in ("queued", "processing", "needs_recovery") or (runner and not runner.done()):
             raise HTTPException(409, "Stop monitoring this task before deleting its record")
         if not store.delete_task(task_id):
             raise HTTPException(409, "Task cannot be deleted in its current state")
@@ -866,49 +959,49 @@ async def admin_task_delete(task_id: str, x_admin_key: str | None = Header(defau
 @app.post("/api/admin/tasks/{task_id}/{action}")
 async def admin_task_action(task_id: str, action: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    if action not in ("open", "resume", "stop"):
+    if action not in ("open", "resume", "check", "stop"):
         raise HTTPException(404, "Unknown task action")
     async with TASK_ACTION_LOCKS.setdefault(task_id, asyncio.Lock()):
         row = store.get(task_id)
         if not row or row.get("deleted_at") is not None:
             raise HTTPException(404, "Task not found")
-        if not row.get("account") or not row.get("conversation_id"):
-            raise HTTPException(409, "Task has no saved conversation")
-        if row["status"] == "completed":
+        if row["status"] == "completed" and action != "open":
             raise HTTPException(409, "Task already completed")
         runner = TASK_RUNNERS.get(task_id)
-        if action == "stop":
-            if runner and not runner.done():
-                runner.cancel()
-                try:
-                    await runner
-                except asyncio.CancelledError:
-                    pass
-            store.update(task_id, status="stopped", error="Monitoring stopped by user; Dola generation is not cancelled",
-                         finished_at=time.time())
-            return {"ok": True, "status": "stopped"}
         if runner and not runner.done():
-            if action == "open":
-                from browser import focus_account_context
-                if await focus_account_context(row["account"]):
-                    return {"ok": True, "status": "processing"}
-                raise HTTPException(409, "Browser is recovering; retry shortly")
-            raise HTTPException(409, "Task is already being monitored")
-        for other_id, other_runner in TASK_RUNNERS.items():
-            if other_id != task_id and not other_runner.done():
-                other = store.get(other_id)
-                if other and other.get("account") == row["account"]:
-                    raise HTTPException(409, "Another task is using this account")
-        lock = pool._locks.get(row["account"])
-        if (lock and lock.locked()) or row["account"] in WEB_SESSIONS:
-            raise HTTPException(409, "Account is busy in another browser session")
-        # Only reopen the saved conversation. Never repeat generation submission.
-        store.update(task_id, status="processing", error=None, finished_at=None,
-                     deadline_at=time.time() + max(1800, config.VIDEO_TIMEOUT))
-        TASK_RUNNERS[task_id] = asyncio.create_task(_resume_task(store.get(task_id)))
-        logging.getLogger("uvicorn.error").info(
-            "[task-recovery] task=%s action=%s conversation=%s", task_id, action, row["conversation_id"])
-        return {"ok": True, "status": "processing"}
+            if action not in ("stop", "check", "resume") or row.get("phase") != "waiting":
+                if action != "stop":
+                    raise HTTPException(409, "Task already running or queued")
+            runner.cancel()
+            try:
+                await runner
+            except asyncio.CancelledError:
+                pass
+        if action == "stop":
+            store.update(task_id, status="stopped", phase="stopped", next_check_at=None,
+                         error="Monitoring stopped by user; Dola generation is not cancelled", finished_at=time.time())
+            scheduler.release(row)
+            return {"ok": True, "status": "stopped"}
+        if not row.get("account"):
+            raise HTTPException(409, "Task has no assigned account")
+        owner = scheduler.reserved.get(row["account"])
+        if owner and owner != task_id:
+            raise HTTPException(409, "Account is reserved by another task")
+        if action == "open":
+            lock = pool._locks.get(row["account"])
+            if lock and lock.locked():
+                raise HTTPException(409, "Account browser is busy")
+            if row["account"] not in WEB_SESSIONS:
+                WEB_SESSIONS[row["account"]] = {"status":"starting", "started_at":time.time()}
+                asyncio.create_task(_run_open_web(row["account"], row.get("conversation_id")))
+            return {"ok":True, "status":"queued"}
+        if not row.get("conversation_id") and not row.get("result_url"):
+            raise HTTPException(409, "Uncertain submission: use Open chat to inspect history before resubmitting")
+        scheduler.reserved[row["account"]] = task_id
+        store.update(task_id, status="queued", phase="downloading" if row.get("result_url") else "checking",
+                     error=None, finished_at=None, next_check_at=None, check_round=0)
+        TASK_RUNNERS[task_id] = asyncio.create_task(_run_task(task_id))
+        return {"ok":True, "status":"queued"}
 
 
 @app.get("/api/admin/stats")

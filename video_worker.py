@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 import aiohttp
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 
 import config
 from browser import cookie_value, launch_account_context
@@ -104,9 +104,16 @@ async ({conversationId, msToken, fp, afterIndex = 0}) => {
     const ext = msg.ext || {};
     const code = String(ext.ai_creation_res_code);
     // Observed terminal video rejection; API metadata is unaffected by page translation.
-    const tools = Array.isArray(ext.ai_creation_tool_list) ? ext.ai_creation_tool_list : [];
-    if (code === "710082022" || tools.some(t => Number(t.status) === 5 && String(t.fail_code) === "710082022")) {
-      terminalRejection = {code: "710082022", reason: messageTexts.join("\n") || "Dola blocked the generated video", terminal: true};
+    let tools = ext.ai_creation_tool_list;
+    if (typeof tools === "string") {
+      try { tools = JSON.parse(tools); } catch (_) { tools = []; }
+    }
+    if (!Array.isArray(tools)) tools = [];
+    const terminalCodes = ["710082022", "710092007"];
+    const failedTool = tools.find(t => t && Number(t.status) === 5 && terminalCodes.includes(String(t.fail_code)));
+    if (terminalCodes.includes(code) || failedTool) {
+      terminalRejection = {code: terminalCodes.includes(code) ? code : String(failedTool.fail_code),
+        reason: messageTexts.join("\n") || "Dola blocked the generated video", terminal: true};
     }
     if (["710082031", "710082041"].includes(code)) {
       knownRejection = {code, reason: messageTexts.join("\n") || "Dola rejected generation"};
@@ -193,7 +200,7 @@ async def _download(url: str, account: str) -> Path:
     fname = dl_dir / f"{account}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
     timeout = aiohttp.ClientTimeout(total=300)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url, proxy=config.PROXY or None) as resp:
+        async with session.get(url, proxy=config.PROXY or None, proxy_auth=config.proxy_auth()) as resp:
             resp.raise_for_status()
             with open(fname, "wb") as f:
                 async for chunk in resp.content.iter_chunked(1 << 16):

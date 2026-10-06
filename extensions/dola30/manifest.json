@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Dola Studio Profile Extension",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Developer profile extension for session management and media handling.",
   "permissions": [
     "debugger",
@@ -14,7 +14,7 @@
     "*://*.byteintlapi.com/*"
   ],
   "background": {
-    "service_worker": "service-worker.js"
+    "service_worker": "service-worker-v2.js"
   },
   "content_scripts": [
     {

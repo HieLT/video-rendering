@@ -36,6 +36,7 @@ class AllAccountsQuotaBlockedError(RuntimeError):
 class BrowserPool:
     def __init__(self, accounts_dir: str = "accounts", db_path: str = "pool_usage.db",
                  max_concurrency: int = 1):
+        self.reservations = {}
         self.accounts_dir = Path(accounts_dir)
         self.semaphore = asyncio.Semaphore(max_concurrency)
         self._locks: dict[str, asyncio.Lock] = {}
@@ -166,6 +167,8 @@ class BrowserPool:
 
     @asynccontextmanager
     async def account_activity(self, account: str, activity: str):
+        if account in self.reservations and activity in ("delete_dola", "adding"):
+            raise RuntimeError("Account is reserved by an unfinished video task")
         lock = self._locks.setdefault(account, asyncio.Lock())
         async with lock:
             self._activities[account] = activity
@@ -223,6 +226,20 @@ class BrowserPool:
         row = self._rolling_usage(account)
         last = self._meta(account)["last_used_at"] or row["last_used_at"]
         return row["used"] if last and time.time() < last + 86400 else 0
+
+    def reset_renewed_account_usage(self, account: str):
+        """Reset local quota only after renewal has produced a verified active session."""
+        meta = self._meta(account)
+        if not meta or meta["auth_state"] != "active" or meta["login_ok"] != 1:
+            raise RuntimeError("Renewed account must be verified before resetting usage")
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO account_usage(uuid, used, last_used_at) VALUES (?, 0, 0) "
+                "ON CONFLICT(uuid) DO UPDATE SET used=0, last_used_at=0", (meta["uuid"],))
+            self._conn.execute(
+                "UPDATE accounts_meta SET rate_limited_until=0, limit_reason='', "
+                "quota_blocked_until=0, quota_reason='', cooldown_until=0, "
+                "credit_balance=NULL, credit_checked_at=0 WHERE name=?", (account,))
 
     def _claim(self, account: str):
         used = self.used_today(account)
@@ -302,8 +319,9 @@ class BrowserPool:
                 "usage_reset_at": (m["last_used_at"] or 0) + 86400 if used else 0,
                 "limit": DAILY_LIMIT,
                 "remaining": max(0, DAILY_LIMIT - used),
-                "busy": bool(lock and lock.locked()),
-                "activity": self._activities.get(a) if lock and lock.locked() else None,
+                "busy": bool(lock and lock.locked()) or a in self.reservations,
+                "reserved_task": self.reservations.get(a),
+                "activity": self._activities.get(a) if lock and lock.locked() else ("waiting_video" if a in self.reservations else None),
             })
         return out
 
@@ -333,6 +351,8 @@ class BrowserPool:
         lock = self._locks.get(name)
         if lock and lock.locked():
             raise RuntimeError("Account is generating video, cannot delete")
+        if name in self.reservations:
+            raise RuntimeError("Account is reserved by an unfinished video task")
         root = self.accounts_dir.resolve()
         d = (root / name).resolve()
         if d.parent != root or d == root:
@@ -421,7 +441,7 @@ class BrowserPool:
         return not row or row["credit_balance"] is None or row["credit_balance"] >= required
 
     def _schedulable(self, a: dict) -> bool:
-        return (a["scheduling"] and a.get("login_ok") == 1 and a.get("auth_state") == "active" and not a["cooling"] and not a["rate_limited"]
+        return (a["name"] not in self.reservations and a["scheduling"] and a.get("login_ok") == 1 and a.get("auth_state") == "active" and not a["cooling"] and not a["rate_limited"]
                 and not a["quota_blocked"] and a["used_today"] < DAILY_LIMIT
                 and (a["credit_balance"] is None or a["credit_balance"] >= 2))
 
@@ -464,19 +484,11 @@ class BrowserPool:
             async with self.account_activity(account, "generating"):
                 def on_balance(balance, source=""):
                     self._set_credit_balance(account, balance, source)
-                try:
-                    result = await resume_video(account, conversation_id, timeout,
-                                                on_poll=on_poll, on_balance=on_balance)
-                    self._claim(account)
-                    self._conn.execute(
-                        "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
-                        (time.time(), account))
-                    self._conn.commit()
-                    return result
-                except TimeoutError:
-                    self._claim(account)
-                    self._conn.commit()
-                    raise
+                # Recovery only polls an existing generation. Its original attempt
+                # owns usage accounting; polling must not consume another slot
+                # or extend the quota reset deadline, including on timeout.
+                return await resume_video(account, conversation_id, timeout,
+                                          on_poll=on_poll, on_balance=on_balance)
 
     async def generate_video(self, prompt: str, ratio: str = None, duration: int = None,
                              model: str = "seedance_v2.0", on_conversation_id=None,

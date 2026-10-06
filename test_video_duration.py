@@ -1,6 +1,6 @@
 """Offline browser regressions for duration selection; no Dola requests."""
 import asyncio
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 import video_worker_ui as worker
 
 async def run():
@@ -59,6 +59,41 @@ async def run():
                     if mode == 'selected':
                         assert await page.locator('#duration').get_attribute('data-opens') is None
                 print('PASS', mode, flush=True)
+
+            for combined, maximum, step, requested, valid, offset in (
+                (True, 30, 1, 30, True, 0), (True, 30, 1, 15, True, 0),
+                (True, 26, 1, 30, True, 4),
+                (False, 30, 1, 15, True, 0), (True, 10, 1, 30, False, 0),
+                (True, 30, 4, 15, False, 0),
+            ):
+                await page.set_content('<div id="composer"><button id="duration">10s</button></div>')
+                await page.evaluate("""({combined, maximum, step, offset}) => {
+                    const control = document.getElementById('duration');
+                    let value = 10;
+                    const render = () => control.textContent = combined ? `16:9 \u00b7 ${value}\u79d2` : `${value}s`;
+                    render();
+                    control.onclick = () => {
+                        const menu = document.createElement('div'); menu.id='duration-menu'; menu.role='menu';
+                        control.setAttribute('aria-controls',menu.id);
+                        const slider = document.createElement('input'); slider.type='range';
+                        slider.min=offset ? 0 : 4; slider.max=maximum; slider.step=step; slider.value=value-offset;
+                        slider.oninput=()=>{ value=Number(slider.value)+offset; render(); };
+                        menu.append(slider); document.body.append(menu);
+                    };
+                    document.addEventListener('keydown', e => {
+                        if(e.key==='Escape') document.getElementById('duration-menu')?.remove();
+                    });
+                }""", dict(combined=combined, maximum=maximum, step=step, offset=offset))
+                try:
+                    await worker._select_video_duration(page, requested, 'test-slider')
+                except RuntimeError as exc:
+                    assert not valid, str(exc)
+                    assert 'slider' in str(exc), str(exc)
+                else:
+                    assert valid
+                    assert str(requested) in await page.locator('#duration').inner_text()
+                print('PASS slider', combined, maximum, step, requested, flush=True)
+
         finally:
             await browser.close()
 

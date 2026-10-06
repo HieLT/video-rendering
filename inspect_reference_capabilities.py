@@ -1,7 +1,7 @@
-﻿import asyncio,json,re,sys,traceback
+import asyncio,json,re,sys,traceback
 from pathlib import Path
 from urllib.parse import urlsplit
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 from browser import launch_account_context
 OUT=Path('diagnostics/reference_capabilities');OUT.mkdir(exist_ok=True)
 async def main():

@@ -29,8 +29,8 @@ COOKIES_FILE = os.getenv("DOLA_COOKIES_FILE", "cookies.txt")
 # Max concurrent video generation tasks
 MAX_CONCURRENCY = int(os.getenv("DOLA_MAX_CONCURRENCY", "5"))
 
-# Global pending task queue limit (queued + processing), 0 = unlimited
-MAX_PENDING_TASKS = int(os.getenv("DOLA_MAX_PENDING_TASKS", "100"))
+# Unfinished jobs including review; hard ceiling 100 (0 uses 100).
+MAX_PENDING_TASKS = min(100, max(1, int(os.getenv("DOLA_MAX_PENDING_TASKS", "100")) or 100))
 
 # Video generation timeout in seconds
 VIDEO_TIMEOUT = int(os.getenv("DOLA_VIDEO_TIMEOUT", "300"))
@@ -43,6 +43,27 @@ DOWNLOAD_DIR = os.getenv("DOLA_DOWNLOAD_DIR", "downloads")
 
 # Explicit browser proxy (must point to JP/KR egress; empty = system proxy)
 PROXY = os.getenv("DOLA_PROXY", "http://127.0.0.1:7890")
+PROXY_USERNAME = os.getenv("DOLA_PROXY_USERNAME", "")
+PROXY_PASSWORD = os.getenv("DOLA_PROXY_PASSWORD", "")
+
+
+def browser_proxy():
+    """Return Chromium proxy options, keeping credentials out of the server URL."""
+    if not PROXY:
+        return None
+    options = {"server": PROXY}
+    if PROXY_USERNAME:
+        options.update(username=PROXY_USERNAME, password=PROXY_PASSWORD)
+    return options
+
+
+def proxy_auth():
+    """Return aiohttp credentials for the explicitly configured proxy."""
+    if not PROXY or not PROXY_USERNAME:
+        return None
+    from aiohttp import BasicAuth
+    return BasicAuth(PROXY_USERNAME, PROXY_PASSWORD)
+
 
 # Run browser in headless mode (login always runs with head)
 HEADLESS = os.getenv("DOLA_HEADLESS", "1") == "1"

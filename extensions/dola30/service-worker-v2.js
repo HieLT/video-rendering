@@ -619,43 +619,12 @@ function findDolaEncodedVideoUrls(json) {
 function patchActionBarDuration(body) {
   try {
     const json = JSON.parse(body);
-    const changed = patchNestedJsonStrings(json);
+    const changed = patchDurationSelector(json);
     return changed ? JSON.stringify(json) : body;
   } catch (error) {
     console.warn("patch action bar duration failed:", error.message || error);
     return body;
   }
-}
-
-function patchNestedJsonStrings(value, seen = new Set()) {
-  if (value == null || typeof value !== "object" || seen.has(value)) {
-    return false;
-  }
-
-  seen.add(value);
-  let changed = false;
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      changed = patchNestedJsonStrings(item, seen) || changed;
-    }
-    return changed;
-  }
-
-  for (const key of Object.keys(value)) {
-    const child = value[key];
-    if (typeof child === "string") {
-      const patchedString = patchJsonStringDuration(child);
-      if (patchedString !== child) {
-        value[key] = patchedString;
-        changed = true;
-      }
-    } else {
-      changed = patchNestedJsonStrings(child, seen) || changed;
-    }
-  }
-
-  return changed;
 }
 
 function patchJsonStringDuration(text) {
@@ -687,14 +656,21 @@ function patchDurationSelector(value, seen = new Set()) {
     return changed;
   }
 
-  const label = String(value.label || value.display_text || value.show_name || "");
-  const selectorKey = String(value.key || value.value || "");
+  const selectorKey = String(value.key || value.value_key || value.value || "");
   const options = Array.isArray(value.option_list) ? value.option_list : [];
+  // Keyed controls must match exactly: Japanese labels are shared by page size.
   const looksLikeDuration = selectorKey === "video-duration"
     || selectorKey === "duration"
-    || /时长|鏃堕暱|時間|長さ|duration/i.test(label)
-    || (options.some((option) => String(option?.option_key || option?.value || "") === "5")
-      && options.some((option) => String(option?.option_key || option?.value || "") === "10"));
+    || (!selectorKey && options.some(option => /^10\s*(s|\u79d2)$/i.test(String(option?.display_text || "")))
+      && options.some(option => String(option?.option_key || option?.value || "") === "5"));
+
+  // New action-bar slider templates (confirmed in the frontend adapter).
+  if (looksLikeDuration) {
+    changed = extendDurationRange(value, "lower_bound", "upper_bound", "step_length") || changed;
+  }
+  if (value.supported_duration_range && typeof value.supported_duration_range === "object") {
+    changed = extendDurationRange(value.supported_duration_range, "lower", "upper", "step") || changed;
+  }
 
   if (looksLikeDuration && options.length) {
     const has30s = options.some((option) => String(option?.option_key || option?.value || "") === "30");
@@ -720,6 +696,16 @@ function patchDurationSelector(value, seen = new Set()) {
   }
 
   return changed;
+}
+
+function extendDurationRange(range, lowerKey, upperKey, stepKey) {
+  const lower = range[lowerKey], upper = range[upperKey], step = range[stepKey];
+  if (![lower, upper, step].every(Number.isFinite) || step <= 0 || upper < lower
+      || lower > 30 || upper >= 30) return false;
+  // Preserve the server's step and defaults; do not invent off-grid options.
+  if (Math.abs((30 - lower) / step - Math.round((30 - lower) / step)) > 1e-8) return false;
+  range[upperKey] = 30;
+  return true;
 }
 
 function createThirtySecondOption(optionList) {

@@ -2,7 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 
 import config
 async def main():
@@ -21,7 +21,7 @@ async def main():
             "timezone_id": "Asia/Tokyo",
         }
         if config.PROXY:
-            kwargs["proxy"] = {"server": config.PROXY}
+            kwargs["proxy"] = config.browser_proxy()
         context = await p.chromium.launch_persistent_context(
             str(Path("diagnostic_profile")), **kwargs
         )

@@ -61,6 +61,18 @@ class TaskStore:
             )
             # Legacy migration: add missing columns for task recovery, client usage, and timing stats.
             for column, definition in (
+                ("phase", "TEXT DEFAULT 'ready'"),
+                ("next_check_at", "REAL"),
+                ("accepted_at", "REAL"),
+                ("eta_seconds", "REAL"),
+                ("eta_raw", "TEXT"),
+                ("check_round", "INTEGER DEFAULT 0"),
+                ("retry_count", "INTEGER DEFAULT 0"),
+                ("after_index", "INTEGER DEFAULT 0"),
+                ("dispatch_uncertain", "INTEGER DEFAULT 0"),
+                ("submitted_at", "REAL"),
+                ("reference_paths", "TEXT"),
+                ("result_url", "TEXT"),
                 ("account", "TEXT"),
                 ("account_uuid", "TEXT"),
                 ("deleted_at", "REAL"),
@@ -175,7 +187,7 @@ class TaskStore:
             self._conn.execute("BEGIN IMMEDIATE")
             if max_pending > 0:
                 pending = self._conn.execute(
-                    "SELECT COUNT(*) FROM tasks WHERE status IN ('queued','processing')"
+                    "SELECT COUNT(*) FROM tasks WHERE deleted_at IS NULL AND status IN ('queued','processing','needs_recovery')"
                 ).fetchone()[0]
                 if pending + len(task_ids) > max_pending:
                     raise PendingTaskLimitExceeded(
@@ -284,12 +296,14 @@ class TaskStore:
     def pending_task_count(self) -> int:
         with _LOCK:
             return self._conn.execute(
-                "SELECT COUNT(*) FROM tasks WHERE status IN ('queued','processing')"
+                "SELECT COUNT(*) FROM tasks WHERE deleted_at IS NULL AND status IN ('queued','processing','needs_recovery')"
             ).fetchone()[0]
 
     def recent_tasks(self, limit: int = 50, api_key_hash: str | None = None,
                      task_id: str = "", query: str = "", search_in: str = "all",
-                     status: str = "", account: str = "", duration: int = 0) -> list:
+                     status: str = "", account: str = "", duration: int = 0, page: int | None = None,
+                     video_filter: str = "", favorite_ids: list[str] | None = None,
+                     created_from: float | None = None, created_before: float | None = None) -> list | dict:
         fields = {"id": ["id"], "prompt": ["prompt"], "client": ["api_key_name"],
                   "batch": ["batch_id"], "error": ["error"]}
         clauses, params = [], []
@@ -314,12 +328,34 @@ class TaskStore:
         if duration:
             clauses.append("duration=?")
             params.append(duration)
-        params.append(limit)
+        if created_from is not None:
+            clauses.append("created_at>=?")
+            params.append(created_from)
+        if created_before is not None:
+            clauses.append("created_at<?")
+            params.append(created_before)
+        if video_filter in ("available", "favorite"):
+            clauses.append("COALESCE(video_url,'')<>''")
+        elif video_filter == "missing":
+            clauses.append("COALESCE(video_url,'')=''")
+        if video_filter == "favorite":
+            clauses.append("id IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(favorite_ids or []))
+        limit = min(max(limit, 1), 200)
+        where = " AND ".join(clauses)
         with _LOCK:
+            if page is not None:
+                total = self._conn.execute("SELECT COUNT(*) FROM tasks WHERE " + where, params).fetchone()[0]
+                pages = max(1, (total + limit - 1) // limit)
+                page = min(max(page, 1), pages)
+            offset = (page - 1) * limit if page is not None else 0
             rows = self._conn.execute(
-                "SELECT * FROM tasks WHERE " + " AND ".join(clauses) +
-                " ORDER BY created_at DESC, id DESC LIMIT ?", params).fetchall()
-        return [dict(r) for r in rows]
+                "SELECT * FROM tasks WHERE " + where +
+                " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?", [*params, limit, offset]).fetchall()
+        tasks = [dict(r) for r in rows]
+        if page is not None:
+            return {"tasks": tasks, "total": total, "page": page, "pages": pages, "limit": limit}
+        return tasks
 
     def delete_task(self, task_id: str) -> bool:
         """Hide a finished record while preserving usage accounting and media."""

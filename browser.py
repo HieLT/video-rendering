@@ -28,6 +28,88 @@ LAUNCH_ARGS = [
 ]
 
 
+def account_launch_args(profile_dir: Path) -> list[str]:
+    """Use the same Chrome profile as interactive login, including secondary profiles."""
+    import json
+    profile = "Default"
+    try:
+        state = json.loads((profile_dir / "Local State").read_text(encoding="utf-8"))
+        candidate = state.get("profile", {}).get("last_used", "Default")
+        if (isinstance(candidate, str) and candidate
+                and candidate not in (".", "..")
+                and not any(char in candidate for char in '/\\:')
+                and (profile_dir / candidate).is_dir()):
+            profile = candidate
+    except (OSError, ValueError, AttributeError, TypeError):
+        pass
+    return [*LAUNCH_ARGS, f"--profile-directory={profile}"]
+
+
+async def _ready_extension(context):
+    import asyncio
+    for _ in range(40):
+        for worker in context.service_workers:
+            if worker.url.startswith('chrome-extension://') and worker.url.endswith('/service-worker-v2.js'):
+                if await worker.evaluate("""() => {
+                    if (typeof ensureAttached !== 'function' || typeof patchActionBarDuration !== 'function') return false;
+                    const probe = {key:'video-duration', lower_bound:4, upper_bound:10, step_length:1};
+                    return JSON.parse(patchActionBarDuration(JSON.stringify(probe))).upper_bound === 30;
+                }"""):
+                    return worker
+        await asyncio.sleep(0.2)
+    raise RuntimeError("Dola30 background worker did not start")
+
+
+async def _reload_extension(context):
+    page = await context.new_page()
+    session = None
+    try:
+        await page.goto('chrome://extensions')
+        session = await context.new_cdp_session(page)
+        result = await session.send('Runtime.evaluate', {
+            'expression': """new Promise((resolve, reject) => {
+                chrome.developerPrivate.getExtensionsInfo({}, entries => {
+                    const matches = entries.filter(e => e.name === 'Dola Studio Profile Extension');
+                    if (matches.length !== 1) { reject(new Error('Dola30 extension not uniquely installed')); return; }
+                    chrome.developerPrivate.reload(matches[0].id, {}, () => {
+                        const error = chrome.runtime.lastError;
+                        if (error) reject(new Error(error.message)); else resolve(true);
+                    });
+                });
+            })""",
+            'awaitPromise': True, 'returnByValue': True,
+        })
+        if result.get('exceptionDetails') or result.get('result', {}).get('value') is not True:
+            raise RuntimeError('Could not reload Dola30 extension')
+    finally:
+        if session:
+            await session.detach()
+        await page.close()
+
+
+async def _attach_extension_before_navigation(context, worker):
+    # Enable response interception before Dola can load its action bar config.
+    import uuid
+    marker = 'https://www.dola.com/?dola30_bootstrap=' + uuid.uuid4().hex
+    page = context.pages[0] if context.pages else await context.new_page()
+    async def bootstrap(route):
+        await route.fulfill(status=200, content_type='text/html', body='<html><body></body></html>')
+    await page.route(marker, bootstrap)
+    try:
+        await page.goto(marker, wait_until='domcontentloaded', timeout=15000)
+    finally:
+        await page.unroute(marker, bootstrap)
+    attached = await worker.evaluate("""async marker => {
+        const tabs = await chrome.tabs.query({});
+        const tab = tabs.find(t => t.url === marker);
+        if (!tab) return false;
+        await ensureAttached(tab.id);
+        return attachedTabs.has(tab.id);
+    }""", marker)
+    if not attached:
+        raise RuntimeError('Dola30 could not attach response interception to generation tab')
+
+
 async def launch_account_context(p, account: str, headless: bool = None, use_extension: bool = False):
     """Launches accounts/<account> profile, returns BrowserContext. Caller must close.
 
@@ -40,7 +122,7 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
             f"Account profile does not exist: {profile_dir} (run python add_account.py {account} first)"
         )
     launch_headless = config.HEADLESS if headless is None else headless
-    args = list(LAUNCH_ARGS)
+    args = account_launch_args(profile_dir)
     if use_extension:
         if not config.EXTENSION_ENABLED:
             raise RuntimeError("Dola extension is disabled (DOLA_EXTENSION_ENABLED=0)")
@@ -55,13 +137,29 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
         ])
     kwargs = {
         "headless": launch_headless,
+        "channel": "chromium",
         "args": args,
         "locale": "ja-JP",
         "timezone_id": "Asia/Tokyo",
     }
     if config.PROXY:
-        kwargs["proxy"] = {"server": config.PROXY}
+        kwargs["proxy"] = config.browser_proxy()
     context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+    if use_extension:
+        try:
+            try:
+                worker = await _ready_extension(context)
+                await _attach_extension_before_navigation(context, worker)
+            except Exception as first_error:
+                print(f"[{account}] Dola30 startup failed ({type(first_error).__name__}); reload and reopen once", flush=True)
+                await _reload_extension(context)
+                await context.close()
+                context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+                worker = await _ready_extension(context)
+                await _attach_extension_before_navigation(context, worker)
+        except Exception as exc:
+            await context.close()
+            raise RuntimeError(f"Dola30 extension unavailable for {account}: {exc}") from exc
     ACTIVE_CONTEXTS[account] = (context, launch_headless)
 
     def unregister(*_):
@@ -80,7 +178,7 @@ def cookie_value(cookies: list, name: str) -> str:
 
 async def check_login_state(account: str) -> bool:
     """Opens Dola in headless mode and checks whether session is active."""
-    from patchright.async_api import async_playwright
+    from browser_queue import async_playwright
     async with async_playwright() as p:
         context = await launch_account_context(p, account)
         try:
@@ -104,7 +202,7 @@ async def check_login_state(account: str) -> bool:
 async def inspect_account_session(account):
     import asyncio
     from urllib.parse import urlsplit
-    from patchright.async_api import async_playwright
+    from browser_queue import async_playwright
     from account_import import capture_identity
     async with async_playwright() as p:
         context = await launch_account_context(p, account, headless=True)

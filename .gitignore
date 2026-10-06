@@ -38,3 +38,13 @@ diagnostics/
 
 # SQLite safety backups contain the same private data as databases
 *.db*.bak
+
+.runtime/
+
+.job_media/
+
+downloads_unique/
+
+/experiment_eta_reopen.py
+
+/test_eta_reopen_experiment.py
