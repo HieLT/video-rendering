@@ -142,6 +142,21 @@ def register_asset_routes(app, store, admin_auth, client_auth, request_factory, 
         admin_auth(x_admin_key)
         return _call(store.import_scenes, project_id, payload)
 
+    @router.post('/projects/{project_id}/scene-info/import/validate')
+    def validate_scene_info(project_id: str, payload: Any = Body(default=None), x_admin_key: str | None = Header(default=None)):
+        admin_auth(x_admin_key)
+        return _call(store.validate_scene_info, project_id, payload)
+
+    @router.post('/projects/{project_id}/scene-info/import')
+    def import_scene_info(project_id: str, payload: Any = Body(default=None), x_admin_key: str | None = Header(default=None)):
+        admin_auth(x_admin_key)
+        return _call(store.import_scene_info, project_id, payload)
+
+    @router.patch('/scenes/{scene_id}/summary')
+    def update_scene_summary(scene_id: str, payload: Any = Body(default=None), x_admin_key: str | None = Header(default=None)):
+        admin_auth(x_admin_key)
+        return _call(store.update_scene_summary, scene_id, payload)
+
     @router.get('/scenes/{scene_id}/references')
     def list_requirements(scene_id: str, x_admin_key: str | None = Header(default=None)):
         admin_auth(x_admin_key)

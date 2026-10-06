@@ -259,7 +259,7 @@ class RetirementMigrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'tasks.db';before=self.legacy(path)
             for _ in range(2):
-                store=TaskStore(str(path));self.assertEqual(store._conn.execute('PRAGMA user_version').fetchone()[0],5)
+                store=TaskStore(str(path));self.assertEqual(store._conn.execute('PRAGMA user_version').fetchone()[0],6)
                 self.assertEqual(store.get('old'),before);self.assertIsNone(store.get_asset('hero')['retired_at'])
                 self.assertFalse(store._conn.execute('PRAGMA foreign_key_check').fetchall());store._conn.close()
             backup=Path(str(path)+'.before_v5.bak');self.assertTrue(backup.exists())

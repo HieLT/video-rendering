@@ -261,6 +261,9 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 @media(max-width:700px){.project-bulk-grid{grid-template-columns:1fr}}
 
 @media(max-width:700px){.project-scene{grid-template-columns:1fr}nav{overflow-x:auto}}
+.project-scene .project-scene-summary{font-size:15px;line-height:1.5;white-space:pre-wrap;margin:8px 0;color:var(--text)}
+.project-scene-summary.collapsed{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.project-summary-empty{opacity:.65;font-size:12px}
 </style>
 </head>
 <body>
@@ -392,7 +395,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
       <div class="toolbar"><h3 id="projectTitle"></h3><button class="btn" id="projectBack">Back to projects</button></div>
       <div id="projectProgress" class="project-progress" aria-live="polite"></div>
       <div id="projectSummary" class="project-summary"></div>
-      <div class="project-actions"><button class="btn" data-action="import">Import Scenes</button><button class="btn" data-action="library">Reference Library</button><button class="btn" data-action="outputs">View Selected Outputs</button><button class="btn" data-action="rename">Rename</button><button class="btn" data-action="refresh">Refresh project</button><label>Candidates per Scene <select id="projectCandidateCount"><option value="1">x1</option><option value="2">x2</option><option value="3">x3</option><option value="4">x4</option><option value="5">x5</option></select></label><button class="btn btn-p" id="projectGenerateAll">Generate All Ready</button><button class="btn" id="projectSelectLatest" data-loading="Selecting...">Select latest completed for unselected scenes</button></div>
+      <div class="project-actions"><button class="btn" data-action="import">Import Scenes</button><button class="btn" data-action="import-info">Import Scene Info</button><button class="btn" data-action="library">Reference Library</button><button class="btn" data-action="outputs">View Selected Outputs</button><button class="btn" data-action="rename">Rename</button><button class="btn" data-action="refresh">Refresh project</button><label>Candidates per Scene <select id="projectCandidateCount"><option value="1">x1</option><option value="2">x2</option><option value="3">x3</option><option value="4">x4</option><option value="5">x5</option></select></label><button class="btn btn-p" id="projectGenerateAll">Generate All Ready</button><button class="btn" id="projectSelectLatest" data-loading="Selecting...">Select latest completed for unselected scenes</button></div>
       <details class="project-key"><summary>Gateway API Key (optional)</summary><label for="projectGatewayKey">Only if generation API authentication is enabled</label><br><input id="projectGatewayKey" type="password" autocomplete="off"></details>
       <div id="projectMissing"></div><div id="projectScenes"></div>
     </div>
@@ -1246,6 +1249,7 @@ window.ProjectReview = (() => {
     const t=scene.latest_task;
     return JSON.stringify([scene.id, scene.selected_task_id, t && [t.id,t.status,t.video_url,t.error,t.deleted_at], scene.completed_attempt_count,scene.candidate_revision]);
   }
+  const expandedSummaries=new Set();
   function renderScenes() {
     const data=state.data;
     const project=state.projects.find(p=>p.id===state.project);
@@ -1263,6 +1267,8 @@ window.ProjectReview = (() => {
       const refs=scene.missing_references || [];
       return `<article class="project-scene" data-scene-id="${esc(scene.id)}">
         <div><h4>Scene ${esc(String(scene.scene_number).padStart(2,'0'))} - ${esc(scene.scene_name)}</h4>
+          ${scene.scene_summary ? `<p class="project-scene-summary ${expandedSummaries.has(scene.id) ? '' : 'collapsed'}">${esc(scene.scene_summary)}</p><button class="btn" data-action="toggle-summary" data-scene-id="${esc(scene.id)}" ${expandedSummaries.has(scene.id) ? '' : 'hidden'}>${expandedSummaries.has(scene.id) ? 'Show less' : 'Show more'}</button>` : '<p class="project-summary-empty">No scene info imported.</p>'}
+          <button class="btn" data-action="edit-summary" data-scene-id="${esc(scene.id)}">Edit summary</button>
           <div>${badge(scene.production_status)}${scene.active_task && scene.production_status==='SELECTED' ? ` ${badge(scene.active_task.status)} new version` : ''}</div>
           <p>References: ${refs.length ? `Missing ${refs.length}: ${esc(refs.map(r=>r.name).join(', '))}` : 'READY'}</p>
           <div>${(scene.references||[]).map(r=>`<span class="project-ref">${r.asset_id ? '&#10003;' : '&#10007;'} ${esc(r.name)} <small>Alias: ${esc(r.alias)} - ${r.asset_id ? 'Resolved' : 'Missing'}</small></span>`).join('')}</div>
@@ -1278,6 +1284,7 @@ window.ProjectReview = (() => {
           ${refs.length ? `<button class="btn" data-action="upload-missing" data-name="${esc(refs[0].name)}">Upload Missing Reference</button>` : ''}
         </div></article>`;
     }).join('') : '<p>No scenes in this project yet.</p>';
+    requestAnimationFrame(()=>{el('projectScenes').querySelectorAll('.project-scene-summary.collapsed').forEach(node=>{const button=node.nextElementSibling;button.hidden=node.scrollHeight<=node.clientHeight+1;});});
   }
   async function loadVersions(sceneId, force=false) {
     const scene=(state.data && state.data.scenes || []).find(s=>s.id===sceneId);
@@ -1613,7 +1620,35 @@ window.ProjectReview = (() => {
     const files=[...(event.dataTransfer && event.dataTransfer.files || [])];if(!files.length)return;
     const name=zone.dataset.dropReference || null;if(state.panel!=='bulk')bulkPanel();stageFiles(files,name);
   });
+  function infoPanel(){
+    panel('scene-info','Import Scene Info',`<div class="project-form"><p>Update summaries of existing scenes in this Project. All scene numbers must match.</p><label>Scene Info JSON<textarea id="projectInfoJSON" spellcheck="false" placeholder='{"scenes":[{"scene_number":1,"summary":"Scene description"}]}'></textarea></label><div class="project-actions"><button class="btn" data-action="validate-info">Validate</button><button class="btn btn-p" id="projectInfoSubmit" data-action="submit-info" disabled>Import</button></div></div><div id="projectInfoPreview" aria-live="polite"></div>`);
+  }
+  function infoPayload(){try{return JSON.parse(el('projectInfoJSON').value);}catch(e){throw new Error('Invalid Scene Info JSON.');}}
   async function workflowAction(action,button){
+    if(action==='import-info'){infoPanel();return true;}
+    if(action==='validate-info'){
+      const text=el('projectInfoJSON').value;
+      const report=await projectRequest(`/api/admin/projects/${path(state.project)}/scene-info/import/validate`,{method:'POST',body:infoPayload()});
+      if(el('projectInfoJSON').value!==text)return true;
+      state.validated=report.valid ? text : null;el('projectInfoSubmit').disabled=!report.valid;
+      el('projectInfoPreview').innerHTML=`<p>Entries: ${report.total_entries} | Matched: ${report.matched_count} | Not found: ${report.missing_scene_numbers.length}</p>${report.missing_scene_numbers.map(number=>`<p>Scene ${number} not found in this Project.</p>`).join('')}${report.validation_errors.map(error=>`<p>${esc(error.field)}: ${esc(error.message)}</p>`).join('')}`;
+      return true;
+    }
+    if(action==='submit-info'){
+      if(state.validated!==el('projectInfoJSON').value)throw new Error('Validate the current Scene Info JSON before importing.');
+      const result=await projectRequest(`/api/admin/projects/${path(state.project)}/scene-info/import`,{method:'POST',body:infoPayload()});
+      closePanel();await refresh(true);message(`Updated ${result.updated_count} scene summaries.`);return true;
+    }
+    if(action==='toggle-summary'){const id=button.dataset.sceneId;if(expandedSummaries.has(id))expandedSummaries.delete(id);else expandedSummaries.add(id);renderScenes();return true;}
+    if(action==='edit-summary'){
+      const scene=state.data.scenes.find(row=>row.id===button.dataset.sceneId);
+      panel('edit-summary',`Edit summary - Scene ${scene.scene_number}`,`<div class="project-form"><label>Summary<textarea id="projectSummaryInput">${esc(scene.scene_summary||'')}</textarea></label><button class="btn btn-p" data-action="save-summary" data-scene-id="${esc(scene.id)}">Save summary</button></div>`);return true;
+    }
+    if(action==='save-summary'){
+      await projectRequest(`/api/admin/scenes/${path(button.dataset.sceneId)}/summary`,{method:'PATCH',body:{summary:el('projectSummaryInput').value||null}});
+      closePanel();await refresh(true);message('Scene summary saved.');return true;
+    }
+
     if(action==='bulk'){bulkPanel();return true;}
     if(action==='upload-bulk'){await uploadBulk();return true;}
     if(action==='remove-staged'){const entry=state.staging.find(e=>e.id===button.dataset.entryId);if(entry)URL.revokeObjectURL(entry.url);state.staging=state.staging.filter(e=>e.id!==button.dataset.entryId);renderBulk();return true;}
@@ -1648,6 +1683,7 @@ window.ProjectReview = (() => {
     return false;
   }
   root.addEventListener('input',event=>{
+    if(event.target.id==='projectInfoJSON'){state.validated=null;el('projectInfoSubmit').disabled=true;el('projectInfoPreview').replaceChildren();}
     if(event.target.id==='projectImportJSON'){state.validated=null;el('projectImportSubmit').disabled=true;el('projectImportSubmit').textContent='Import';el('projectImportPreview').replaceChildren();}
   });
   root.addEventListener('submit',event=>{

@@ -12,9 +12,10 @@ from asset_storage import validate_asset_path
 from reference_aliases import resolve_reference_aliases
 from scene_workflow import SceneWorkflowMixin
 from review_store import ReviewStoreMixin
+from scene_info import SceneInfoMixin
 from scene_import import asset_name_key, normalize_reference_alias, validate_aliases, SceneNotReadyError
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 ASSET_TYPES = {"character", "environment", "prop", "special_state"}
 
 
@@ -26,7 +27,7 @@ class AssetInUseError(ValueError):
     pass
 
 
-class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin):
+class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin, SceneInfoMixin):
     def _backup_before_migration(self):
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
         if version > SCHEMA_VERSION:
@@ -123,6 +124,7 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin):
 
     def _migrate_v5(self):
         if self._conn.execute('PRAGMA user_version').fetchone()[0] >= 5:
+            self._migrate_v6()
             return
         columns = {row[1] for row in self._conn.execute('PRAGMA table_info(assets)')}
         if 'retired_at' not in columns:
@@ -132,6 +134,7 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin):
         if self._conn.execute('PRAGMA foreign_key_check').fetchall():
             raise sqlite3.IntegrityError('Asset retirement migration failed foreign_key_check')
         self._conn.execute('PRAGMA user_version=5')
+        self._migrate_v6()
 
     def asset_has_history(self, asset_id):
         with self._lock:

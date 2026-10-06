@@ -1,4 +1,4 @@
-﻿# Context dự án Video Rendering
+# Context dự án Video Rendering
 
 Cập nhật: 06/10/2026. Tài liệu này mô tả trạng thái hiện tại, thay thế các ghi chú milestone cũ từng được nối vào cuối file.
 
@@ -28,7 +28,7 @@ Dashboard/API → lưu task `queued` → chờ giới hạn API key/pool → gi�
 
 ## 3. Data model V2
 
-Schema hiện tại: `PRAGMA user_version = 5` sau khi TaskStore khởi tạo/migrate. Các mốc đầu đã có thay đổi schema; Step 4, Step 5 và bổ sung UI đầu tiên không thêm migration; Production UX thêm retired_at và partial unique index ở v5.
+Schema hiện tại: `PRAGMA user_version = 6` sau khi TaskStore khởi tạo/migrate. Các mốc đầu đã có thay đổi schema; Step 4, Step 5 và bổ sung UI đầu tiên không thêm migration; Production UX thêm retired_at và partial unique index ở v5.
 
 | Entity | Vai trò |
 | --- | --- |
@@ -180,7 +180,7 @@ Chạy lại bộ test đã xác định là offline:
 
 Không mặc định chạy toàn bộ test_*.py: repo có script thử nghiệm live có thể mở profile/gửi generation. Regression browser cũ có chỗ yêu cầu system Chrome; phiên kiểm thử dùng launch override trong RAM để chạy bằng bundled Chromium, không sửa các test đó.
 
-Reports/screenshots nằm trong diagnostics/. Tài liệu chi tiết: V2_DATA_MODEL.md, REFERENCE_LIBRARY.md, SCENE_IMPORT.md, GENERATE_ALL.md, PROJECT_REVIEW.md, PROJECT_WORKFLOW_UI.md, PRODUCTION_UX.md. Hai tài liệu đầu chứa chi tiết milestone trước; schema hiện tại lấy theo code và PRODUCTION_UX.md; JSON import vẫn theo SCENE_IMPORT.md, không theo riêng version cũ trong milestone.
+Reports/screenshots nằm trong diagnostics/. Tài liệu chi tiết: V2_DATA_MODEL.md, REFERENCE_LIBRARY.md, SCENE_IMPORT.md, GENERATE_ALL.md, PROJECT_REVIEW.md, PROJECT_WORKFLOW_UI.md, PRODUCTION_UX.md. Hai tài liệu đầu chứa chi tiết milestone trước; schema hiện tại lấy theo code và SCENE_INFO.md; JSON import vẫn theo SCENE_IMPORT.md, không theo riêng version cũ trong milestone.
 
 ## 9. Trạng thái Git và phạm vi còn lại
 
@@ -201,4 +201,15 @@ Chưa triển khai: final-frame continuity/extraction, ZIP/export, ghép phim/ti
 
 Chạy acceptance mới: .\.venv\Scripts\python.exe test_production_ux_ui.py
 
-Tác vụ mới nhất: implement đúng ba phần Production UX trên. Chi tiết file/API/schema/verification trong PRODUCTION_UX.md. Server/database thật không được restart/migrate bởi agent; người dùng tự restart để nạp migration và APIs mới. Không commit/push, không mở rộng feature ngoài scope.
+Milestone Production UX: implement đúng ba phần Production UX trên. Chi tiết file/API/schema/verification trong PRODUCTION_UX.md. Server/database thật không được restart/migrate bởi agent; người dùng tự restart để nạp migration và APIs mới. Không commit/push, không mở rộng feature ngoài scope.
+
+
+## Scene Info (2026-10-06)
+
+Current task completed: separate Scene Info import and Scene summary UI. See SCENE_INFO.md for the current schema/API/verification contract. Schema v6 adds nullable scenes.scene_summary using the existing backup/transactional migration chain; old Scenes remain NULL. Dedicated import and manual edit update only scene_summary, preserving even updated_at (generation revision).
+
+Project header now has Import Scene Info separately from Template 5 Import Scenes. Exact JSON is {"scenes":[{"scene_number":1,"summary":"..."}]}. Validate is read-only and previews entries/matches/unknown numbers. Matching is Project-scoped. Unknown numbers reject the whole import; no Scene creation. Re-import is allowed. Summary appears below the Scene title, clamped to three lines with Show more/Show less when needed; Edit summary is available. Missing summary is never derived from the prompt.
+
+New admin routes: POST /projects/{id}/scene-info/import/validate, POST /projects/{id}/scene-info/import, PATCH /scenes/{id}/summary (all under /api/admin). Generation payload construction, Template 5, bulk references, x1-x5, workers, BrowserPool and queue are unchanged.
+
+Verification: 252 backend tests passed; new Scene Info browser acceptance and all three existing Project/review/production UX browser suites passed. Actual DB was read-only backed up to a temporary copy: v4->v6 preserved 1 Task, 2 Scenes, 4 Assets; existing test_riven Scenes 1/2 imported the exact requested Vietnamese summaries on the copy, changing only summary. Live DB/server remain untouched; user restarts manually. Reports and screenshot are in diagnostics/. No live Dola generation, no commit/push.
