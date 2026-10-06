@@ -28,7 +28,7 @@ Dashboard/API → lưu task `queued` → chờ giới hạn API key/pool → gi�
 
 ## 3. Data model V2
 
-Schema hiện tại: `PRAGMA user_version = 4` sau khi TaskStore khởi tạo/migrate. Các mốc đầu đã có thay đổi schema; Step 4, Step 5 và bổ sung UI không thêm migration.
+Schema hiện tại: `PRAGMA user_version = 5` sau khi TaskStore khởi tạo/migrate. Các mốc đầu đã có thay đổi schema; Step 4, Step 5 và bổ sung UI đầu tiên không thêm migration; Production UX thêm retired_at và partial unique index ở v5.
 
 | Entity | Vai trò |
 | --- | --- |
@@ -45,7 +45,7 @@ Task giữ prompt đã resolve và snapshot references theo thứ tự, gồm as
 
 Một Asset được nhiều Scenes cùng Project reuse. Identity lâu dài là bản ghi Asset và file persistent, không phải temporary `uploaded://` token. Tên Asset phải unique trong Project theo trim + Unicode casefold ở storage API. Aliases và thứ tự ảnh được giữ khi chuyển sang `@ImageN`.
 
-Selection chỉ nhận task thuộc cùng Scene, completed, chưa bị soft-delete và có video URL. Chuyển selection không sửa/xóa Task. Task đang được Scene chọn không được xóa; cần unselect hoặc chọn output khác trước. Asset đang được Scene hoặc task snapshot sử dụng không được xóa.
+Selection chỉ nhận task thuộc cùng Scene, completed, chưa bị soft-delete và có video URL. Chuyển selection không sửa/xóa Task. Task đang được Scene chọn không được xóa; cần unselect hoặc chọn output khác trước. Physical-delete Asset đang được Scene hoặc Task snapshot sử dụng vẫn bị chặn. Production Remove được phép bỏ current bindings và retire Asset, giữ backing file nếu history cần dùng.
 
 Migration là additive, có transaction, bật foreign keys/busy timeout, tạo SQLite backup trước migration và không ghi đè backup cũ. Không drop/rebuild tasks để thêm V2, không làm mất history. Collision tên Asset phải báo lỗi để xử lý, không tự đổi tên.
 
@@ -163,24 +163,24 @@ V2 đã hoàn thành Step 1 data model, Step 2 persistent references, Step 3 Sce
 
 Kết quả gần nhất của phiên triển khai:
 
-- 201 backend tests pass, gồm 197 tests V2/regression cũ và 4 tests authenticated asset preview.
+- 239 backend tests pass: 201 tests cũ và 38 tests Production UX/lifecycle/migration mới.
 - Browser acceptance tạo Project rồi import 40 Scenes, upload PNG/WebP, thumbnail decode, tự resolve, Generate All, queued/processing, play MP4 fixture, select/unselect/regenerate/switch selection, đạt 40/40 selected và xem output đúng thứ tự.
 - Browser review test cũ pass; ba regression suites Generate/History batch, video tags và edit-selection/delete pass.
 - Browser tests dùng Chromium đã cài, temporary/in-memory stores/assets và mock generation, không tiêu quota Dola.
 - Earlier migration/startup smoke đã kiểm tra schema/backups/history preservation. Không coi fixture pass là đã xác nhận end-to-end generation thật với Dola sau thay đổi UI.
-- Bổ sung UI chỉ thêm backend endpoint đọc Asset image; không migrate DB, không thay worker và không restart server người dùng.
+- Bổ sung UI đầu tiên thêm endpoint đọc Asset image. Production UX thêm replace/remove và migration v5; chỉ kiểm tra migration trên bản backup tạm của DB thật, không migrate DB thật hoặc restart server người dùng.
 
 Chạy lại bộ test đã xác định là offline:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest test_asset_preview test_project_review test_project_queue test_scene_import test_asset_library test_production_store test_merge_compatibility test_reference_aliases test_account_uuid test_video_tags test_pool_transactions -q
+.\.venv\Scripts\python.exe -m unittest test_production_ux test_asset_preview test_project_review test_project_queue test_scene_import test_asset_library test_production_store test_merge_compatibility test_reference_aliases test_account_uuid test_video_tags test_pool_transactions -q
 .\.venv\Scripts\python.exe test_project_workflow_ui.py
 .\.venv\Scripts\python.exe test_project_review_ui.py
 ```
 
 Không mặc định chạy toàn bộ test_*.py: repo có script thử nghiệm live có thể mở profile/gửi generation. Regression browser cũ có chỗ yêu cầu system Chrome; phiên kiểm thử dùng launch override trong RAM để chạy bằng bundled Chromium, không sửa các test đó.
 
-Reports/screenshots nằm trong diagnostics/. Tài liệu chi tiết: V2_DATA_MODEL.md, REFERENCE_LIBRARY.md, SCENE_IMPORT.md, GENERATE_ALL.md, PROJECT_REVIEW.md, PROJECT_WORKFLOW_UI.md. Hai tài liệu đầu chứa chi tiết milestone trước; schema hiện tại lấy theo code và SCENE_IMPORT.md, không theo riêng version cũ trong milestone.
+Reports/screenshots nằm trong diagnostics/. Tài liệu chi tiết: V2_DATA_MODEL.md, REFERENCE_LIBRARY.md, SCENE_IMPORT.md, GENERATE_ALL.md, PROJECT_REVIEW.md, PROJECT_WORKFLOW_UI.md, PRODUCTION_UX.md. Hai tài liệu đầu chứa chi tiết milestone trước; schema hiện tại lấy theo code và PRODUCTION_UX.md; JSON import vẫn theo SCENE_IMPORT.md, không theo riêng version cũ trong milestone.
 
 ## 9. Trạng thái Git và phạm vi còn lại
 
@@ -188,4 +188,17 @@ Nhánh kiểm tra hiện tại: `adding-more-scene`. Các thay đổi V2/UI còn
 
 Chưa triển khai: final-frame continuity/extraction, ZIP/export, ghép phim/timeline/automatic editing, video thumbnail extraction, GPT integration, React/Vue migration. Không tự mở rộng các phần này khi chưa có yêu cầu.
 
-Tác vụ mới nhất của người dùng: mô tả lại dự án và ghi vào context.md. Chỉ cập nhật tài liệu này; không chạy generation, sửa engine hoặc thao tác server/database.
+## 10. Production UX mới nhất (06/10/2026)
+
+- Bulk Reference Workspace hỗ trợ chọn nhiều ảnh, drop zone và drop trực tiếp lên missing reference; staging local, preview, mapping, type và filename suggestion chỉ khi normalized match duy nhất. Không upload trước confirm, không bắt buộc đủ mọi references. Results từng item, lỗi một ảnh không mất các ảnh thành công; auto resolve và refresh sau batch.
+- Replace Image tạo Asset/file UUID mới và rebind current requirements/scene_assets atomically; giữ alias/order/name/type. Old snapshot và physical image của Tasks (kể cả queued/failed/soft-deleted) không bị đổi.
+- Delete trong Library là Production Remove: giữ requirement/name/alias/position nhưng asset_id=NULL, readiness MISSING_REFERENCES. Historical backing được retire/giữ, unused backing cleanup qua existing physical-delete guards. Legacy DELETE bảo vệ history vẫn tồn tại.
+- V5 thêm assets.retired_at nullable và unique index chỉ cho active names; retired Assets không xuất hiện trong current Library/import/resolve. Restart bình thường tự backup trước migration; không drop/rebuild tasks. Migration clone v4->v5 đã giữ nguyên dữ liệu thật có 1 Task, 2 Scenes và 4 Assets.
+- Scene và Generate All có x1–x5 candidates, default x1. count là execution option, không thêm vào Template 5/Scene JSON. Cùng Scene/config/snapshot, IDs riêng, chung batch_id, queued qua engine cũ. Project xN tạo eligible_scene_count*N Tasks atomically và giữ policy skip hiện có.
+- Confirm luôn hiện total Tasks/cost attempts trước generate. UI khóa double-click; request_id scoped deterministic batch_id chặn lặp cả khi batch đã completed (409, không tạo thêm Tasks). Clients cũ không gửi request_id chỉ có active Scene guard; future intentional Regenerate dùng request_id mới.
+- Status đọc tất cả candidates, processing ưu tiên queued; selected vẫn SELECTED khi có candidates mới active. Scene card hiện total/completed/processing/queued. candidate_revision giúp review polling cập nhật cả older candidates. Selection cũ/history được giữ khi regenerate.
+- Browser acceptance mới pass 40 Scenes x3=120 Tasks, regenerate x5, replace/remove/bulk và 40/40 selected; x1/review/legacy browser regressions pass. Tests dùng fixtures/mock, không tiêu Dola quota.
+
+Chạy acceptance mới: .\.venv\Scripts\python.exe test_production_ux_ui.py
+
+Tác vụ mới nhất: implement đúng ba phần Production UX trên. Chi tiết file/API/schema/verification trong PRODUCTION_UX.md. Server/database thật không được restart/migrate bởi agent; người dùng tự restart để nạp migration và APIs mới. Không commit/push, không mở rộng feature ngoài scope.

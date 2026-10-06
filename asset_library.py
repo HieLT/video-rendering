@@ -1,6 +1,7 @@
 """Persistent image files and metadata with rollback for ordinary IO/DB failures."""
 from pathlib import Path
 import json
+import sqlite3
 import re
 import uuid
 
@@ -21,6 +22,11 @@ class AssetLibrary:
             raise ValueError("Unsupported asset type")
         if not filename or Path(filename).suffix.lower() not in SUPPORTED_ASSET_EXTENSIONS:
             raise ValueError("Asset filename must use .jpg, .jpeg, .png, or .webp")
+        return self._persist(project_id, filename, data, lambda identifier,relative: self.store.create_asset(project_id, name, asset_type, relative, asset_id=identifier))
+
+    def _persist(self, project_id, filename, data, register):
+        if not filename or Path(filename).suffix.lower() not in SUPPORTED_ASSET_EXTENSIONS:
+            raise ValueError("Asset filename must use .jpg, .jpeg, .png, or .webp")
         suffix = validate_reference_image(data)
         identifier = uuid.uuid4().hex
         relative = asset_relative_path(project_id, identifier, suffix)
@@ -31,11 +37,34 @@ class AssetLibrary:
             with path.open("xb") as image:
                 owns_file = True
                 image.write(data)
-            return self.store.create_asset(project_id, name, asset_type, relative, asset_id=identifier)
+            return register(identifier, relative)
         except BaseException:
             if owns_file:
                 path.unlink(missing_ok=True)
             raise
+
+    def _cleanup_retired(self, result):
+        identifier = result['retired_asset_id']
+        result['historical_backing_retained'] = True
+        try:
+            if not self.store.asset_has_history(identifier):
+                self.delete(identifier)  # Existing guarded, staged physical deletion.
+                result['historical_backing_retained'] = False
+        except (OSError, ValueError, sqlite3.DatabaseError):
+            # Current bindings already committed; leave the retired backing intact.
+            result['cleanup_warning'] = 'Current reference updated; unused retired backing was retained for safe cleanup'
+        return result
+
+    def replace(self, asset_id, filename, data):
+        old = self.store.get_asset(asset_id)
+        if old is None:
+            raise RecordNotFoundError('Asset not found')
+        result = self._persist(old['project_id'],filename,data,
+            lambda identifier,relative: self.store.replace_asset(asset_id,identifier,relative))
+        return self._cleanup_retired(result)
+
+    def remove(self, asset_id):
+        return self._cleanup_retired(self.store.remove_current_asset(asset_id))
 
     def delete(self, asset_id):
         """Stage a file, commit metadata deletion, then remove it; restore on failure."""
@@ -69,6 +98,7 @@ class AssetLibrary:
                             store._conn.execute("BEGIN IMMEDIATE")
                             store._conn.execute("INSERT INTO assets (id,project_id,name,type,file_path,created_at) VALUES (?,?,?,?,?,?)",
                                                tuple(row[key] for key in ("id","project_id","name","type","file_path","created_at")))
+                            store._conn.execute('UPDATE assets SET retired_at=? WHERE id=?',(row.get('retired_at'),row['id']))
                             staged.rename(original)
                     else:
                         staged.rename(original)

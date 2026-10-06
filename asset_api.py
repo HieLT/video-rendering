@@ -60,6 +60,7 @@ class SelectedGeneration(BaseModel):
 
 class SceneGenerate(BaseModel):
     count: int = Field(1, ge=1, le=5, strict=True)
+    request_id: str | None = Field(None, min_length=8, max_length=64, strict=True, pattern=r'^[A-Za-z0-9_-]+$')
 
 
 def _call(operation, *args, **kwargs):
@@ -189,6 +190,18 @@ def register_asset_routes(app, store, admin_auth, client_auth, request_factory, 
         return FileResponse(source, media_type=media[source.suffix.lower()],
                             headers={'Cache-Control':'private, no-store', 'X-Content-Type-Options':'nosniff'})
 
+    @router.post('/assets/{asset_id}/replace')
+    async def replace_asset_image(asset_id: str, file: UploadFile = File(...),
+                                  x_admin_key: str | None = Header(default=None)):
+        admin_auth(x_admin_key)
+        data = await file.read(config.REFERENCE_IMAGE_MAX_BYTES + 1)
+        return await asyncio.to_thread(_call, library.replace, asset_id, file.filename, data)
+
+    @router.post('/assets/{asset_id}/remove')
+    async def remove_current_asset(asset_id: str, x_admin_key: str | None = Header(default=None)):
+        admin_auth(x_admin_key)
+        return await asyncio.to_thread(_call, library.remove, asset_id)
+
     @router.delete('/assets/{asset_id}')
     def delete_asset(asset_id: str, x_admin_key: str | None = Header(default=None)):
         admin_auth(x_admin_key)
@@ -230,18 +243,20 @@ def register_asset_routes(app, store, admin_auth, client_auth, request_factory, 
         scene, references = await asyncio.to_thread(_call, store.scene_generation_input, scene_id)
         req, snapshot = _call(prepare_scene_request, scene, references, request_factory, body.count if body else 1)
         try:
-            return await submit_generation(req, client, scene_id=scene_id, reference_snapshot=snapshot)
+            return await submit_generation(req, client, scene_id=scene_id, reference_snapshot=snapshot,
+                                           scene_updated_at=scene['updated_at'], generation_request_id=body.request_id if body else None)
         except RecordNotFoundError as exc:
             raise HTTPException(404, str(exc)) from exc
         except (ValueError, FileNotFoundError) as exc:
             raise HTTPException(422, str(exc)) from exc
 
     @router.post('/projects/{project_id}/generate', status_code=202)
-    async def generate_project(project_id: str, x_admin_key: str | None = Header(default=None),
+    async def generate_project(project_id: str, body: SceneGenerate | None = None, x_admin_key: str | None = Header(default=None),
                                authorization: str | None = Header(default=None)):
         admin_auth(x_admin_key)
         client = client_auth(authorization)
-        return await submit_generation(None, client, project_id=project_id)
+        return await submit_generation(None, client, project_id=project_id, candidates_per_scene=body.count if body else 1,
+                                       generation_request_id=body.request_id if body else None)
 
     @router.get('/projects/{project_id}/generation-status')
     def project_status(project_id: str, x_admin_key: str | None = Header(default=None)):

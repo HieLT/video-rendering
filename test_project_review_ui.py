@@ -92,6 +92,7 @@ async def main():
             await page.locator('.project-key summary').click()
             await page.fill('#projectGatewayKey','fixture-gateway-key')
             await first.get_by_role('button',name='Regenerate',exact=True).click()
+            await page.get_by_role('button',name='Generate 1 Tasks',exact=True).click()
             await page.wait_for_function("document.querySelector('#projectScenes .project-scene').innerText.includes('QUEUED')")
             queued=fixture.store.project_generation_status(fixture.project_id)[0]['active_task']
             assert queued and queued['scene_id']==scene['id']

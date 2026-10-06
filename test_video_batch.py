@@ -3,6 +3,7 @@ import ast
 import asyncio
 import json
 import shutil
+import sqlite3
 import tempfile
 import time
 import traceback
@@ -17,7 +18,7 @@ from patchright.async_api import async_playwright
 from reference_aliases import resolve_reference_aliases
 from scene_generation import task_reference_paths
 from project_generation import submit_project_generation
-from store import TaskStore, TaskQuotaExceeded, PendingTaskLimitExceeded
+from store import TaskStore, TaskQuotaExceeded, PendingTaskLimitExceeded, TaskSubmissionConflict
 
 
 def isolated_api():

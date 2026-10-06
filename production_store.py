@@ -14,7 +14,7 @@ from scene_workflow import SceneWorkflowMixin
 from review_store import ReviewStoreMixin
 from scene_import import asset_name_key, normalize_reference_alias, validate_aliases, SceneNotReadyError
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 ASSET_TYPES = {"character", "environment", "prop", "special_state"}
 
 
@@ -120,6 +120,62 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin):
             raise sqlite3.IntegrityError("Reference snapshot migration failed foreign_key_check")
         self._conn.execute("PRAGMA user_version=3")
         self._migrate_v4()
+
+    def _migrate_v5(self):
+        if self._conn.execute('PRAGMA user_version').fetchone()[0] >= 5:
+            return
+        columns = {row[1] for row in self._conn.execute('PRAGMA table_info(assets)')}
+        if 'retired_at' not in columns:
+            self._conn.execute('ALTER TABLE assets ADD COLUMN retired_at REAL')
+        self._conn.execute('DROP INDEX IF EXISTS assets_project_name_nocase')
+        self._conn.execute('CREATE UNIQUE INDEX assets_project_name_nocase ON assets(project_id,name COLLATE NOCASE) WHERE retired_at IS NULL')
+        if self._conn.execute('PRAGMA foreign_key_check').fetchall():
+            raise sqlite3.IntegrityError('Asset retirement migration failed foreign_key_check')
+        self._conn.execute('PRAGMA user_version=5')
+
+    def asset_has_history(self, asset_id):
+        with self._lock:
+            for row in self._conn.execute('SELECT reference_snapshot FROM tasks WHERE reference_snapshot IS NOT NULL'):
+                if any(ref['asset_id'] == asset_id for ref in json.loads(row[0])):
+                    return True
+            return False
+
+    def _retire_asset_bindings(self, old, replacement_id=None):
+        if old['retired_at'] is not None:
+            raise AssetInUseError('Asset has already been removed or replaced; refresh the library')
+        scenes = {row[0] for row in self._conn.execute('SELECT scene_id FROM scene_reference_requirements WHERE asset_id=?', (old['id'],))}
+        scenes.update(row[0] for row in self._conn.execute('SELECT scene_id FROM scene_assets WHERE asset_id=?', (old['id'],)))
+        now = time.time()
+        self._conn.execute('UPDATE assets SET retired_at=? WHERE id=?', (now,old['id']))
+        self._conn.execute('UPDATE scene_reference_requirements SET asset_id=? WHERE asset_id=?', (replacement_id,old['id']))
+        if replacement_id:
+            self._conn.execute('UPDATE scene_assets SET asset_id=? WHERE asset_id=?', (replacement_id,old['id']))
+        else:
+            self._conn.execute('DELETE FROM scene_assets WHERE asset_id=?', (old['id'],))
+        self._conn.executemany('UPDATE scenes SET updated_at=? WHERE id=?', [(now,scene) for scene in scenes])
+        return len(scenes)
+
+    def replace_asset(self, asset_id, new_id, file_path):
+        with self._lock, self._conn:
+            self._conn.execute('BEGIN IMMEDIATE')
+            old = self._require('assets',asset_id)
+            if old['retired_at'] is not None:
+                raise AssetInUseError('Asset has already been removed or replaced; refresh the library')
+            validate_asset_path(old['project_id'],new_id,file_path)
+            # Free the current name and insert the new backing identity in this transaction.
+            self._conn.execute('UPDATE assets SET retired_at=? WHERE id=?',(time.time(),asset_id))
+            self._conn.execute('INSERT INTO assets(id,project_id,name,type,file_path,created_at) VALUES (?,?,?,?,?,?)',
+                (new_id,old['project_id'],old['name'],old['type'],file_path,time.time()))
+            # The helper checks the captured pre-retirement row, not mutable metadata.
+            count = self._retire_asset_bindings(old,new_id)
+            return dict(asset=self._require('assets',new_id),retired_asset_id=asset_id,affected_scenes=count)
+
+    def remove_current_asset(self, asset_id):
+        with self._lock, self._conn:
+            self._conn.execute('BEGIN IMMEDIATE')
+            old = self._require('assets',asset_id)
+            count = self._retire_asset_bindings(old)
+            return dict(retired_asset_id=asset_id,affected_scenes=count)
 
     def _require(self, table, identifier):
         row = self._conn.execute(f"SELECT * FROM {table} WHERE id=?", (identifier,)).fetchone()
@@ -233,10 +289,10 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin):
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             self._require("projects", project_id)
-            existing_names = self._conn.execute("SELECT name FROM assets WHERE project_id=?", (project_id,)).fetchall()
+            existing_names = self._conn.execute("SELECT name FROM assets WHERE project_id=? AND retired_at IS NULL", (project_id,)).fetchall()
             if any(asset_name_key(row[0]) == asset_name_key(name) for row in existing_names):
                 raise sqlite3.IntegrityError("Asset name already exists in this project (case-insensitive)")
-            self._conn.execute("INSERT INTO assets VALUES (?,?,?,?,?,?)",
+            self._conn.execute("INSERT INTO assets (id,project_id,name,type,file_path,created_at) VALUES (?,?,?,?,?,?)",
                                (identifier, project_id, name, asset_type, file_path, time.time()))
             return self._require("assets", identifier)
 
@@ -248,7 +304,7 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin):
     def list_project_assets(self, project_id):
         with self._lock:
             self._require("projects", project_id)
-            return [dict(r) for r in self._conn.execute("SELECT * FROM assets WHERE project_id=? ORDER BY created_at, id", (project_id,))]
+            return [dict(r) for r in self._conn.execute("SELECT * FROM assets WHERE project_id=? AND retired_at IS NULL ORDER BY created_at, id", (project_id,))]
 
     def _ordered_scene_assets(self, scene_id):
         return [dict(r) for r in self._conn.execute("""SELECT sa.scene_id, sa.asset_id, sa.position,
@@ -267,6 +323,8 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin):
             self._conn.execute("BEGIN IMMEDIATE")
             scene = self._require("scenes", scene_id)
             asset = self._require("assets", asset_id)
+            if asset.get("retired_at") is not None:
+                raise AssetInUseError("Asset has been retired from the current project")
             if asset["project_id"] != scene["project_id"]:
                 raise ValueError("Asset and scene must belong to the same project")
             requirements = self._ordered_scene_requirements(scene_id)
@@ -382,6 +440,8 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin):
                 raise ValueError("Invalid reference snapshot entry")
             asset = self._require("assets", ref["asset_id"])
             position = self._positive_int(ref["position"], "position")
+            if asset.get("retired_at") is not None:
+                raise ValueError("New attempts cannot use a retired asset")
             if asset["project_id"] != scene["project_id"] or asset["file_path"] != ref["file_path"]:
                 raise ValueError("Snapshot asset must belong to the scene project and match its immutable path")
             if position <= previous_position or asset["id"] in seen:

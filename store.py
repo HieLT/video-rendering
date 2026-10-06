@@ -15,6 +15,10 @@ SUPPORTED_DURATIONS = (10, 15, 30)
 DEFAULT_ALLOWED_DURATIONS = list(SUPPORTED_DURATIONS)
 
 
+class TaskSubmissionConflict(ValueError):
+    pass
+
+
 class TaskQuotaExceeded(RuntimeError):
     """API Key reached daily task quota."""
 
@@ -185,6 +189,8 @@ class TaskStore(ProductionStoreMixin):
         *,
         scene_id=None,
         reference_snapshot=None,
+        guard_scene=False,
+        scene_updated_at=None,
     ):
         if not 1 <= len(task_ids) <= 5 or len(set(task_ids)) != len(task_ids):
             raise ValueError("Expected 1 to 5 unique task IDs")
@@ -192,7 +198,14 @@ class TaskStore(ProductionStoreMixin):
         with _LOCK, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             if scene_id is not None:
-                self._require("scenes", scene_id)
+                scene = self._require("scenes", scene_id)
+                if guard_scene:
+                    if batch_id and self._conn.execute('SELECT 1 FROM tasks WHERE batch_id=?',(batch_id,)).fetchone():
+                        raise TaskSubmissionConflict('This generation action has already been submitted')
+                    if self._conn.execute("SELECT 1 FROM tasks WHERE scene_id=? AND status IN ('queued','processing') AND deleted_at IS NULL",(scene_id,)).fetchone():
+                        raise TaskSubmissionConflict('This Scene already has active candidates; review them or wait before regenerating')
+                    if scene_updated_at is not None and scene['updated_at'] != scene_updated_at:
+                        raise TaskSubmissionConflict('Scene references/configuration changed during submission; refresh and retry')
             snapshot_json = (self._validate_reference_snapshot(scene_id, reference_snapshot)
                              if reference_snapshot is not None else None)
             if max_pending > 0:
@@ -239,6 +252,10 @@ class TaskStore(ProductionStoreMixin):
                 ) for index, task_id in enumerate(task_ids, 1)])
             self._conn.commit()
 
+    @staticmethod
+    def submission_batch_id(scope, identifier, request_id, client_hash):
+        return 'batch_' + hashlib.sha256(json.dumps([scope,identifier,request_id,client_hash]).encode()).hexdigest()
+
     def _insert_task_rows(self, rows):
         self._conn.executemany("INSERT INTO tasks (id,model,prompt,ratio,duration,status,account,created_at,updated_at,conversation_id,deadline_at,last_poll_at,failure_code,reference_images,api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,start_end,batch_id,batch_index,batch_count,name,scene_id,reference_snapshot) VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
 
@@ -249,7 +266,10 @@ class TaskStore(ProductionStoreMixin):
         for scene_id in ids:
             scene = self._scene_details(scene_id)
             attempts = [dict(r) for r in self._conn.execute("SELECT * FROM tasks WHERE scene_id=? AND deleted_at IS NULL ORDER BY created_at DESC,batch_index DESC,id DESC", (scene_id,))]
-            active = next((r for r in attempts if r['status'] in ('queued','processing')), None)
+            active = next((r for r in attempts if r['status']=='processing'),None) or next((r for r in attempts if r['status']=='queued'),None)
+            counts = {key:sum(r['status']==key for r in attempts) for key in ('completed','processing','queued','failed','stopped','needs_recovery')}
+            counts['total'] = len(attempts)
+            revision = hashlib.sha256(json.dumps([[r['id'],r['status'],r['updated_at'],r['video_url'],r['error']] for r in attempts]).encode()).hexdigest()
             selected = next((r for r in attempts if r['id']==scene['selected_task_id'] and r['status']=='completed' and (r['video_url'] or '').strip()), None)
             latest = attempts[0] if attempts else None
             reason = 'ACTIVE_GENERATION_EXISTS' if active else ('ALREADY_SELECTED' if selected else (scene['readiness'] if not scene['ready'] else None))
@@ -257,6 +277,7 @@ class TaskStore(ProductionStoreMixin):
             result.append({**scene, 'generation_status':status, 'latest_task':latest,
                            'active_task':active, 'selected_task':selected, 'skip_reason':reason,
                            'production_status':production_status(scene,attempts,active,selected),
+                           'candidate_counts':counts,'candidate_revision':revision,
                            'completed_attempt_count':sum(row['status']=='completed' for row in attempts)})
         return result
 
@@ -265,13 +286,18 @@ class TaskStore(ProductionStoreMixin):
             self._conn.execute('BEGIN')
             return self._project_generation_status(project_id)
 
-    def create_project_batch(self, project_id, plans, client, max_pending=0):
+    def create_project_batch(self, project_id, plans, client, max_pending=0, candidates_per_scene=1, request_id=None):
         """One creation transaction; recheck active/selected before admitting attempts."""
         import uuid
+        if type(candidates_per_scene) is not int or not 1 <= candidates_per_scene <= 5:
+            raise ValueError('Candidates per Scene must be an integer from 1 to 5')
         plans = {p['scene_id']:p for p in plans}
         with self._lock, self._conn:
             self._conn.execute('BEGIN IMMEDIATE')
             scenes = self._project_generation_status(project_id)
+            requested_batch = self.submission_batch_id('project',project_id,request_id,client['api_key_hash']) if request_id else None
+            if requested_batch and self._conn.execute('SELECT 1 FROM tasks WHERE batch_id=?',(requested_batch,)).fetchone():
+                raise TaskSubmissionConflict('This generation action has already been submitted')
             skipped, accepted = [], []
             for scene in scenes:
                 reason = scene['skip_reason']
@@ -284,8 +310,9 @@ class TaskStore(ProductionStoreMixin):
                 if scene['updated_at'] != plan['scene_updated_at']:
                     raise sqlite3.IntegrityError('Scene changed while preparing the batch; retry Generate All')
                 snapshot_json = self._validate_reference_snapshot(scene['id'], plan['reference_snapshot'])
-                accepted.append({**plan, 'scene_number':scene['scene_number'], 'snapshot_json':snapshot_json,
-                                 'task_id':'video_'+uuid.uuid4().hex})
+                for candidate in range(1,candidates_per_scene+1):
+                    accepted.append({**plan, 'scene_number':scene['scene_number'], 'snapshot_json':snapshot_json,
+                                     'task_id':'video_'+uuid.uuid4().hex,'candidate_index':candidate})
             count = len(accepted)
             if max_pending > 0:
                 pending = self._conn.execute("SELECT count(*) FROM tasks WHERE status IN ('queued','processing')").fetchone()[0]
@@ -298,15 +325,15 @@ class TaskStore(ProductionStoreMixin):
                 if used + count > daily_limit:
                     raise TaskQuotaExceeded(f'API Key daily quota exceeded ({daily_limit} tasks)')
             now = time.time()
-            batch_id = 'batch_'+uuid.uuid4().hex if count else None
+            batch_id = (requested_batch or 'batch_'+uuid.uuid4().hex) if count else None
             self._insert_task_rows([(
                 p['task_id'],p['model'],p['prompt'],p['ratio'],p['duration'],None,now,now,
                 json.dumps(p['reference_images'],ensure_ascii=False),client['api_key_hash'],client['api_key_name'],
                 None,None,max(0,int(client['concurrency_limit'] or 0)),int(p['start_end']),
-                batch_id,index,count,(p['name'] or '').strip(),p['scene_id'],p['snapshot_json']
+                batch_id,index,count,(p['name'] or '').strip() + (f" ({p['candidate_index']}/{candidates_per_scene})" if candidates_per_scene>1 and p['name'] else ''),p['scene_id'],p['snapshot_json']
             ) for index,p in enumerate(accepted,1)])
             result = dict(project_id=project_id, requested=len(scenes), created=count, skipped=len(skipped),
-                          batch_id=batch_id, tasks=[dict(scene_id=p['scene_id'],scene_number=p['scene_number'],task_id=p['task_id']) for p in accepted], skipped_scenes=skipped)
+                          batch_id=batch_id, candidates_per_scene=candidates_per_scene, created_scenes=len({p['scene_id'] for p in accepted}), tasks=[dict(scene_id=p['scene_id'],scene_number=p['scene_number'],task_id=p['task_id']) for p in accepted], skipped_scenes=skipped)
             return result, accepted
 
     def update(self, task_id, **fields):

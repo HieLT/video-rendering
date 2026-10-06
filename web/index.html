@@ -253,6 +253,13 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .project-missing{border:1px solid #e8b54e;background:#fff9eb;padding:14px;border-radius:10px;margin:18px 0}.project-ref{display:block;margin:5px 0}.project-ref small{color:var(--sub)}
 .project-output video{width:min(100%,560px);max-height:340px;background:#111}.project-output{border-top:1px solid var(--line);padding:16px 0}.project-form small{font-weight:400;color:var(--sub)}
 
+
+.project-bulk-grid{display:grid;grid-template-columns:minmax(220px,1fr) minmax(0,2fr);gap:18px}.project-drop{border:2px dashed #adb9b3;border-radius:10px;padding:24px;text-align:center;margin:12px 0}.project-drop.dragover,[data-drop-reference].dragover{border-color:var(--accent);background:#eafaf2}
+.project-bulk-grid>section{min-width:0}.project-bulk-grid>section:first-child{max-height:75vh;overflow:auto}.project-bulk-grid .project-assets{max-height:65vh;overflow:auto;align-content:start}.project-bulk-ready-list{max-height:250px;overflow:auto}
+.project-stage img,.project-compare img{width:100%;height:160px;object-fit:contain;background:#f3f5f6}.project-stage strong,.project-stage label{display:block}.project-stage strong{margin:6px 0}
+.project-stage select{max-width:100%;width:100%;padding:6px;margin:6px 0}.project-stage p{overflow-wrap:anywhere}.project-compare{display:grid;grid-template-columns:1fr 1fr;gap:16px}.project-bulk-results{white-space:pre-wrap}
+@media(max-width:700px){.project-bulk-grid{grid-template-columns:1fr}}
+
 @media(max-width:700px){.project-scene{grid-template-columns:1fr}nav{overflow-x:auto}}
 </style>
 </head>
@@ -385,7 +392,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
       <div class="toolbar"><h3 id="projectTitle"></h3><button class="btn" id="projectBack">Back to projects</button></div>
       <div id="projectProgress" class="project-progress" aria-live="polite"></div>
       <div id="projectSummary" class="project-summary"></div>
-      <div class="project-actions"><button class="btn" data-action="import">Import Scenes</button><button class="btn" data-action="library">Reference Library</button><button class="btn" data-action="outputs">View Selected Outputs</button><button class="btn" data-action="rename">Rename</button><button class="btn" data-action="refresh">Refresh project</button><button class="btn btn-p" id="projectGenerateAll">Generate All Ready</button><button class="btn" id="projectSelectLatest" data-loading="Selecting...">Select latest completed for unselected scenes</button></div>
+      <div class="project-actions"><button class="btn" data-action="import">Import Scenes</button><button class="btn" data-action="library">Reference Library</button><button class="btn" data-action="outputs">View Selected Outputs</button><button class="btn" data-action="rename">Rename</button><button class="btn" data-action="refresh">Refresh project</button><label>Candidates per Scene <select id="projectCandidateCount"><option value="1">x1</option><option value="2">x2</option><option value="3">x3</option><option value="4">x4</option><option value="5">x5</option></select></label><button class="btn btn-p" id="projectGenerateAll">Generate All Ready</button><button class="btn" id="projectSelectLatest" data-loading="Selecting...">Select latest completed for unselected scenes</button></div>
       <details class="project-key"><summary>Gateway API Key (optional)</summary><label for="projectGatewayKey">Only if generation API authentication is enabled</label><br><input id="projectGatewayKey" type="password" autocomplete="off"></details>
       <div id="projectMissing"></div><div id="projectScenes"></div>
     </div>
@@ -1199,7 +1206,7 @@ timer=setInterval(()=>{if(autoRefresh)refresh();},10000);
 /* Project review shares the dashboard auth/API helper and ten-second polling timer. */
 window.ProjectReview = (() => {
   const state = {projects:null, project:null, data:null, scene:null, dirty:true,
-    loading:false, request:0, versionsRequest:0, signature:null, home:{}, panel:null, panelRequest:0, blobs:[], busy:false, validated:null};
+    loading:false, request:0, versionsRequest:0, signature:null, home:{}, panel:null, panelRequest:0, blobs:[], busy:false, validated:null, assets:[], staging:[], sceneCounts:{}, replaceFile:null};
   const root = document.getElementById('tab-projects');
   const el = id => document.getElementById(id);
   const path = id => encodeURIComponent(id);
@@ -1237,7 +1244,7 @@ window.ProjectReview = (() => {
   function sceneSignature(scene) {
     if(!scene)return '';
     const t=scene.latest_task;
-    return JSON.stringify([scene.id, scene.selected_task_id, t && [t.id,t.status,t.video_url,t.error,t.deleted_at], scene.completed_attempt_count]);
+    return JSON.stringify([scene.id, scene.selected_task_id, t && [t.id,t.status,t.video_url,t.error,t.deleted_at], scene.completed_attempt_count,scene.candidate_revision]);
   }
   function renderScenes() {
     const data=state.data;
@@ -1259,12 +1266,13 @@ window.ProjectReview = (() => {
           <div>${badge(scene.production_status)}${scene.active_task && scene.production_status==='SELECTED' ? ` ${badge(scene.active_task.status)} new version` : ''}</div>
           <p>References: ${refs.length ? `Missing ${refs.length}: ${esc(refs.map(r=>r.name).join(', '))}` : 'READY'}</p>
           <div>${(scene.references||[]).map(r=>`<span class="project-ref">${r.asset_id ? '&#10003;' : '&#10007;'} ${esc(r.name)} <small>Alias: ${esc(r.alias)} - ${r.asset_id ? 'Resolved' : 'Missing'}</small></span>`).join('')}</div>
+          <p>Candidates: ${(scene.candidate_counts||{}).total||0} | Completed: ${(scene.candidate_counts||{}).completed||0} | Processing: ${(scene.candidate_counts||{}).processing||0} | Queued: ${(scene.candidate_counts||{}).queued||0}</p>
           <p>Latest generation: ${scene.latest_task ? esc(label(scene.latest_task.status).toUpperCase()) : 'None'}</p>
           ${selected ? `<p>&#9733; SELECTED ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open selected video</a>` : ''}</p>` : ''}
           ${(scene.validation_errors||[]).length ? `<p>${esc(scene.validation_errors.join('; '))}</p>` : ''}
         </div>
         <div class="project-actions">
-          <button class="btn btn-p" data-action="generate" data-loading="Generating..." ${!scene.ready || scene.active_task ? 'disabled' : ''}>${scene.latest_task ? 'Regenerate' : 'Generate'}</button>
+          <label>Candidates <select data-scene-candidates="${esc(scene.id)}" ${!scene.ready || scene.active_task ? 'disabled' : ''}>${candidateOptions(state.sceneCounts[scene.id]||1)}</select></label><button class="btn btn-p" data-action="generate" data-loading="Generating..." ${!scene.ready || scene.active_task ? 'disabled' : ''}>${scene.latest_task ? 'Regenerate' : 'Generate'}</button>
           <button class="btn" data-action="review">Review Versions</button>
           ${selected ? '<button class="btn" data-action="unselect">Unselect</button>' : ''}
           ${refs.length ? `<button class="btn" data-action="upload-missing" data-name="${esc(refs[0].name)}">Upload Missing Reference</button>` : ''}
@@ -1366,8 +1374,8 @@ window.ProjectReview = (() => {
         el('projectVersions').scrollIntoView({block:'start',behavior:'smooth'});return;
       }
       if(action==='generate') {
-        await projectRequest(`/api/admin/scenes/${path(sceneId)}/generate`,{method:'POST',body:{},headers:auth()});
-        message('Scene generation queued.');
+        const scene=state.data.scenes.find(s=>s.id===sceneId);const count=state.sceneCounts[sceneId]||1;
+        panel('scene-generate',`Generate Scene ${scene.scene_number}?`,`<p>Candidates: ${count}</p><p>Total generation tasks: ${count}</p><p>This consumes approximately ${count} generation attempts.</p><button class="btn" data-action="close-panel">Cancel</button><button class="btn btn-p" data-action="confirm-scene-generate" data-scene-id="${esc(sceneId)}" data-count="${count}" data-request-id="${actionId()}" data-loading="Generating...">Generate ${count} Tasks</button>`);return;
       } else if(action==='select') {
         await projectRequest(`/api/admin/scenes/${path(sceneId)}/selected-generation`,{method:'PUT',body:{task_id:button.dataset.taskId}});
         message('Selected output updated.');
@@ -1395,7 +1403,8 @@ window.ProjectReview = (() => {
       else if(scene.skip_reason==='MISSING_REFERENCES')counts.missing++;
       else counts.invalid++;
     }
-    panel('generate','Generate all READY scenes?',`<p>Ready: ${counts.ready}</p><p>Missing References: ${counts.missing}</p><p>Invalid: ${counts.invalid}</p><p>Already Selected: ${counts.selected}</p><p>Active Generation: ${counts.active}</p><div class="project-actions"><button class="btn" data-action="close-panel">Cancel</button><button class="btn btn-p" data-action="confirm-generate" data-loading="Generating..." ${counts.ready ? '' : 'disabled'}>Generate ${counts.ready} Scenes</button></div>`);
+    const count=Number(el('projectCandidateCount').value);const total=counts.ready*count;
+    panel('generate','Generate candidates for all READY Scenes?',`<p>Ready Scenes: ${counts.ready}</p><p>Candidates per Scene: ${count}</p><p><strong>Total generation tasks: ${total}</strong></p><p>This consumes approximately ${total} generation attempts.</p><p>Missing References: ${counts.missing}</p><p>Invalid: ${counts.invalid}</p><p>Already Selected: ${counts.selected}</p><p>Active Generation: ${counts.active}</p><div class="project-actions"><button class="btn" data-action="close-panel">Cancel</button><button class="btn btn-p" data-action="confirm-generate" data-count="${count}" data-request-id="${actionId()}" data-loading="Generating..." ${counts.ready ? '' : 'disabled'}>Generate ${total} Tasks</button></div>`);
   }));
   el('projectSelectLatest').addEventListener('click',event=>act(event.target,async()=>{
     const result=await projectRequest(`/api/admin/projects/${path(state.project)}/select-latest-completed`,{method:'POST'});
@@ -1431,7 +1440,8 @@ window.ProjectReview = (() => {
     return data;
   }
   function closePanel(){
-    state.panel=null;state.panelRequest++;state.validated=null;
+    state.panel=null;state.panelRequest++;state.validated=null;state.replaceFile=null;
+    state.staging.forEach(entry=>URL.revokeObjectURL(entry.url));state.staging=[];
     state.blobs.forEach(URL.revokeObjectURL);state.blobs=[];
     el('projectPanel').hidden=true;el('projectPanelBody').replaceChildren();el('projectPanelError').textContent='';
     el('projectHome').hidden=!!state.project;el('projectDetail').hidden=!state.project;el('projectVersions').hidden=!state.scene;
@@ -1454,7 +1464,7 @@ window.ProjectReview = (() => {
   }
   function renderMissing(){
     const groups=missingGroups();
-    el('projectMissing').innerHTML=groups.length ? `<section class="project-missing"><h4>Missing References - ${groups.length}</h4>${groups.map(ref=>`<div class="project-asset"><strong>${esc(ref.name)}</strong><p>Used by Scenes: ${ref.scenes.join(', ')}</p><button class="btn" data-action="upload-missing" data-name="${esc(ref.name)}">Upload</button></div>`).join('')}</section>` : '';
+    el('projectMissing').innerHTML=groups.length ? `<section class="project-missing"><h4>Missing References - ${groups.length}</h4><button class="btn btn-p" data-action="bulk">Bulk Upload References</button>${groups.map(ref=>`<div class="project-asset" data-drop-reference="${esc(ref.name)}"><strong>${esc(ref.name)}</strong><p>Drop image here to stage it for this reference.</p><p>Used by Scenes: ${ref.scenes.join(', ')}</p><button class="btn" data-action="upload-missing" data-name="${esc(ref.name)}">Upload</button></div>`).join('')}</section>` : '';
   }
   function projectForm(rename=false){
     const project=state.projects.find(p=>p.id===state.project);
@@ -1489,11 +1499,12 @@ window.ProjectReview = (() => {
     const projectId=state.project;
     const result=await projectRequest(`/api/admin/projects/${path(projectId)}/assets`);
     if(ticket!==state.panelRequest || projectId!==state.project)return;
-    el('projectPanelBody').innerHTML=`<button class="btn btn-p" data-action="upload">+ Upload Reference</button><button class="btn" data-action="resolve-references" data-loading="Resolving...">Refresh references</button><div class="project-assets">${result.assets.map(asset=>{
+    state.assets=result.assets;
+    el('projectPanelBody').innerHTML=`<button class="btn" data-action="bulk">Bulk Upload References</button><button class="btn btn-p" data-action="upload">+ Upload Reference</button><button class="btn" data-action="resolve-references" data-loading="Resolving...">Refresh references</button><div class="project-assets">${result.assets.map(asset=>{
       const used=state.data.scenes.filter(scene=>(scene.references||[]).some(r=>r.asset_id===asset.id)).map(s=>s.scene_number);
-      return `<article class="project-asset"><img data-asset-image="${esc(asset.id)}" alt="${esc(asset.name)}"><h4>${esc(asset.name)}</h4><p>Type: ${esc(label(asset.type).toUpperCase())}</p><p>Used by: ${used.length ? 'Scenes '+used.join(', ') : 'No scenes yet'}</p><span data-image-error></span></article>`;
+      return `<article class="project-asset"><img data-asset-image="${esc(asset.id)}" alt="${esc(asset.name)}"><h4>${esc(asset.name)}</h4><p>Type: ${esc(label(asset.type).toUpperCase())}</p><p>Used by: ${used.length ? 'Scenes '+used.join(', ') : 'No scenes yet'}</p><span data-image-error></span><div class="project-actions"><button class="btn" data-action="replace-asset" data-asset-id="${esc(asset.id)}">Replace Image</button><button class="btn btn-danger" data-action="remove-asset" data-asset-id="${esc(asset.id)}">Delete</button></div></article>`;
     }).join('') || '<p>No references yet. Upload your first reference.</p>'}</div>`;
-    await Promise.all(result.assets.map(async asset=>{
+    void Promise.all(result.assets.map(async asset=>{
       try{
         const response=await fetch(`/api/admin/assets/${path(asset.id)}/image`,{headers:{'X-Admin-Key':adminKey}});
         if(!response.ok)throw new Error('Preview unavailable');
@@ -1512,7 +1523,105 @@ window.ProjectReview = (() => {
       return `<article class="project-output"><h4>Scene ${String(video.scene_number).padStart(2,'0')} - ${esc(video.scene_name)}</h4>${url ? `<video controls preload="metadata" src="${esc(url)}" aria-label="Scene ${video.scene_number} selected video"></video>` : '<p>Video unavailable.</p>'}</article>`;
     }).join('') || '<p>No selected outputs yet. Review completed versions and select an output.</p>'}`;
   }
+  const actionId=()=>[...crypto.getRandomValues(new Uint8Array(16))].map(n=>n.toString(16).padStart(2,'0')).join('');
+  const candidateOptions=value=>[1,2,3,4,5].map(n=>`<option value="${n}" ${n===Number(value) ? 'selected' : ''}>x${n}</option>`).join('');
+  const imageFile=file=>/\.(jpe?g|png|webp)$/i.test(file.name);
+  const matchName=name=>name.replace(/\.(jpe?g|png|webp)$/i,'').replace(/[\s_-]+/g,' ').trim().toLocaleLowerCase();
+  function bulkPanel(){panel('bulk','Bulk Upload References','');renderBulk();}
+  function stageFiles(files,explicitName=null){
+    if(explicitName && files.length!==1){error(new Error('Drop one image onto each reference, or use the multi-file drop zone.'));return;}
+    const names=missingGroups().map(r=>r.name);
+    for(const file of files){
+      const suggestions=names.filter(name=>matchName(name)===matchName(file.name));
+      const supported=imageFile(file);
+      state.staging.push({id:actionId(),file,url:supported ? URL.createObjectURL(file) : '',
+        name:explicitName || (suggestions.length===1 ? suggestions[0] : ''),type:'character',status:'staged',
+        error:supported ? '' : 'Unsupported format. Choose JPG/JPEG/PNG/WEBP.',supported});
+    }
+    renderBulk();
+  }
+  function bulkReady(){
+    const entries=state.staging.filter(e=>e.status!=='success' && e.supported && e.name);
+    const missing=new Set(missingGroups().map(r=>r.name));
+    return entries.filter(e=>missing.has(e.name) && entries.filter(other=>other.name===e.name).length===1);
+  }
+  function renderBulk(){
+    if(state.panel!=='bulk')return;
+    const groups=missingGroups();const ready=bulkReady();
+    el('projectPanelBody').innerHTML=`<div class="project-bulk-grid"><section><h4>Missing References (${groups.length})</h4>${groups.map(ref=>`<article class="project-asset" data-drop-reference="${esc(ref.name)}"><strong>${esc(ref.name)}</strong><p>Used by Scenes: ${ref.scenes.join(', ')}</p><p>Drop image here</p><label>Select image<input type="file" data-direct-stage="${esc(ref.name)}" accept=".jpg,.jpeg,.png,.webp"></label></article>`).join('') || '<p>No missing references.</p>'}</section><section><div class="project-drop" data-bulk-drop><h4>Drop Reference Images Here</h4><label>Select Multiple Files<input id="projectBulkFiles" type="file" accept=".jpg,.jpeg,.png,.webp" multiple></label><p>Files are staged locally until you confirm upload.</p></div><div class="project-assets">${state.staging.map(entry=>{
+      const options=groups.map(r=>r.name);if(entry.name && !options.includes(entry.name))options.push(entry.name);
+      const duplicate=entry.name && state.staging.filter(e=>e.name===entry.name && e.status!=='success').length>1;
+      return `<article class="project-asset project-stage" data-stage-id="${entry.id}">${entry.url ? `<img src="${esc(entry.url)}" alt="${esc(entry.file.name)}">` : ''}<strong>${esc(entry.file.name)}</strong><label>Map to<select data-stage-map="${entry.id}" ${entry.status==='success' || state.busy ? 'disabled' : ''}><option value="">Choose missing reference</option>${options.map(name=>`<option value="${esc(name)}" ${name===entry.name ? 'selected' : ''}>${esc(name)}</option>`).join('')}</select></label><label>Type<select data-stage-type="${entry.id}" ${entry.status==='success' || state.busy ? 'disabled' : ''}>${['character','environment','prop','special_state'].map(type=>`<option value="${type}" ${type===entry.type ? 'selected' : ''}>${esc(label(type))}</option>`).join('')}</select></label><p>${esc(entry.status.toUpperCase())}</p>${entry.error || duplicate ? `<p class="project-error">${esc(entry.error || 'Two files map to this reference. Choose one or change the mapping.')}</p>` : ''}<button class="btn" data-action="remove-staged" data-entry-id="${entry.id}" ${state.busy ? 'disabled' : ''}>Remove from staging</button></article>`;
+    }).join('') || '<p>No files staged yet.</p>'}</div></section></div><section class="project-bulk-results"><h4>Ready to Upload (${ready.length})</h4><div class="project-bulk-ready-list">${groups.map(ref=>{const entry=ready.find(e=>e.name===ref.name);return `<p>${entry ? '&#10003;' : '!'} ${esc(ref.name)} &larr; ${entry ? esc(entry.file.name) : 'no mapped image'}</p>`;}).join('')}</div><button class="btn btn-p" data-action="upload-bulk" data-loading="Uploading..." ${ready.length && !state.busy ? '' : 'disabled'}>Upload ${ready.length} References</button></section>`;
+  }
+  async function uploadBulk(){
+    const entries=bulkReady();if(!entries.length)throw new Error('Map at least one image to a missing reference.');
+    const projectId=state.project;let successful=0;
+    for(const entry of entries){
+      entry.status='uploading';entry.error='';renderBulk();
+      const body=new FormData();body.append('name',entry.name);body.append('type',entry.type);body.append('file',entry.file);
+      try{await projectRequest(`/api/admin/projects/${path(projectId)}/assets`,{method:'POST',body});entry.status='success';successful++;}
+      catch(e){entry.status='failed';entry.error=e.message;}
+      renderBulk();
+    }
+    let resolutionError=null;
+    if(successful){try{await resolveReferences(projectId);}catch(e){resolutionError=e;}}
+    await refresh(true);message(`Uploaded ${successful} references; ${entries.length-successful} failed. Results are shown per file.`);
+    if(resolutionError)error(new Error('Uploads preserved. Refresh references to retry resolution. '+resolutionError.message));
+    // Release the action lock before the final render so failed entries can be retried.
+    state.busy=false;renderBulk();
+  }
+  async function assetPreview(id,img,ticket){
+    const response=await fetch(`/api/admin/assets/${path(id)}/image`,{headers:{'X-Admin-Key':adminKey}});
+    if(!response.ok)throw new Error('Current image preview unavailable');
+    const blob=await response.blob();if(ticket!==state.panelRequest)return;
+    const url=URL.createObjectURL(blob);state.blobs.push(url);img.src=url;
+  }
+  function assetUsage(id){return state.data.scenes.filter(s=>(s.references||[]).some(r=>r.asset_id===id)).length;}
+  async function replacePanel(id){
+    const asset=state.assets.find(a=>a.id===id);if(!asset)throw new Error('Refresh the library and try again.');
+    panel('replace','Replace reference image?',`<h4>${esc(asset.name)}</h4><p>Used by: ${assetUsage(id)} Scenes</p><p>Current generations that already used the old image will NOT be changed. Future generations will use the new image. Queued candidates retain their saved references.</p><div class="project-compare"><div><h4>Current Image</h4><img id="projectReplaceOld" alt="Current reference"></div><div><h4>New Image</h4><img id="projectReplaceNew" alt="New reference"><input id="projectReplaceFile" type="file" accept=".jpg,.jpeg,.png,.webp"></div></div><button class="btn" data-action="library">Cancel</button><button class="btn btn-p" id="projectReplaceSubmit" data-action="confirm-replace" data-asset-id="${esc(id)}" data-loading="Replacing..." disabled>Replace</button>`);
+    try{await assetPreview(id,el('projectReplaceOld'),state.panelRequest);}catch(e){error(e);}
+  }
+  async function confirmReplace(id){
+    if(!state.replaceFile)throw new Error('Choose the new reference image first.');
+    const body=new FormData();body.append('file',state.replaceFile);
+    const result=await projectRequest(`/api/admin/assets/${path(id)}/replace`,{method:'POST',body});
+    await refresh(true);await libraryPanel();message(result.cleanup_warning || 'Reference replaced. Historical images and attempts are unchanged.');
+  }
+  function removePanel(id){
+    const asset=state.assets.find(a=>a.id===id);if(!asset)throw new Error('Refresh the library and try again.');
+    panel('remove','Remove reference from current Project?',`<h4>${esc(asset.name)}</h4><p>${assetUsage(id)} Scenes will have MISSING REFERENCES until another image is uploaded.</p><p>Existing generated videos and their historical reference snapshots will remain unchanged.</p><button class="btn" data-action="library">Cancel</button><button class="btn btn-danger" data-action="confirm-remove" data-asset-id="${esc(id)}" data-loading="Removing...">Remove</button>`);
+  }
+  root.addEventListener('change',event=>{
+    const target=event.target;if(state.busy)return;
+    if(target.dataset.sceneCandidates){state.sceneCounts[target.dataset.sceneCandidates]=Number(target.value);return;}
+    if(target.id==='projectBulkFiles'){stageFiles([...target.files]);return;}
+    if(target.dataset.directStage){stageFiles([...target.files],target.dataset.directStage);return;}
+    if(target.dataset.stageMap || target.dataset.stageType){const entry=state.staging.find(e=>e.id===(target.dataset.stageMap || target.dataset.stageType));if(entry){entry[target.dataset.stageMap ? 'name' : 'type']=target.value;renderBulk();}return;}
+    if(target.id==='projectReplaceFile'){
+      const file=target.files[0];state.replaceFile=null;el('projectReplaceSubmit').disabled=true;
+      if(!file)return;if(!imageFile(file)){error(new Error('Choose JPG/JPEG/PNG/WEBP.'));return;}
+      state.replaceFile=file;const url=URL.createObjectURL(file);state.blobs.push(url);el('projectReplaceNew').src=url;el('projectReplaceSubmit').disabled=false;
+    }
+  });
+  root.addEventListener('dragover',event=>{const zone=event.target.closest('[data-drop-reference],[data-bulk-drop]');if(zone){event.preventDefault();zone.classList.add('dragover');}});
+  root.addEventListener('dragleave',event=>{const zone=event.target.closest('[data-drop-reference],[data-bulk-drop]');if(zone)zone.classList.remove('dragover');});
+  root.addEventListener('drop',event=>{
+    const zone=event.target.closest('[data-drop-reference],[data-bulk-drop]');if(!zone)return;
+    event.preventDefault();zone.classList.remove('dragover');if(state.busy)return;
+    const files=[...(event.dataTransfer && event.dataTransfer.files || [])];if(!files.length)return;
+    const name=zone.dataset.dropReference || null;if(state.panel!=='bulk')bulkPanel();stageFiles(files,name);
+  });
   async function workflowAction(action,button){
+    if(action==='bulk'){bulkPanel();return true;}
+    if(action==='upload-bulk'){await uploadBulk();return true;}
+    if(action==='remove-staged'){const entry=state.staging.find(e=>e.id===button.dataset.entryId);if(entry)URL.revokeObjectURL(entry.url);state.staging=state.staging.filter(e=>e.id!==button.dataset.entryId);renderBulk();return true;}
+    if(action==='replace-asset'){await replacePanel(button.dataset.assetId);return true;}
+    if(action==='remove-asset'){removePanel(button.dataset.assetId);return true;}
+    if(action==='confirm-replace'){await confirmReplace(button.dataset.assetId);return true;}
+    if(action==='confirm-remove'){const result=await projectRequest(`/api/admin/assets/${path(button.dataset.assetId)}/remove`,{method:'POST'});await refresh(true);await libraryPanel();message(result.cleanup_warning || 'Reference removed from current usage. History preserved.');return true;}
+    if(action==='confirm-scene-generate'){await projectRequest(`/api/admin/scenes/${path(button.dataset.sceneId)}/generate`,{method:'POST',body:{count:Number(button.dataset.count),request_id:button.dataset.requestId},headers:auth()});closePanel();message(`${button.dataset.count} candidates queued.`);await refresh(true);return true;}
     if(action==='create'){projectForm();return true;}
     if(action==='rename'){projectForm(true);return true;}
     if(action==='close-panel'){closePanel();el(state.project ? 'projectDetail' : 'projectHome').scrollIntoView({block:'start',behavior:'smooth'});return true;}
@@ -1531,7 +1640,7 @@ window.ProjectReview = (() => {
       closePanel();message(`Imported ${data.imported_count} scenes. Missing references can now be uploaded.`);await refresh(true);return true;
     }
     if(action==='confirm-generate'){
-      const result=await projectRequest(`/api/admin/projects/${path(state.project)}/generate`,{method:'POST',headers:auth()});
+      const result=await projectRequest(`/api/admin/projects/${path(state.project)}/generate`,{method:'POST',headers:auth(),body:{count:Number(button.dataset.count),request_id:button.dataset.requestId}});
       const reasons={};for(const scene of result.skipped_scenes)reasons[scene.reason]=(reasons[scene.reason]||0)+1;
       panel('result','Generation submitted',`<p>Created: ${result.created}</p><p>Skipped: ${result.skipped}</p>${Object.entries(reasons).map(([reason,count])=>`<p>${count} ${esc(label(reason))}</p>`).join('')}<p>Progress appears in the scene list below.</p>`);
       message(`${result.created} generation attempts queued; ${result.skipped} scenes skipped.`);await refresh(true);return true;

@@ -7,7 +7,7 @@ from scene_generation import prepare_scene_request
 from store import TaskQuotaExceeded, PendingTaskLimitExceeded
 
 
-async def submit_project_generation(project_id, client, store, request_factory, submit, run, max_pending):
+async def submit_project_generation(project_id, client, store, request_factory, submit, run, max_pending, candidates_per_scene=1, request_id=None):
     try:
         scenes = await asyncio.to_thread(store.project_generation_status, project_id)
         plans = []
@@ -15,11 +15,11 @@ async def submit_project_generation(project_id, client, store, request_factory, 
             if scene['skip_reason']:
                 continue
             current, refs = await asyncio.to_thread(store.scene_generation_input, scene['id'])
-            req, snapshot = prepare_scene_request(current, refs, request_factory)
+            req, snapshot = prepare_scene_request(current, refs, request_factory, candidates_per_scene)
             plan = await submit(req, client, scene_id=scene['id'], reference_snapshot=snapshot, prepare_only=True)
             plan['scene_updated_at'] = current['updated_at']
             plans.append(plan)
-        result, accepted = store.create_project_batch(project_id, plans, client, max_pending)
+        result, accepted = store.create_project_batch(project_id, plans, client, max_pending, candidates_per_scene, request_id)
     except RecordNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     except (TaskQuotaExceeded, PendingTaskLimitExceeded) as exc:

@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import shutil
+import sqlite3
 import tempfile
 import time
 import traceback
@@ -36,7 +37,7 @@ from add_account import add_account_flow
 from browser_pool import AllAccountsLimitedError, AllAccountsQuotaBlockedError, NoUsableAccountsError, BrowserPool
 from media import download_reference_images, validate_reference_urls
 from reference_aliases import resolve_reference_aliases
-from store import PendingTaskLimitExceeded, TaskQuotaExceeded, TaskStore
+from store import PendingTaskLimitExceeded, TaskQuotaExceeded, TaskSubmissionConflict, TaskStore
 
 Path(config.DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
 Path("web").mkdir(parents=True, exist_ok=True)
@@ -416,10 +417,10 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
     return await _submit_video(req, _auth(authorization))
 
 
-async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, prepare_only=False, project_id=None):
+async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, prepare_only=False, project_id=None, scene_updated_at=None, generation_request_id=None, candidates_per_scene=1):
     """Shared admission, task snapshots and scheduling for legacy and scene inputs."""
     if project_id is not None:
-        return await submit_project_generation(project_id, client, store, VideoGenRequest, _submit_video, _run_task, config.MAX_PENDING_TASKS)
+        return await submit_project_generation(project_id, client, store, VideoGenRequest, _submit_video, _run_task, config.MAX_PENDING_TASKS, candidates_per_scene, generation_request_id)
     duration = req.duration or 10
     if duration not in SUPPORTED_DURATIONS:
         raise HTTPException(422, "Currently supports durations of 10s, 15s, and 30s")
@@ -467,7 +468,7 @@ async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, 
     if not pool.accounts:
         raise HTTPException(503, "no account in pool")
     task_ids = ["video_" + uuid.uuid4().hex for _ in range(req.count)]
-    batch_id = "batch_" + uuid.uuid4().hex if req.count > 1 else None
+    batch_id = store.submission_batch_id("scene",scene_id,generation_request_id,client["api_key_hash"]) if scene_id and generation_request_id else ("batch_" + uuid.uuid4().hex if req.count > 1 else None)
     ratio = _resolve_ratio(req.size, req.ratio)
     prompt = resolved_prompt
     if req.start_end:
@@ -520,8 +521,15 @@ async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, 
             name=req.name,
             scene_id=scene_id,
             reference_snapshot=reference_snapshot,
+            guard_scene=scene_id is not None, scene_updated_at=scene_updated_at,
         )
         accepted = True
+    except TaskSubmissionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, 'Task batch conflict; no new candidates were queued') from exc
+    except sqlite3.DatabaseError as exc:
+        raise HTTPException(500, 'Task batch creation failed; the batch was rolled back') from exc
     except TaskQuotaExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
     except PendingTaskLimitExceeded as exc:

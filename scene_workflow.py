@@ -13,13 +13,16 @@ class SceneWorkflowMixin:
     def _check_asset_name_collisions(self):
         if not self._conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='assets'").fetchone():
             return
-        rows = [dict(row) for row in self._conn.execute('SELECT id,project_id,name FROM assets')]
+        columns = {row[1] for row in self._conn.execute('PRAGMA table_info(assets)')}
+        current = ' WHERE retired_at IS NULL' if 'retired_at' in columns else ''
+        rows = [dict(row) for row in self._conn.execute('SELECT id,project_id,name FROM assets' + current)]
         collisions = find_asset_name_collisions(rows)
         if collisions:
             raise AssetNameCollisionError(collisions)
 
     def _migrate_v4(self):
         if self._conn.execute('PRAGMA user_version').fetchone()[0] >= 4:
+            self._migrate_v5()
             return
         self._check_asset_name_collisions()
         self._conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS assets_project_name_nocase ON assets(project_id, name COLLATE NOCASE)')
@@ -40,6 +43,7 @@ class SceneWorkflowMixin:
         if self._conn.execute('PRAGMA foreign_key_check').fetchall():
             raise sqlite3.IntegrityError('Scene requirement migration failed foreign_key_check')
         self._conn.execute('PRAGMA user_version=4')
+        self._migrate_v5()
 
     def _ordered_scene_requirements(self, scene_id):
         return [dict(row) for row in self._conn.execute("""SELECT r.scene_id,r.position,r.name,
@@ -91,7 +95,7 @@ class SceneWorkflowMixin:
 
     def _import_plan(self, project_id, payload):
         self._require('projects', project_id)
-        assets = [dict(row) for row in self._conn.execute('SELECT * FROM assets WHERE project_id=? ORDER BY id', (project_id,))]
+        assets = [dict(row) for row in self._conn.execute('SELECT * FROM assets WHERE project_id=? AND retired_at IS NULL ORDER BY id', (project_id,))]
         existing = [dict(row) for row in self._conn.execute('SELECT id,scene_number FROM scenes WHERE project_id=?', (project_id,))]
         return validate_import_payload(payload, assets, existing)
 
@@ -127,7 +131,7 @@ class SceneWorkflowMixin:
         with self._lock, self._conn:
             self._conn.execute('BEGIN IMMEDIATE')
             scene = self._require('scenes', scene_id)
-            assets = [dict(row) for row in self._conn.execute('SELECT * FROM assets WHERE project_id=?', (scene['project_id'],))]
+            assets = [dict(row) for row in self._conn.execute('SELECT * FROM assets WHERE project_id=? AND retired_at IS NULL', (scene['project_id'],))]
             lookup = asset_name_index(assets)
             resolved_count = 0
             for ref in self._ordered_scene_requirements(scene_id):
