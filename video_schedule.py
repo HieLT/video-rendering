@@ -92,7 +92,7 @@ class VideoScheduler:
         pool.reservations=self.reserved
 
     def recover_reservations(self):
-        rows=self.store._conn.execute("SELECT * FROM tasks WHERE status IN ('queued','processing','needs_recovery') AND deleted_at IS NULL ORDER BY created_at").fetchall()
+        rows=self.store._conn.execute("SELECT * FROM tasks WHERE (status IN ('queued','processing') OR (status='needs_recovery' AND COALESCE(phase,'ready')<>'ready')) AND deleted_at IS NULL ORDER BY created_at").fetchall()
         for raw in rows:
             row=dict(raw)
             if row.get("account"):
@@ -117,7 +117,7 @@ class VideoScheduler:
         if self.reserved.get(row.get("account"))==row["id"]:
             self.reserved.pop(row["account"],None)
             other=self.store._conn.execute(
-                "SELECT id FROM tasks WHERE account=? AND id<>? AND deleted_at IS NULL AND status IN ('queued','processing','needs_recovery') ORDER BY created_at LIMIT 1",
+                "SELECT id FROM tasks WHERE account=? AND id<>? AND deleted_at IS NULL AND (status IN ('queued','processing') OR (status='needs_recovery' AND COALESCE(phase,'ready')<>'ready')) ORDER BY created_at LIMIT 1",
                 (row["account"],row["id"])).fetchone()
             if other: self.reserved[row["account"]]=other[0]
 

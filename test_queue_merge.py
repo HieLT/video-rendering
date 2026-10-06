@@ -5,9 +5,27 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 from store import TaskStore
+from types import SimpleNamespace
+from video_schedule import VideoScheduler
 
 
 class QueueMergeTests(unittest.TestCase):
+    def test_legacy_review_does_not_reserve_account(self):
+        db = TaskStore(':memory:')
+        try:
+            for name in ['old', 'current']:
+                db.create(name, 'seedance-2.5', 'prompt', '16:9', 30)
+                db.update(name, account='fixture', status='needs_recovery')
+            db.update('current', phase='review')
+            scheduler = VideoScheduler(db, SimpleNamespace())
+            scheduler.recover_reservations()
+            self.assertEqual(scheduler.reserved, {'fixture': 'current'})
+            db.update('current', status='stopped')
+            scheduler.release(db.get('current'))
+            self.assertEqual(scheduler.reserved, {})
+        finally:
+            db._conn.close()
+
     def test_project_v6_backup_before_queue_columns(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / 'tasks.db'
