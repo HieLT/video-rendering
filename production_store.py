@@ -32,13 +32,16 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin, SceneInfoMixin)
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
         if version > SCHEMA_VERSION:
             raise RuntimeError(f"Unsupported database schema version: {version}")
-        if version == SCHEMA_VERSION:
+        task_columns = {row[1] for row in self._conn.execute('PRAGMA table_info(tasks)')}
+        queue_upgrade = bool(task_columns and 'phase' not in task_columns)
+        if version == SCHEMA_VERSION and not queue_upgrade:
             return
         self._check_asset_name_collisions()
         filename = self._conn.execute("PRAGMA database_list").fetchone()[2]
         if not filename:  # In-memory tests have no persistent database to back up.
             return
-        backup = Path(filename + f".before_v{2 if version < 2 else version + 1}.bak")
+        suffix = '.before_queue.bak' if version == SCHEMA_VERSION and queue_upgrade else f".before_v{2 if version < 2 else version + 1}.bak"
+        backup = Path(filename + suffix)
         if backup.exists():
             return  # Keep the original pre-migration snapshot on retries.
         descriptor, temporary_name = tempfile.mkstemp(prefix=backup.name + ".", dir=backup.parent)

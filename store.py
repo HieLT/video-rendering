@@ -80,6 +80,12 @@ class TaskStore(ProductionStoreMixin):
                     ("name", "TEXT DEFAULT ''"),
                     ("edit_selected", "INTEGER NOT NULL DEFAULT 0"),
                     ("tag_filename", "TEXT"),
+                    ("phase", "TEXT DEFAULT 'ready'"),
+                    ("next_check_at", "REAL"), ("accepted_at", "REAL"),
+                    ("eta_seconds", "REAL"), ("eta_raw", "TEXT"),
+                    ("check_round", "INTEGER DEFAULT 0"), ("retry_count", "INTEGER DEFAULT 0"),
+                    ("after_index", "INTEGER DEFAULT 0"), ("dispatch_uncertain", "INTEGER DEFAULT 0"),
+                    ("submitted_at", "REAL"), ("reference_paths", "TEXT"), ("result_url", "TEXT"),
                     ("account", "TEXT"),
                     ("account_uuid", "TEXT"),
                     ("deleted_at", "REAL"),
@@ -210,7 +216,7 @@ class TaskStore(ProductionStoreMixin):
                              if reference_snapshot is not None else None)
             if max_pending > 0:
                 pending = self._conn.execute(
-                    "SELECT COUNT(*) FROM tasks WHERE status IN ('queued','processing')"
+                    "SELECT COUNT(*) FROM tasks WHERE deleted_at IS NULL AND status IN ('queued','processing','needs_recovery')"
                 ).fetchone()[0]
                 if pending + len(task_ids) > max_pending:
                     raise PendingTaskLimitExceeded(
@@ -315,7 +321,7 @@ class TaskStore(ProductionStoreMixin):
                                      'task_id':'video_'+uuid.uuid4().hex,'candidate_index':candidate})
             count = len(accepted)
             if max_pending > 0:
-                pending = self._conn.execute("SELECT count(*) FROM tasks WHERE status IN ('queued','processing')").fetchone()[0]
+                pending = self._conn.execute("SELECT count(*) FROM tasks WHERE deleted_at IS NULL AND status IN ('queued','processing','needs_recovery')").fetchone()[0]
                 if count and pending + count > max_pending:
                     raise PendingTaskLimitExceeded(f'Pending task queue has reached server limit ({max_pending})')
             daily_limit = client['daily_limit']
@@ -410,13 +416,15 @@ class TaskStore(ProductionStoreMixin):
     def pending_task_count(self) -> int:
         with _LOCK:
             return self._conn.execute(
-                "SELECT COUNT(*) FROM tasks WHERE status IN ('queued','processing')"
+                "SELECT COUNT(*) FROM tasks WHERE deleted_at IS NULL AND status IN ('queued','processing','needs_recovery')"
             ).fetchone()[0]
 
     def recent_tasks(self, limit: int = 50, api_key_hash: str | None = None,
                      task_id: str = "", query: str = "", search_in: str = "all",
                      status: str = "", account: str = "", duration: int = 0,
-                     edit_selected: bool | None = None) -> list:
+                     edit_selected: bool | None = None, page: int | None = None,
+                     video_filter: str = "", created_from: float | None = None,
+                     created_before: float | None = None) -> list | dict:
         fields = {"name": ["name"], "id": ["id"], "prompt": ["prompt"], "client": ["api_key_name"],
                   "batch": ["batch_id"], "error": ["error"]}
         clauses, params = [], []
@@ -444,12 +452,31 @@ class TaskStore(ProductionStoreMixin):
         if edit_selected is not None:
             clauses.append("COALESCE(edit_selected,0)=?")
             params.append(int(edit_selected))
-        params.append(limit)
+        if created_from is not None:
+            clauses.append("created_at>=?")
+            params.append(created_from)
+        if created_before is not None:
+            clauses.append("created_at<?")
+            params.append(created_before)
+        if video_filter == "available":
+            clauses.append("COALESCE(video_url,'')<>''")
+        elif video_filter == "missing":
+            clauses.append("COALESCE(video_url,'')=''")
+        where = " AND ".join(clauses)
         with _LOCK:
+            total = self._conn.execute("SELECT COUNT(*) FROM tasks WHERE " + where, params).fetchone()[0]
+            if limit <= 0:
+                limit, page, pages, offset = -1, (1 if page is not None else None), 1, 0
+            else:
+                limit = min(limit, 200)
+                pages = max(1, (total + limit - 1) // limit)
+                page = min(max(page, 1), pages) if page is not None else None
+                offset = (page - 1) * limit if page is not None else 0
             rows = self._conn.execute(
-                "SELECT * FROM tasks WHERE " + " AND ".join(clauses) +
-                " ORDER BY created_at DESC, id DESC LIMIT ?", params).fetchall()
-        return [dict(r) for r in rows]
+                "SELECT * FROM tasks WHERE " + where +
+                " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?", [*params, limit, offset]).fetchall()
+        tasks = [dict(r) for r in rows]
+        return {"tasks": tasks, "total": total, "page": page, "pages": pages, "limit": limit} if page is not None else tasks
 
     def delete_task(self, task_id: str) -> bool:
         """Hide a finished record while preserving usage accounting and media."""
@@ -459,7 +486,7 @@ class TaskStore(ProductionStoreMixin):
                 raise ValueError("Clear scene selection before deleting its selected task")
             cur = self._conn.execute(
                 "UPDATE tasks SET deleted_at=?, updated_at=? WHERE id=? "
-                "AND deleted_at IS NULL AND status IN ('completed','failed','stopped','needs_recovery')",
+                "AND deleted_at IS NULL AND status IN ('completed','failed','stopped')",
                 (time.time(), time.time(), task_id),
             )
             self._conn.commit()

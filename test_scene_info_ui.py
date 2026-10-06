@@ -12,9 +12,10 @@ async def main():
         fixture.store.update_project(fixture.project_id,name='test_riven')
         first=fixture.create_scene(1,'forest',scene_name='Cabin Test')
         second=fixture.create_scene(2,'forest',scene_name='Burning Settlement Test')
-        attachment=Path(r'C:\Users\Administrator\.codex\attachments\d14a4791-0fcd-40dc-8d5f-5c5c544a5b36\Pasted text.txt').read_text(encoding='utf-8-sig')
-        start=attachment.index('{',attachment.index('14. ACCEPTANCE TEST'))
-        payload,_=json.JSONDecoder().raw_decode(attachment[start:])
+        payload={'scenes':[
+            {'scene_number':1,'summary':'Nhân vật bước vào căn nhà giữa khu rừng.'},
+            {'scene_number':2,'summary':'Ngôi làng đang cháy; nhân vật tìm đường thoát.'},
+        ]}
         before={table:[tuple(row) for row in fixture.store._conn.execute('SELECT * FROM '+table)] for table in ['tasks','scene_assets','scene_reference_requirements']}
         async with async_playwright() as p:
             browser=await p.chromium.launch(headless=True)

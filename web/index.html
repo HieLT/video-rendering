@@ -374,13 +374,18 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
           <label>Status<select id="taskStatus" onchange="searchTasks()"><option value="">All statuses</option><option value="queued">Queued</option><option value="processing">Processing</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="stopped">Stopped</option><option value="needs_recovery">Needs recovery</option></select></label>
           <label>Edit selection<select id="taskEditSelected" onchange="searchTasks()"><option value="">Tất cả</option><option value="true">⭐ Đã chọn để edit</option><option value="false">Chưa chọn</option></select></label>
           <label>Account<select id="taskAccount" onchange="searchTasks()"><option value="">All accounts</option></select></label>
-          <label>Duration<select id="taskDuration" onchange="searchTasks()"><option value="">All durations</option><option value="10">10s</option><option value="15">15s</option><option value="30">30s</option></select></label>
+          <label>Video<select id="taskVideoFilter" onchange="searchTasks()"><option value="">All videos</option><option value="available">Has video</option><option value="missing">No video</option></select></label><label>Start (UTC+7)<input id="taskCreatedFrom" type="datetime-local" onchange="searchTasks()"></label><label>End (UTC+7)<input id="taskCreatedTo" type="datetime-local" onchange="searchTasks()"></label><label>Duration<select id="taskDuration" onchange="searchTasks()"><option value="">All durations</option><option value="10">10s</option><option value="15">15s</option><option value="30">30s</option></select></label>
           <button type="button" class="btn" onclick="clearTaskSearch()">Clear filters</button>
         </div>
         <div id="taskSearchSummary" class="tiny" role="status" aria-live="polite">Search across your task history</div>
         <div class="tiny">⭐ Chọn để edit: copy video vào thư mục tag/. Bỏ chọn chỉ xóa bản copy, giữ file gốc.</div>
       </div>
-      <button id="deleteSelectedTasks" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('tasks')">Delete selected (0)</button><div id="tasksTable"></div>
+      <button id="deleteSelectedTasks" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('tasks')">Delete selected (0)</button><div id="tasksTable"></div><nav class="task-pagination" aria-label="Video task pagination">
+        <label class="tiny">Tasks per page <select id="taskPageSize" onchange="searchTasks()" aria-label="Tasks per page"><option value="-1" selected>All</option><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label>
+        <button type="button" class="btn" id="taskPrevPage" disabled onclick="changeTaskPage(-1)">Previous</button>
+        <span id="taskPageInfo" class="tiny" aria-live="polite">Page 1 of 1</span>
+        <button type="button" class="btn" id="taskNextPage" disabled onclick="changeTaskPage(1)">Next</button>
+      </nav>
     </div>
   </section>
 
@@ -976,7 +981,7 @@ q('#imageMode').addEventListener('change',closeRefSuggestions);
 
 async function taskAction(id,action){
   if(action==='stop'&&!confirm('Stop monitoring this task? This does not cancel generation on Dola.'))return;
-  try{await api('/api/admin/tasks/'+encodeURIComponent(id)+'/'+action,{method:'POST'});await loadTasks();}
+  try{await api('/api/admin/tasks/'+encodeURIComponent(id)+'/'+action,{method:'POST'});await loadTasks();if(curTab==='projects')await ProjectReview.refresh(true);}
   catch(e){alert(e.message);}
 }
 async function deleteTask(id){
@@ -993,6 +998,11 @@ async function setEditSelection(id,selected,button){
   }catch(e){alert(e.message);await loadTasks();}
   finally{button.disabled=false;}
 }
+function taskScheduleInfo(t){
+  if(!['queued','processing','needs_recovery'].includes(t.status))return '';
+  const labels={ready:'Waiting to submit',dispatching:'Submitting',waiting:'Waiting for Dola',checking:'Checking result',downloading:'Downloading',review:'Needs review'};
+  return '<div class="tiny">'+esc(labels[t.phase]||'Waiting')+' / retry '+(t.retry_count||0)+'/10 / recheck '+(t.check_round||0)+'/3'+(t.next_check_at?'<br>Next: '+fmt(t.next_check_at):'')+'</div>';
+}
 function taskControls(t){
   const controls=[];
   if(t.status==='completed'||t.edit_selected){
@@ -1006,10 +1016,15 @@ function taskControls(t){
     controls.push('<button class="btn" title="Open this account in Dola; no conversation was saved for this task" data-account="'+esc(t.account)+'" onclick="openWeb(this.dataset.account,this)">Open chat</button>');
   }
   if(t.account&&t.conversation_id&&t.status!=='completed'){
-    const hints=['Show the conversation; restart monitoring if stopped','Resume monitoring the saved conversation without submitting a new video','Stop local monitoring; generation on Dola is not cancelled'];
-    controls.push(...['open','resume','stop'].map((action,i)=>'<button class="btn'+(action==='stop'?' btn-danger':'')+'" title="'+hints[i]+'" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;'+action+'&quot;)">'+['Open chat','Continue','Stop'][i]+'</button>'));
+    controls.push('<button class="btn" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;open&quot;)">Open chat</button>');
   }
-  if(!t.edit_selected&&['completed','failed','stopped','needs_recovery'].includes(t.status)){
+  if(t.account&&(t.conversation_id||t.result_url)&&t.status!=='completed'){
+    controls.push('<button class="btn" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;check&quot;)">Check now</button>');
+  }
+  if(['queued','processing','needs_recovery'].includes(t.status)){
+    controls.push('<button class="btn btn-danger" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;stop&quot;)">Stop</button>');
+  }
+  if(!t.edit_selected&&['completed','failed','stopped'].includes(t.status)){
     controls.push('<button class="btn btn-danger" title="Delete this record" onclick="deleteTask(&quot;'+esc(t.id)+'&quot;)">Delete</button>');
   }
   return controls.length?'<div class="task-actions">'+controls.join('')+'</div>':'';
@@ -1033,7 +1048,13 @@ async function copyTaskPrompt(button,id){
     button.innerHTML='<span aria-hidden="true">&#10003;</span>';
   }catch(e){alert('Could not copy prompt: '+e.message);}
 }
-let taskSearchTimer, taskLoadVersion=0;
+let taskSearchTimer, taskLoadVersion=0, taskPage=1, taskPages=1;
+function changeTaskPage(delta){
+  clearTimeout(taskSearchTimer);
+  taskPage=Math.min(Math.max(1,taskPage+delta),taskPages);
+  loadTasks().catch(e=>alert(e.message));
+}
+
 const collapsedTaskBatches=new Set();
 function toggleTaskBatch(button){
   const group=button.closest('tbody'),id=group.dataset.batchId;
@@ -1069,7 +1090,7 @@ function groupedTaskTable(tasks,rows,heads){
   return '<table><thead><tr>'+heads.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead>'+bodies.map((body,index)=>(index&&(ordered[index][0].task.batch_id||ordered[index-1][0].task.batch_id)?'<tbody class="batch-gap" aria-hidden="true"><tr><td colspan="'+heads.length+'"></td></tr></tbody>':'')+body).join('')+'</table>';
 }
 function resetTaskSearchDefaults(){
-  for(const id of ['taskSearch','taskStatus','taskAccount','taskDuration','taskEditSelected'])q('#'+id).value='';
+  for(const id of ['taskSearch','taskStatus','taskAccount','taskDuration','taskEditSelected','taskVideoFilter','taskCreatedFrom','taskCreatedTo'])q('#'+id).value='';
   q('#taskSearchIn').value='all';
 }
 resetTaskSearchDefaults();
@@ -1077,6 +1098,7 @@ function clearTaskSearch(){
   resetTaskSearchDefaults();searchTasks();
 }
 function searchTasks(){
+  taskPage=1;
   clearTimeout(taskSearchTimer);
   taskLoadVersion++;
   taskSearchTimer=setTimeout(()=>loadTasks().catch(e=>alert(e.message)),250);
@@ -1085,19 +1107,36 @@ async function loadTasks(){
   if(bulkDeleting.tasks)return;
   const version=++taskLoadVersion;
   const search=q('#taskSearch').value.trim();
-  const params=new URLSearchParams({query:search,search_in:q('#taskSearchIn').value,status:q('#taskStatus').value,account:q('#taskAccount').value,duration:q('#taskDuration').value||'0'});
+  const params=new URLSearchParams({limit:q('#taskPageSize').value,page:String(taskPage),video_filter:q('#taskVideoFilter').value,query:search,search_in:q('#taskSearchIn').value,status:q('#taskStatus').value,account:q('#taskAccount').value,duration:q('#taskDuration').value||'0'});
+  const fromInput=q('#taskCreatedFrom'),toInput=q('#taskCreatedTo');
+  const from=fromInput.value?Date.parse(fromInput.value+'+07:00')/1000:null;
+  const to=toInput.value?Date.parse(toInput.value+'+07:00')/1000:null;
+  toInput.setCustomValidity('');
+  if((from!==null&&!Number.isFinite(from))||(to!==null&&!Number.isFinite(to))||(from!==null&&to!==null&&from>to)){
+    toInput.setCustomValidity('Choose an end time at or after the start time.');
+    q('#taskSearchSummary').textContent='Invalid time range: end must be at or after start.';
+    toInput.reportValidity();return;
+  }
+  if(from!==null)params.set('created_from',String(from));
+  // Include the entire selected end minute.
+  if(to!==null)params.set('created_before',String(to+60));
   if(q('#taskEditSelected').value)params.set('edit_selected',q('#taskEditSelected').value);
   const [r,a]=await Promise.all([api('/api/admin/tasks?'+params),api('/api/admin/accounts')]);
   if(version!==taskLoadVersion)return;
+  taskPage=r.page||1;taskPages=r.pages||1;
+  q('#taskPageInfo').textContent='Page '+taskPage+' of '+taskPages;
+  q('#taskPrevPage').disabled=taskPage<=1;
+  q('#taskNextPage').disabled=taskPage>=taskPages;
+
   const accountNumbers=new Map(a.accounts.map((account,index)=>[account.uuid,index+1]));
   const accountSelect=q('#taskAccount'),selectedAccount=accountSelect.value;
   accountSelect.replaceChildren(new Option('All accounts',''));
   a.accounts.forEach((account,index)=>accountSelect.add(new Option('Account '+(index+1)+(account.email?' - '+account.email:''),account.uuid)));
   if(selectedAccount&&!a.accounts.some(account=>account.uuid===selectedAccount))accountSelect.add(new Option('Previous account',selectedAccount));
   accountSelect.value=selectedAccount;
-  const filtered=search||params.get('status')||params.get('account')||params.has('edit_selected')||params.get('duration')!=='0';
-  q('#taskSearchSummary').textContent=r.tasks.length?(r.tasks.length+' task'+(r.tasks.length===1?'':'s'))+(filtered?' matching your filters':' in recent history'):'No tasks match your search. Try another keyword or clear filters.';
-  deleteVisible.tasks=r.tasks.filter(t=>!t.edit_selected&&['completed','failed','stopped','needs_recovery'].includes(t.status)).map(t=>t.id);
+  const filtered=search||params.has('created_from')||params.has('created_before')||params.get('video_filter')||params.get('status')||params.get('account')||params.has('edit_selected')||params.get('duration')!=='0';
+  q('#taskSearchSummary').textContent=r.tasks.length?('Showing '+r.tasks.length+' of '+(r.total??r.tasks.length)+' tasks')+(filtered?' matching your filters':' in recent history'):'No tasks match your search. Try another keyword or clear filters.';
+  deleteVisible.tasks=r.tasks.filter(t=>!t.edit_selected&&['completed','failed','stopped'].includes(t.status)).map(t=>t.id);
   const sb={'queued':'<span class="badge b-gray">Queued</span>','processing':'<span class="badge b-blue">Processing</span>','completed':'<span class="badge b-green">Completed</span>','failed':'<span class="badge b-red">Failed</span>'};
   taskPromptCopies.clear();
   const rows=r.tasks.map(t=>[
@@ -1106,7 +1145,7 @@ async function loadTasks(){
     taskPromptCell(t),
     accountNumbers.get(t.account)||'?',
     (t.duration||10)+'s',
-    ({needs_recovery:'<span class="badge b-red">Needs recovery</span>',stopped:'<span class="badge b-gray">Stopped</span>'})[t.status]||sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>',
+    (({needs_recovery:'<span class="badge b-red">Needs recovery</span>',stopped:'<span class="badge b-gray">Stopped</span>'})[t.status]||sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>')+taskScheduleInfo(t),
     fmt(t.created_at),
     t.video_url
       ?'<span class="video-file" title="'+esc(t.id)+'.mp4">'+esc(t.id)+'.mp4</span><span class="tiny">MP4 video</span>'
@@ -1303,7 +1342,8 @@ window.ProjectReview = (() => {
       const refs=Array.isArray(task.reference_snapshot) ? task.reference_snapshot.map(r=>r.reference_alias).join(', ') : '';
       return `<article class="project-version" data-task-id="${esc(task.task_id)}" data-scene-id="${esc(sceneId)}" data-selected="${!!task.selected}">
         <h4>Generation #${task.generation_number}${task.selected ? ' - &#9733; SELECTED' : ''}</h4>
-        <div>${badge(task.status)} ${deleted ? '<span class="badge b-gray">DELETED</span>' : ''}</div>
+        <div>${badge(task.status)} ${deleted ? '<span class="badge b-gray">DELETED</span>' : ''}${taskScheduleInfo(task)}</div>
+        ${!deleted && ['queued','processing','needs_recovery'].includes(task.status) ? `<div class="project-actions">${task.account && (task.conversation_id || task.result_url) ? `<button class="btn" onclick="taskAction('${esc(task.task_id)}','check')">Check now</button>` : ''}<button class="btn btn-danger" onclick="taskAction('${esc(task.task_id)}','stop')">Stop</button></div>` : ''}
         <p>${esc(fmt(task.created_at))} | ${esc(task.model)} | ${esc(task.ratio)} | ${esc(task.duration)}s</p>
         ${task.status==='completed' && url && !deleted ? `<video controls preload="metadata" src="${esc(url)}" aria-label="Generation ${task.generation_number} video"></video>` : ''}
         ${task.status==='completed' && !url && !deleted ? '<p>Completed attempt has no playable video URL.</p>' : ''}

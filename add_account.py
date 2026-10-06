@@ -12,9 +12,9 @@ import time
 import traceback
 from pathlib import Path
 
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 
-from browser import LAUNCH_ARGS
+from browser import account_launch_args
 import config
 from account_import import capture_identity
 
@@ -173,10 +173,11 @@ async def add_account_flow(account: str, email: str, password: str, secret: str)
 
     log(f"[{account}] add flow started email={email} profile={profile_dir.resolve()}")
     async with async_playwright() as p:
-        kwargs = {"headless": False, "args": LAUNCH_ARGS,
+        kwargs = {"headless": False, "channel": "chromium",
+                  "args": account_launch_args(profile_dir),
                   "locale": "ja-JP", "timezone_id": "Asia/Tokyo"}
         if config.PROXY:
-            kwargs["proxy"] = {"server": config.PROXY}
+            kwargs["proxy"] = config.browser_proxy()
         log(f"[{account}] launching Chromium proxy={'configured' if config.PROXY else 'disabled'}")
         context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
         context.on("page", lambda opened: track_page(account, opened))

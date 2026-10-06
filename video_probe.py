@@ -6,7 +6,7 @@ SUBMIT_JS contains the core submission payload used by video workers.
 import asyncio
 import sys
 
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 
 from browser import cookie_value, launch_account_context
 

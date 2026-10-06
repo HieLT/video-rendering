@@ -1,7 +1,7 @@
-﻿import asyncio,json,re,time,traceback,sys,sqlite3,shutil
+import asyncio,json,re,time,traceback,sys,sqlite3,shutil
 from pathlib import Path
 from PIL import Image,ImageDraw
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 from browser import launch_account_context,cookie_value
 from video_worker import POLL_JS
 from video_worker_ui import find_captcha_frame,solve_slider,_preflight_balance

@@ -47,3 +47,13 @@ assets/
 # Incomplete migration backup work files
 *.before_v*.bak.*
 !requirements-dev.txt
+.runtime/
+.merge-queue/
+
+.job_media/
+
+downloads_unique/
+
+/experiment_eta_reopen.py
+
+/test_eta_reopen_experiment.py

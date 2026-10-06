@@ -43,6 +43,27 @@ DOWNLOAD_DIR = os.getenv("DOLA_DOWNLOAD_DIR", "downloads")
 
 # Explicit browser proxy (must point to JP/KR egress; empty = system proxy)
 PROXY = os.getenv("DOLA_PROXY", "http://127.0.0.1:7890")
+PROXY_USERNAME = os.getenv("DOLA_PROXY_USERNAME", "")
+PROXY_PASSWORD = os.getenv("DOLA_PROXY_PASSWORD", "")
+
+
+def browser_proxy():
+    """Return Chromium proxy options, keeping credentials out of the server URL."""
+    if not PROXY:
+        return None
+    options = {"server": PROXY}
+    if PROXY_USERNAME:
+        options.update(username=PROXY_USERNAME, password=PROXY_PASSWORD)
+    return options
+
+
+def proxy_auth():
+    """Return aiohttp credentials for the explicitly configured proxy."""
+    if not PROXY or not PROXY_USERNAME:
+        return None
+    from aiohttp import BasicAuth
+    return BasicAuth(PROXY_USERNAME, PROXY_PASSWORD)
+
 
 # Run browser in headless mode (login always runs with head)
 HEADLESS = os.getenv("DOLA_HEADLESS", "1") == "1"

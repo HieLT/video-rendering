@@ -35,13 +35,14 @@ FAKE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
 }
 
-# Insufficient credit keywords (multi-language)
+# Require explicit credit/balance evidence; generic generation refusal is retryable.
 CREDIT_FAIL_PATTERN = re.compile(
-    r"無法生成|无法生成|不能生成|无法完成|無法完成|"
-    r"余额不足|餘額不足|额度不足|額度不足|额度耗尽|額度耗盡|"
-    r"生成できません|残高不足|"
-    r"生成할 수 없|한도.*부족|부족.*한도|"
-    r"insufficient|unable to (generate|create)|failed to (generate|create)",
+    r"\u4f59\u989d\u4e0d\u8db3|\u9918\u984d\u4e0d\u8db3|\u989d\u5ea6\u4e0d\u8db3|\u984d\u5ea6\u4e0d\u8db3|"
+    r"\u989d\u5ea6\u8017\u5c3d|\u984d\u5ea6\u8017\u76e1|\u6b8b\u9ad8\u4e0d\u8db3|"
+    r"(?:\u30af\u30ec\u30b8\u30c3\u30c8|\u30dd\u30a4\u30f3\u30c8).{0,20}\u4e0d\u8db3|"
+    r"\ud55c\ub3c4.*\ubd80\uc871|\ubd80\uc871.*\ud55c\ub3c4|"
+    r"(?:insufficient|not enough)\s+(?:video\s+)?(?:credits?|points?|balance|quota)|"
+    r"(?:credits?|points?|balance|quota)\s+(?:is\s+|are\s+)?(?:insufficient|exhausted|depleted)",
     re.IGNORECASE,
 )
 

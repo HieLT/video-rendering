@@ -1,6 +1,6 @@
 import asyncio,json,sqlite3,time,urllib.request,sys
 from pathlib import Path
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 import config
 import video_worker_ui as worker
 from browser import LAUNCH_ARGS
@@ -26,7 +26,7 @@ async def launch(p,account,headless=None,use_extension=False):
   ext=str(Path(config.EXTENSION_DIR).resolve()); args += ['--disable-extensions-except='+ext,'--load-extension='+ext]
  kw=dict(headless=False,args=args,locale='ja-JP',timezone_id='Asia/Tokyo',record_video_dir=str(OUT/account))
  if '--lean' in sys.argv: kw.pop('record_video_dir')
- if config.PROXY: kw['proxy']={'server':config.PROXY}
+ if config.PROXY: kw['proxy']=config.browser_proxy()
  ctx=await p.chromium.launch_persistent_context(str(Path('accounts')/account),**kw)
  if '--lean' not in sys.argv: await ctx.tracing.start(screenshots=True,snapshots=True,sources=True)
  page=ctx.pages[0]

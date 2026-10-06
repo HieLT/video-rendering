@@ -24,7 +24,8 @@ def production_status(scene, attempts, active, selected):
 def generation_view(task, number, selected_id):
     keys = ('scene_id','created_at','status','model','ratio','duration','start_end',
             'video_url','error','failure_code','batch_id','batch_index','batch_count',
-            'started_at','finished_at','prompt','deleted_at')
+            'started_at','finished_at','prompt','deleted_at','account','conversation_id',
+            'phase','next_check_at','retry_count','check_round','result_url')
     raw = task.get('reference_snapshot')
     try:
         snapshot = json.loads(raw) if isinstance(raw,str) else raw

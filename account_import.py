@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 import re
 import time
 from pathlib import Path
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 from browser import launch_account_context, cookie_value
 
 

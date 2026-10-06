@@ -109,7 +109,7 @@ Readiness gồm READY, MISSING_REFERENCES, INVALID_CONFIGURATION; là kết qu�
 - Edit-selection cũ copy MP4 từ downloads sang tag, có filter và delete guard. Đây là selection để edit, độc lập với Scene selected output của V2.
 - Accounts: profile riêng, Google/Facebook/cookies, verify/retry/open web, bulk Google import, scheduling, quota UUID/reset quota, credit/cooldown.
 - API keys: quản lý auth, quota, allowed durations và concurrency riêng; admin auth dùng X-Admin-Key, generation auth theo Authorization policy hiện có.
-- Giữ custom monitoring window 7 ngày cho video 30s/Continue; đây là thời gian theo dõi, không phải độ dài video.
+- Scheduler mới kiểm tra theo ETA cho mọi duration, không giữ Chrome mở liên tục 7 ngày. Timeout cũ chỉ còn trong legacy worker.
 - Try 30s đã bỏ. Extension `extensions/dola30/` bổ sung option 30s trong Dola; click được option không chứng minh video thật dài đủ 30 giây.
 
 ## 6. File và dữ liệu quan trọng
@@ -213,3 +213,22 @@ Project header now has Import Scene Info separately from Template 5 Import Scene
 New admin routes: POST /projects/{id}/scene-info/import/validate, POST /projects/{id}/scene-info/import, PATCH /scenes/{id}/summary (all under /api/admin). Generation payload construction, Template 5, bulk references, x1-x5, workers, BrowserPool and queue are unchanged.
 
 Verification: 252 backend tests passed; new Scene Info browser acceptance and all three existing Project/review/production UX browser suites passed. Actual DB was read-only backed up to a temporary copy: v4->v6 preserved 1 Task, 2 Scenes, 4 Assets; existing test_riven Scenes 1/2 imported the exact requested Vietnamese summaries on the copy, changing only summary. Live DB/server remain untouched; user restarts manually. Reports and screenshot are in diagnostics/. No live Dola generation, no commit/push.
+
+
+## Main queue integration (2026-10-06)
+
+Video Tasks, Generate Scene and Generate All now share VideoScheduler. Project reference snapshots are copied in order into .job_media/<task-id> and persist across restarts. Back up .job_media with tasks.db and assets when moving machines.
+
+BrowserQueue admits at most 10 Playwright sessions across the workspace, including Open Web and bulk account import. Bulk import retains its worker count and 0.5-second launch spacing; workers beyond the browser ceiling wait for admission. A waiting video reserves its account but closes Chromium after confirmed acceptance. Scheduled checks reopen it. Recovery checks do not consume another generation quota slot.
+
+First check is ETA minus five minutes, never earlier than now. Missing ETA defaults to 30 minutes. Each inspection lasts up to 20 seconds after navigation, followed by at most three additional checks five minutes apart, then needs_recovery. Generation permits up to 10 retries after the first attempt, preserving dispatch checkpoints. Unknown submission outcomes are inspected instead of blindly resubmitted.
+
+MAX_PENDING_TASKS stays at 500 by default and counts unfinished needs_recovery records. API key concurrency remains enforced. Task count and browser-session capacity are different limits.
+
+Video Tasks defaults to All with optional pagination and video/time filters (UTC+7). Batch grouping, scene names, edit tags, Gmail groups, bulk import and Project selection workflows remain. Project Versions exposes scheduler timing and Check now/Stop. Stop ends local monitoring only; it does not cancel remote Dola generation. Stop needs_recovery tasks before deleting records.
+
+Renew Dola account and duplicate Favorite UI/API are intentionally excluded. Existing Project Start/End reference validation is retained.
+
+Run one server via python run_server.py --host 127.0.0.1 --port 8000, without --reload. A workspace scheduler lock prevents two scheduler servers. Existing schema-v6 databases receive additive scheduling columns with a .before_queue.bak snapshot before migration. Restart the server to activate; no live database migration or live Dola generation was performed during integration.
+
+Validation uses temporary SQLite databases, mocked Dola workers and browser fixtures, including Generate All, scene reference order, restart recovery, quota claims, selection, batch UI and time filters.

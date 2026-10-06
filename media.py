@@ -136,6 +136,7 @@ async def download_one_image(session: aiohttp.ClientSession, url: str, dest: Pat
                     current,
                     allow_redirects=False,
                     proxy=proxy,
+                    proxy_auth=config.proxy_auth() if proxy else None,
                     timeout=aiohttp.ClientTimeout(total=config.REFERENCE_DOWNLOAD_TIMEOUT),
                     headers={"User-Agent": "dola-pool-reference-fetch/1.0"},
                 ) as resp:

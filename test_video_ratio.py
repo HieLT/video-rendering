@@ -1,6 +1,6 @@
 """Offline regression: sidebar drafts must never receive ratio clicks."""
 import asyncio
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 import video_worker_ui as worker
 
 async def run():
@@ -12,7 +12,7 @@ async def run():
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             try:
-                for mode in ('sidebar', 'fallback', 'combined', 'ambiguous', 'lost_image', 'missing_before', 'ignored', 'reset'):
+                for mode in ('sidebar', 'fallback', 'combined', 'combined_stays_open', 'sticky', 'sticky_ignored', 'ambiguous', 'lost_image', 'missing_before', 'ignored', 'reset'):
                     page = await browser.new_page()
                     try:
                         await page.set_content('''<aside><button id="draft">=== TECHNICAL === 16:9 cinematic</button><button>16:9</button></aside>
@@ -28,9 +28,12 @@ async def run():
                             document.querySelector('#draft').onclick = () => document.body.dataset.wrongClick = 'true';
                             let control = document.querySelector('#ratio');
                             if (mode === 'fallback') control.removeAttribute('data-input-engine-actionbar-control-key');
-                            if (mode === 'combined') {
+                            if (mode.startsWith('combined')) {
                                 control.remove(); control = document.querySelector('#duration');
                             }
+                            document.addEventListener('keydown', e => {
+                                if (e.key === 'Escape') document.querySelectorAll('[role=menu]').forEach(e => e.remove());
+                            });
                             control.onclick = () => {
                                 const popup = document.createElement('div');
                                 popup.id = 'ratio-menu'; popup.setAttribute('role', 'menu');
@@ -38,18 +41,21 @@ async def run():
                                 const option = document.createElement('div'); option.setAttribute('role', 'menuitem');
                                 option.innerHTML = '<span>16:9</span>';
                                 option.onclick = () => {
-                                    if (mode !== 'ignored') control.textContent = mode === 'combined' ? '10s 16:9' : 'Ratio 16:9';
+                                    if (!['ignored', 'sticky_ignored'].includes(mode)) control.textContent = mode.startsWith('combined') ? '10s 16:9' : 'Ratio 16:9';
                                     if (mode === 'lost_image') document.querySelector('[data-kind="image"]').remove();
                                     if (mode === 'reset') document.querySelector('#composer').innerHTML = '<div contenteditable="true"> </div><button>Chat</button>';
-                                    popup.remove();
+                                    if (!mode.startsWith('sticky') && mode !== 'combined_stays_open') popup.remove();
                                 };
+                                document.addEventListener('keydown', e => {
+                                    if (e.key === 'Escape') popup.remove();
+                                });
                                 popup.append(option);
                                 if (mode === 'ambiguous') popup.append(option.cloneNode(true));
                                 document.body.append(popup);
                             };
                         }""", mode)
                         failures = {'ambiguous': 'Multiple visible', 'lost_image': 'images changed',
-                                    'missing_before': 'expected=4, actual=3', 'ignored': 'did not retain', 'reset': 'composer reset'}
+                                    'missing_before': 'expected=4, actual=3', 'ignored': 'did not retain', 'sticky_ignored': 'did not retain', 'reset': 'composer reset'}
                         try:
                             await worker._select_video_ratio(page, '16:9', 'test', 4)
                         except RuntimeError as exc:

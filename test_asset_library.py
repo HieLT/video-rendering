@@ -7,7 +7,10 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
+from types import SimpleNamespace
+import os
+from video_schedule import VideoScheduler
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -18,6 +21,27 @@ from asset_storage import resolve_asset_path
 from production_store import AssetInUseError, SCHEMA_VERSION
 from store import TaskStore
 from test_video_batch import isolated_api, backend_checks
+
+
+def run_saved_task(case, args):
+    """Exercise server runner + real scheduler/reference copies/download, mock only Dola."""
+    scheduler = VideoScheduler(case.store, SimpleNamespace())
+    case.ns['scheduler'] = scheduler
+    output = {}
+    async def account(row):
+        case.store.update(row['id'], account='fixture')
+        return True
+    async def submit(row, paths):
+        output.update(await case.ns['pool'].generate_video(row['prompt'], row['ratio'], row['duration'], row['model'], reference_image_paths=paths))
+        return {'kind':'completed','poll':{'videos':['https://fixture.test/video.mp4']}}
+    async def download(*args): return output['local_path']
+    previous = os.getcwd()
+    try:
+        os.chdir(case.tmp.name)
+        with patch.object(scheduler,'account',account), patch.object(scheduler,'submit',submit), patch('video_schedule._download',download):
+            asyncio.run(case.runner(*args))
+    finally:
+        os.chdir(previous)
 
 
 def image_bytes(fmt='PNG', color='red'):
@@ -302,8 +326,9 @@ class LibraryApiTests(unittest.TestCase):
             return {'local_path':str(output)}
         self.ns['pool'].generate_video = worker
         args = next(args for args in self.queued if args[0] == result['id'])
-        asyncio.run(self.runner(*args))
-        self.assertEqual(captured, [str(resolve_asset_path(a['file_path'])) for a in assets])
+        run_saved_task(self, args)
+        self.assertEqual([Path(p).read_bytes() for p in captured], [resolve_asset_path(a['file_path']).read_bytes() for a in assets])
+        self.assertTrue(all('.job_media' in p for p in captured))
         self.assertEqual(self.store.get(result['id'])['status'], 'completed')
         self.assertTrue(all(resolve_asset_path(a['file_path']).is_file() for a in assets))
 
@@ -314,8 +339,8 @@ class LibraryApiTests(unittest.TestCase):
             raise self.ns['AllAccountsLimitedError']('fixture quota failure')
         self.ns['pool'].generate_video = fail
         args = next(args for args in self.queued if args[0] == result['id'])
-        asyncio.run(self.runner(*args))
-        self.assertEqual(self.store.get(result['id'])['status'], 'failed')
+        run_saved_task(self, args)
+        self.assertEqual(self.store.get(result['id'])['status'], 'needs_recovery')
         self.assertTrue(all(resolve_asset_path(a['file_path']).is_file() for a in assets))
         self.assertFalse(self.ns['UPLOADED_REFERENCES'])
 
@@ -327,12 +352,12 @@ class LibraryApiTests(unittest.TestCase):
         # The recovery call receives only row fields; it does not reread scene_assets.
         row = self.store.get(result['id'])
         async def worker(*args, **kwargs):
-            self.assertEqual(kwargs['reference_image_paths'], [str(resolve_asset_path(a['file_path'])) for a in assets])
+            self.assertEqual([Path(p).read_bytes() for p in kwargs['reference_image_paths']], [resolve_asset_path(a['file_path']).read_bytes() for a in assets])
             output = Path(self.tmp.name) / 'recovered.mp4'
             output.write_bytes(b'mocked')
             return {'local_path':str(output)}
         self.ns['pool'].generate_video = worker
-        asyncio.run(self.runner(row['id'],row['model'],row['prompt'],row['ratio'],row['duration'],
+        run_saved_task(self, (row['id'],row['model'],row['prompt'],row['ratio'],row['duration'],
                                 json.loads(row['reference_images']),self.client_policy))
         self.assertEqual(self.store.get(result['id'])['status'], 'completed')
         self.assertTrue(all(resolve_asset_path(a['file_path']).is_file() for a in assets))

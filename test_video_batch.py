@@ -2,6 +2,7 @@
 import ast
 import asyncio
 import json
+import logging
 import shutil
 import sqlite3
 import tempfile
@@ -14,7 +15,7 @@ from unittest.mock import AsyncMock
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field, ValidationError
-from patchright.async_api import async_playwright
+from browser_queue import async_playwright
 from reference_aliases import resolve_reference_aliases
 from scene_generation import task_reference_paths
 from project_generation import submit_project_generation
@@ -54,6 +55,7 @@ async def backend_checks():
     runner=ns["_run_task"]
     ns["_run_task"]=capture
     with tempfile.TemporaryDirectory() as folder:
+        ns["Path"] = lambda value: Path(value) if Path(value).is_absolute() else Path(folder) / value
         root=Path(folder)/"source";root.mkdir()
         files=[root/"first.png",root/"second.png"]
         for i,path in enumerate(files): path.write_bytes(bytes([i]))
@@ -77,25 +79,37 @@ async def backend_checks():
         await asyncio.sleep(0)
         assert len(result.tasks)==5 and len(captured)==5
         assert len({t.id for t in result.tasks})==5
-        assert len(ns["UPLOADED_REFERENCES"])==5
+        assert not ns["UPLOADED_REFERENCES"]
+        assert not root.exists()
+        all_paths=[]
         for index,t in enumerate(result.tasks,1):
             row=ns["store"].get(t.id)
             assert (row["batch_id"],row["batch_index"],row["batch_count"])==(result.batch_id,index,5)
             assert row["prompt"]=="@Image1 moves"
-        async def generate(*args,**kwargs):
-            paths=kwargs["reference_image_paths"]
-            assert [Path(p).read_bytes() for p in paths]==[bytes([0]),bytes([1])]
-            if generate.calls==0:
-                generate.calls+=1
-                raise ns["AllAccountsLimitedError"]("fixture failure")
-            video = Path(folder) / "fixture.mp4"
-            video.write_bytes(b"mock video")
-            return {"local_path":str(video)}
-        generate.calls=0
-        ns["pool"].generate_video=generate
+            references=json.loads(row["reference_images"])
+            assert len(references)==2 and all(ref.startswith("local://") for ref in references)
+            paths=[Path(ref[8:]) for ref in references]
+            assert [path.read_bytes() for path in paths]==[bytes([0]),bytes([1])]
+            assert all(path.is_relative_to(Path(folder)) for path in paths)
+            all_paths.extend(paths)
+        assert len(set(all_paths))==10
+        async def scheduled_run(task_id,uploads):
+            assert uploads=={}
+            row=ns["store"].get(task_id)
+            paths=[Path(ref[8:]) for ref in json.loads(row["reference_images"])]
+            assert [path.read_bytes() for path in paths]==[bytes([0]),bytes([1])]
+            if task_id==result.tasks[0].id:
+                raise RuntimeError("fixture scheduler failure")
+            ns["store"].update(task_id,status="completed")
+        def review(task_id,error):
+            ns["store"].update(task_id,status="needs_recovery",error=error)
+        ns["scheduler"]=SimpleNamespace(run=AsyncMock(side_effect=scheduled_run),review=review)
         for args in captured: await runner(*args)
         assert not ns["UPLOADED_REFERENCES"]
-        assert ns["store"].get(result.tasks[0].id)["status"]=="failed"
+        assert ns["store"].get(result.tasks[0].id)["status"]=="needs_recovery"
+        assert ns["scheduler"].run.await_count==5
+        assert ns["key_limiter"].release.await_count==5
+        assert not ns["TASK_RUNNERS"]
         assert all(ns["store"].get(t.id)["status"]=="completed" for t in result.tasks[1:])
     result=await ns["create_video"](request(prompt="single"),None)
     assert isinstance(result,ns["TaskResponse"])

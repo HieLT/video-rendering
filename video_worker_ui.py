@@ -8,7 +8,8 @@ import time
 from pathlib import Path
 
 import aiohttp
-from patchright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+from browser_queue import async_playwright
+from patchright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gap import find_gap_x
 
@@ -129,7 +130,7 @@ def find_captcha_frame(page):
 
 async def _fetch_bytes(url: str) -> bytes:
     async with aiohttp.ClientSession() as s:
-        async with s.get(url, proxy=config.PROXY or None) as r:
+        async with s.get(url, proxy=config.PROXY or None, proxy_auth=config.proxy_auth()) as r:
             return await r.read()
 
 
@@ -886,6 +887,10 @@ async def _select_video_ratio_once(page, ratio: str, account: str, expected_imag
     )
     target = row if await row.count() == 1 else option
     await target.click(timeout=3000)
+    # The combined ratio/duration menu may intentionally stay open on selection.
+    # Dismiss it, then verify the actual retained ratio and references below.
+    if await popup.is_visible():
+        await page.keyboard.press("Escape")
     await popup.wait_for(state="hidden", timeout=3000)
 
     # Read back the retained setting and attachments after frontend reconciliation.
@@ -907,15 +912,55 @@ async def _select_video_ratio_once(page, ratio: str, account: str, expected_imag
     raise RuntimeError(f"Ratio control did not retain requested ratio: {ratio}")
 
 
+def _duration_seconds(label: str):
+    # Parse seconds independently of the ratio in a combined settings label.
+    matches = re.findall(r"(?:^|[\s\u00b7])(\d+)\s*(?:s|\u79d2)(?=$|[\s\u00b7])", label, re.I)
+    return int(matches[0]) if len(matches) == 1 else None
+
+
+async def _duration_control(page):
+    _, root = await _composer(page)
+    controls = root.get_by_role("button", name=VIDEO_DURATION_RE)
+    if await controls.count() != 1:
+        raise RuntimeError("Could not identify a unique duration control")
+    return controls
+
+
+async def _set_duration_slider(page, popup, duration: int):
+    # Dola's new Radix slider uses OPTION INDICES, not seconds. Use keyboard
+    # events and read the committed composer label rather than guessing offsets.
+    sliders = popup.locator('[role="slider"]:visible, input[type="range"]:visible')
+    if await sliders.count() != 1:
+        raise RuntimeError("Could not identify a unique duration slider")
+    slider = sliders.first
+    await slider.press("Home", timeout=3000)
+    previous_position = None
+    for _ in range(201):
+        await page.wait_for_timeout(100)
+        control = await _duration_control(page)
+        current = _duration_seconds(await control.inner_text())
+        if current == duration:
+            return
+        if current is not None and current > duration:
+            break
+        position = await slider.evaluate("e => e.getAttribute('aria-valuenow') ?? e.value")
+        if position is None or position == previous_position:
+            break
+        previous_position = position
+        await slider.press("ArrowRight", timeout=3000)
+    raise RuntimeError(
+        f"Duration slider cannot select {duration}s (last committed value={current}s); "
+        "check the Dola30 extension and duration range configuration"
+    )
+
+
 async def _select_video_duration(page, duration: int, account: str):
     expected = re.compile(rf"^{duration}\s*(?:s|\u79d2)$", re.I)
     try:
         for attempt in range(1, 4):
             try:
-                _, root = await _composer(page)
-                control = root.get_by_role("button", name=VIDEO_DURATION_RE).first
-                selected = (await control.inner_text()).strip()
-                if not expected.fullmatch(selected):
+                control = await _duration_control(page)
+                if _duration_seconds(await control.inner_text()) != duration:
                     # Reopen on every attempt: React can replace the popup and its id.
                     await page.keyboard.press("Escape")
                     await control.click(timeout=5000)
@@ -926,32 +971,34 @@ async def _select_video_duration(page, duration: int, account: str):
                         popup = page.locator(
                             '[role="menu"]:visible, [role="listbox"]:visible, '
                             '[role="dialog"]:visible, [data-slot="popover-content"]:visible'
-                        ).filter(has=page.get_by_text(expected))
+                        ).filter(has=page.locator(
+                            '[role="slider"], input[type="range"]'
+                        ).or_(page.get_by_text(expected)))
                     await popup.first.wait_for(state="visible", timeout=5000)
-                    # Opening animations can still be running after visibility changes.
                     await page.wait_for_timeout(350)
-                    if await popup.count() > 1:
+                    if await popup.count() != 1:
                         raise RuntimeError("Could not identify a unique duration popup")
-                    options = popup.get_by_text(expected).locator("visible=true")
-                    await options.first.wait_for(state="visible", timeout=5000)
-                    if await options.count() > 1:
-                        raise RuntimeError("Multiple visible duration options in duration popup")
-                    # Click the interactive row instead of its animated text span.
-                    row = options.locator(
-                        'xpath=ancestor-or-self::*[self::button or @role="menuitem" '
-                        'or @role="menuitemradio" or @role="option"][1]'
-                    )
-                    target = row if await row.count() == 1 else options
-                    await target.click(timeout=5000)
+                    sliders = popup.locator('[role="slider"]:visible, input[type="range"]:visible')
+                    if await sliders.count():
+                        await _set_duration_slider(page, popup, duration)
+                    else:
+                        options = popup.get_by_text(expected).locator("visible=true")
+                        await options.first.wait_for(state="visible", timeout=5000)
+                        if await options.count() != 1:
+                            raise RuntimeError("Multiple visible duration options in duration popup")
+                        row = options.locator(
+                            'xpath=ancestor-or-self::*[self::button or @role="menuitem" '
+                            'or @role="menuitemradio" or @role="option"][1]'
+                        )
+                        target = row if await row.count() == 1 else options
+                        await target.click(timeout=5000)
                 await page.keyboard.press("Escape")
-                # Require several retained readings, including after the popup closes.
                 stable = 0
                 for _ in range(20):
                     await page.wait_for_timeout(250)
-                    _, root = await _composer(page)
-                    control = root.get_by_role("button", name=VIDEO_DURATION_RE).first
+                    control = await _duration_control(page)
                     selected = (await control.inner_text()).strip()
-                    stable = stable + 1 if expected.fullmatch(selected) else 0
+                    stable = stable + 1 if _duration_seconds(selected) == duration else 0
                     if stable >= 3:
                         _log(f"[{account}] duration verified: {selected} attempt={attempt}")
                         return
@@ -980,7 +1027,8 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                          model: str = "seedance_v2.0", use_extension: bool = True,
                          on_conversation_id=None, on_poll=None, on_balance=None,
                          reference_image_paths: list[str] | None = None,
-                         on_submit=None, name: str = "") -> dict:
+                         on_submit=None, name: str = "", single_attempt=False, monitor=None, on_rejected=None,
+                         start_conversation_id=None, after_index_start=0) -> dict:
     """Full generation flow via UI automation."""
     timeout = timeout or config.VIDEO_TIMEOUT
     model_key = model.lower().replace("-", "_")
@@ -1009,15 +1057,15 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             page = context.pages[0] if context.pages else await context.new_page()
             finish_composer_trace = await _start_composer_trace(page, account)
             _log(f"[{account}] Playwright context opened for generation")
-            await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
+            await page.goto("https://www.dola.com/chat" + ("/" + start_conversation_id if start_conversation_id else ""), timeout=60000, wait_until="domcontentloaded")
             await page.wait_for_timeout(5000)
             cookies = await context.cookies("https://www.dola.com")
             ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
             await _preflight_balance(page, ms_token, fp, config.VIDEO_REQUIRED_POINTS)
 
-            after_index = 0
-            indexed_conversation_id = None
-            for retry in range(11):
+            after_index = after_index_start
+            indexed_conversation_id = start_conversation_id
+            for retry in range(1 if single_attempt else 11):
                 # ---- UI Submission ----
                 for setup_attempt in range(3):
                     try:
@@ -1168,11 +1216,19 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 if on_conversation_id:
                     on_conversation_id(account, conv_id, deadline)
                 try:
-                    return await poll_conversation(
+                    outcome = await (monitor or poll_conversation)(
                         account, page, context, conv_id, timeout, on_poll, on_balance,
-                        after_index=after_index, name=name)
+                        after_index=after_index)
+                    if on_rejected and outcome.get("kind") == "rejected":
+                        if not on_rejected(outcome["poll"]):
+                            return outcome
+                        after_index = outcome["poll"]["latestIndex"]
+                        _log(f"[{account}] Dola rejected generation; retrying in the same browser")
+                        await page.wait_for_timeout(5000)
+                        continue
+                    return outcome
                 except GenerationRejectedError as exc:
-                    if retry >= 10:
+                    if single_attempt or retry >= 10:
                         raise
                     if exc.latest_index <= after_index:
                         raise RuntimeError("Cannot safely identify the rejected submission for retry") from exc

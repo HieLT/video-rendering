@@ -95,3 +95,42 @@ Open **http://127.0.0.1:8000/web** to access the Admin Dashboard.
 
 ## 📜 License
 For educational and internal testing purposes.
+
+### Browser queue and persisted video monitoring
+
+All Python Playwright entry points use browser_queue.async_playwright.
+The process-shared FIFO queue admits at most 10 driver sessions. Each retry,
+scheduled check and manual browser operation takes a new ticket at the tail.
+Run one uvicorn worker per workspace; a scheduler lock rejects a second server.
+
+Video jobs persist their account reservation, ordered reference-image copies,
+dispatch checkpoint, generation retry count and next check in SQLite.
+After Dola confirms generation, Chromium closes. The first check uses the
+ETA from the original API text minus five minutes (minimum zero wait).
+If ETA is unavailable, the default 30-minute ETA means a 25-minute wait.
+Each inspection polls for up to 20 seconds after page navigation. If pending,
+there are at most three additional inspections, five minutes apart.
+Jobs still unresolved move to the dashboard review filter (needs_recovery).
+
+Review jobs keep their account reservation and count toward the 100 unfinished
+job admission limit. Manual Check/Continue starts a fresh inspection cycle at
+the FIFO tail without resetting the generation retry count. Stop monitoring
+releases the account but does not cancel generation remotely or refund quota.
+Open chat also goes through the shared queue.
+
+There are at most 10 generation retries after the initial attempt. Transport
+failures during an uncertain dispatch are reconciled against the saved
+conversation; without sufficient evidence the job moves to review rather
+than submitting a duplicate. Recovery checks never charge generation quota.
+Generated videos with a download failure can resume their saved download.
+
+Task-owned image copies live in .job_media/; keep this directory with
+tasks.db for restart recovery. Runtime browser tickets live in .runtime/;
+stale ticket owners are reclaimed using OS file locks.
+
+Offline checks:
+- python -B test_video_schedule.py
+- python -B test_scheduler_integration.py
+- python -B test_scheduler_dashboard.py
+- python -B test_video_confirmation.py
+- python -B test_resume_usage.py

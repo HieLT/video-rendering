@@ -81,6 +81,7 @@ async def main():
             await good.get_by_role('button',name='Select',exact=True).click()
             await page.wait_for_function("document.querySelector('#projectProgress').textContent.includes('2 / 2 SELECTED')")
             assert fixture.store.get_scene(scene['id'])['selected_task_id']==completed
+            await page.wait_for_function(f"document.querySelector('.project-version[data-task-id=\"{completed}\"]').dataset.selected==='true'")
             assert '\u2605 SELECTED' in await good.inner_text()
             old=page.locator(f'.project-version[data-task-id="{older}"]')
             await old.get_by_role('button',name='Select',exact=True).click()

@@ -4,6 +4,7 @@ import ast
 import json
 import sqlite3
 import time
+from video_schedule import VideoScheduler
 import unittest
 from pathlib import Path
 from unittest.mock import patch, AsyncMock
@@ -21,7 +22,7 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.pool=FixturePool.__new__(FixturePool)
         self.pool.semaphore=asyncio.Semaphore(2)
-        self.pool._locks={};self.pool._activities={};self.pool.accounts=['one']
+        self.pool.reservations={};self.pool._locks={};self.pool._activities={};self.pool.accounts=['one']
         self.pool._conn=sqlite3.connect(':memory:')
         self.pool._conn.execute('CREATE TABLE accounts_meta(name TEXT PRIMARY KEY,last_used_at REAL,cooldown_until REAL)')
         self.pool._conn.execute("INSERT INTO accounts_meta VALUES ('one',0,0)");self.pool._conn.commit()
@@ -87,7 +88,7 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(pools.NoUsableAccountsError): await self.pool.generate_video('p')
         self.assertEqual(self.worker.await_count,1)
     async def test_status_changes_only_when_account_locked(self):
-        ns,client=isolated_api();store=ns['store'];ns['pool']=self.pool
+        ns,client=isolated_api();store=ns['store'];ns['pool']=self.pool;ns['scheduler']=VideoScheduler(store,self.pool)
         self.pool.account_uuid=lambda _: 'uuid'
         store.create('test','seedance-2.5','prompt','16:9',10)
         lock=self.pool._locks.setdefault('one',asyncio.Lock());await lock.acquire()
@@ -99,10 +100,10 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         try:
             await asyncio.sleep(.12)
             self.assertEqual(store.get('test')['status'],'queued');self.assertIsNone(store.get('test')['started_at'])
-            lock.release();await asyncio.wait_for(task,2)
+            store.update('test',status='stopped');lock.release();await asyncio.wait_for(task,2)
         finally: store._conn.close()
     async def test_stopped_before_runner_starts_does_not_execute(self):
-        ns,client=isolated_api();store=ns['store'];ns['pool']=self.pool
+        ns,client=isolated_api();store=ns['store'];ns['pool']=self.pool;ns['scheduler']=VideoScheduler(store,self.pool)
         store.create('test','seedance-2.5','prompt','16:9',10);store.update('test',status='stopped')
         try:
             with self.assertRaises(asyncio.CancelledError): await ns['_run_task']('test','seedance-2.5','prompt','16:9',10,[],client)
@@ -110,7 +111,7 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         finally: store._conn.close()
 
     async def test_stop_busy_queued_via_existing_action(self):
-        ns,client=isolated_api();store=ns['store'];ns['pool']=self.pool
+        ns,client=isolated_api();store=ns['store'];ns['pool']=self.pool;ns['scheduler']=VideoScheduler(store,self.pool)
         tree=ast.parse(Path('server.py').read_text(encoding='utf-8'))
         node=next(n for n in tree.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='admin_task_action')
         ns.update(TASK_ACTION_LOCKS={},_admin_auth=lambda _:None)
@@ -125,7 +126,7 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result['status'],'stopped');self.assertTrue(runner.cancelled())
             lock.release();await asyncio.sleep(.05)
             self.assertEqual(self.worker.await_count,0);self.assertEqual(store.get('test')['status'],'stopped')
-            self.assertEqual(len(self.pool._admission_waiters),0)
+            self.assertFalse(ns['scheduler'].reserved)
         finally:
             if lock.locked(): lock.release()
             store._conn.close()
@@ -145,7 +146,7 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         # The busy head rotates once after a bounded recheck. Existing waiters
         # stay ahead of later arrivals; exact FIFO is not promised across retries.
     async def test_no_usable_failure_code(self):
-        ns,client=isolated_api();store=ns['store'];ns['pool']=self.pool
+        ns,client=isolated_api();store=ns['store'];ns['pool']=self.pool;ns['scheduler']=VideoScheduler(store,self.pool)
         ns['NoUsableAccountsError']=pools.NoUsableAccountsError;self.pool.accounts=[]
         store.create('test','seedance-2.5','prompt','16:9',10)
         try:
@@ -178,9 +179,9 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         self.worker.side_effect=worker
         await asyncio.wait_for(asyncio.gather(self.pool.generate_video('a'),self.pool.generate_video('b')),2)
         self.assertEqual(set(started),{'one','two'})
-    async def test_waiting_semaphore_remains_queued(self):
-        ns,client=isolated_api();store=ns['store'];ns['pool']=self.pool;self.pool.account_uuid=lambda _:'uuid'
-        self.pool.semaphore=asyncio.Semaphore(0)
+    async def test_waiting_scheduler_account_remains_queued(self):
+        ns,client=isolated_api();store=ns['store'];ns['pool']=self.pool;ns['scheduler']=VideoScheduler(store,self.pool);self.pool.account_uuid=lambda _:'uuid'
+        ns['scheduler'].account=AsyncMock(return_value=False)
         store.create('test','seedance-2.5','prompt','16:9',10)
         runner=asyncio.create_task(ns['_run_task']('test','seedance-2.5','prompt','16:9',10,[],client))
         try:
@@ -191,7 +192,7 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         finally: store._conn.close()
     async def test_per_key_capacity_wait_keeps_queued_and_honors_stop(self):
         from collections import defaultdict
-        ns,client=isolated_api();store=ns['store'];ns['pool']=self.pool
+        ns,client=isolated_api();store=ns['store'];ns['pool']=self.pool;ns['scheduler']=VideoScheduler(store,self.pool)
         tree=ast.parse(Path('server.py').read_text(encoding='utf-8'))
         node=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='KeyConcurrencyLimiter')
         ns['defaultdict']=defaultdict
@@ -247,6 +248,25 @@ class ProjectTests(unittest.TestCase):
             self.assertEqual((row['scene_id'],row['batch_id'],row['batch_index'],row['batch_count']),(task['scene_id'],result['batch_id'],i,3))
             self.assertEqual(row['prompt'],'A quiet forest');self.assertEqual(row['reference_snapshot'],'[]')
         self.assertEqual(len(self.queued),3)
+
+    def test_generate_all_runs_through_scheduler_and_keeps_scene_links(self):
+        self.ready()
+        result = self.project_generate()
+        async def worker(*args, **kwargs):
+            output = Path(self.tmp.name) / 'fixture.mp4'
+            output.write_bytes(b'fake video')
+            return {'local_path': str(output)}
+        self.ns['pool'].generate_video = worker
+        for args in self.queued:
+            library.run_saved_task(self, args)
+        for item in result['tasks']:
+            row = self.store.get(item['task_id'])
+            self.assertEqual(row['status'], 'completed')
+            self.assertEqual(row['phase'], 'completed')
+            self.assertEqual(row['scene_id'], item['scene_id'])
+            self.assertEqual(row['batch_id'], result['batch_id'])
+            self.assertIn(item['task_id'], row['video_url'])
+            self.assertTrue(row['reference_paths'])
     def test_duplicate_calls_skip_active(self):
         self.ready();first=self.project_generate();second=self.project_generate()
         self.assertEqual(first['created'],3);self.assertEqual(second['created'],0)
@@ -358,17 +378,17 @@ class ProjectTests(unittest.TestCase):
         result=self.project_generate()
         reason=next(r['reason'] for r in result['skipped_scenes'] if r['scene_id']==scene['id'])
         self.assertEqual(reason,'ALREADY_SELECTED')
-    def test_stopped_temporary_copies_are_cleaned_before_execution(self):
+    def test_stopped_durable_copies_remain_without_execution(self):
         root=Path(self.tmp.name)/'temporary';root.mkdir();image=root/'image.png';image.write_bytes(library.image_bytes())
         self.ns['UPLOADED_REFERENCES']['uploaded://fixture']=(root,[str(image)])
         request=self.ns['VideoGenRequest'](prompt='forest',reference_images=['uploaded://fixture'])
         response=asyncio.run(self.ns['_submit_video'](request,self.client_policy))
         task=self.store.get(response.id);self.store.update(response.id,status='stopped')
-        copies=[Path(value[0]) for value in self.ns['UPLOADED_REFERENCES'].values()]
+        copies=[Path(value[8:]) for value in json.loads(task['reference_images'])]
         self.assertTrue(copies)
         with self.assertRaises(asyncio.CancelledError):
             asyncio.run(self.runner(task['id'],task['model'],task['prompt'],task['ratio'],task['duration'],json.loads(task['reference_images']),self.client_policy))
-        self.assertFalse(self.ns['UPLOADED_REFERENCES']);self.assertTrue(all(not path.exists() for path in copies))
+        self.assertFalse(self.ns['UPLOADED_REFERENCES']);self.assertTrue(all(path.is_file() for path in copies))
         self.assertEqual(self.store.get(task['id'])['status'],'stopped')
 
 if __name__=='__main__': unittest.main()
