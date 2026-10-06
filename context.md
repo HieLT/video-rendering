@@ -232,3 +232,44 @@ Renew Dola account and duplicate Favorite UI/API are intentionally excluded. Exi
 Run one server via python run_server.py --host 127.0.0.1 --port 8000, without --reload. A workspace scheduler lock prevents two scheduler servers. Existing schema-v6 databases receive additive scheduling columns with a .before_queue.bak snapshot before migration. Restart the server to activate; no live database migration or live Dola generation was performed during integration.
 
 Validation uses temporary SQLite databases, mocked Dola workers and browser fixtures, including Generate All, scene reference order, restart recovery, quota claims, selection, batch UI and time filters.
+
+## Cập nhật vận hành và Git (2026-10-07)
+
+Phần này cập nhật trạng thái sau các milestone ở trên; các ghi chú cũ “không commit/push” chỉ mô tả thời điểm của milestone đó.
+
+- Nhánh làm việc: `adding-more-scene`. Đã merge main `21d5aeac` vào bản Project `20806774` qua commit `e0aa7471`; bản sửa Busy là `1ee6adf7`. Cả hai đã push lên `origin/adding-more-scene`. Nhánh dự phòng trước merge: `backup/adding-more-scene-before-queue-20261006` (local).
+- Sửa Busy lúc khởi động: task lịch sử `needs_recovery` có `phase=ready` chưa thuộc scheduler mới không tự giữ account. `recover_reservations()` và `release()` cùng loại các record này khỏi danh sách giữ account. Test hồi quy nằm trong `test_queue_merge.py`.
+- Theo yêu cầu người dùng, đã gọi Stop cho 26 task recovery cũ đang giữ account trên server local; không xóa video hoặc record lịch sử. Lúc kiểm tra sau đó còn một account Busy do Open Web thực sự đang mở. Đây là thao tác trên dữ liệu local, không phải dữ liệu được push GitHub.
+- Busy vẫn hợp lệ khi account đang mở browser hoặc được scheduler giữ cho video chưa hoàn tất, kể cả lúc Chrome đã đóng để chờ ETA. Task scheduler mới ở trạng thái `needs_recovery` vẫn giữ account; Check now tiếp tục kiểm tra, Stop nhả reservation. Đóng cửa sổ Open Web sẽ nhả khóa phiên đó. Không ép nhãn Active cho account chưa đăng nhập hợp lệ.
+
+### Tắt máy và chạy lại
+
+Dola có thể tiếp tục xử lý yêu cầu đã nhận trên server của họ khi máy local tắt. Sau khi chạy lại dự án, task `queued`/`processing` được phục hồi từ SQLite; task quá lịch kiểm tra sẽ chờ slot để kiểm tra kết quả và tải video. Không tự chạy lại task `needs_recovery` hoặc `stopped`; dùng Check now khi task có conversation/result đã lưu. Nếu bị ngắt ngay lúc gửi yêu cầu, checkpoint có thể yêu cầu kiểm tra thủ công để tránh tạo trùng. Nên chờ trạng thái Waiting for Dola rồi Ctrl+C trước khi tắt máy.
+
+Cơ chế này áp dụng cả Project và Video Tasks. Video gen từ Project là cùng một task hiển thị trong Video Tasks và Project → scene → Versions; không cần mở tab nào để scheduler chạy. Video hoàn tất vẫn gắn với scene và lịch sử phiên bản tương ứng.
+
+Khi chuyển máy, clone code chưa đủ: cần giữ `tasks.db`, `pool_usage.db`, `accounts/`, `.job_media/`, `assets/`, `downloads/`, `tag/` nếu có và cấu hình local phù hợp. Profile đăng nhập có thể cần Verify/đăng nhập lại trên máy mới. Dữ liệu và secrets local không được đẩy lên GitHub bằng lần push code này.
+
+### Cấu hình gen và số candidates trong Project
+
+- Generate Scene/Generate All dùng `model`, `ratio`, `duration` đã lưu trên từng scene, thường đến từ JSON Import Scenes; không lấy giá trị đang chọn ở form Video Tasks.
+- Tại lần kiểm tra ngày 2026-10-07, cả 14 scene trong database local dùng `seedance-2.5`, `16:9`, `30`. Đây là dữ liệu tại thời điểm kiểm tra, không phải mặc định cố định của mọi Project. API tạo scene nếu bỏ các trường này mặc định `seedance-2.0`, `16:9`, `10`.
+- `Candidates per Scene` ở đầu Project áp dụng cho Generate All Ready. `Candidates` bên cạnh từng scene chỉ áp dụng cho Regenerate riêng scene đó. Ví dụ ô trên cùng x1, ô scene x4 thì Generate All vẫn tạo một video cho mỗi scene đủ điều kiện; Regenerate scene đó tạo bốn video.
+- Muốn bảy scene đủ điều kiện tạo bốn video/scene, chọn x4 ở đầu Project: tổng 28 task. Scene đang queued/processing sẽ được bỏ qua; Ready=0 thì Generate All không tạo thêm cho các scene đang chạy. Hộp xác nhận hiển thị số task trước khi gửi.
+
+### Lệnh chạy trên máy hiện tại
+
+Trong CMD, khi đã kích hoạt `.venv` và đứng tại `C:\dola\video-rendering`:
+
+```bat
+python run_server.py --host 127.0.0.1 --port 8000
+```
+
+Nếu chưa kích hoạt môi trường:
+
+```bat
+cd /d C:\dola\video-rendering
+C:\dola\.venv\Scripts\python.exe run_server.py --host 127.0.0.1 --port 8000
+```
+
+Mở `http://127.0.0.1:8000`. Sau khi thay code Python cần restart server; thay UI thì Ctrl+F5. Dùng launcher này trên Windows, không thêm `--reload`.
