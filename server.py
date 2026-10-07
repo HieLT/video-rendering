@@ -550,11 +550,23 @@ async def admin_accounts(x_admin_key: str | None = Header(default=None)):
     for account in pool.list_accounts():
         public = pool.public_account(account)
         public["ready_to_generate"] = bool(
-            pool._schedulable(account) and not account["busy"]
+            scheduler.eligible(account)
             and JOBS.get(account["name"], {}).get("status") != "running"
         )
+        public["active_requests"] = len(scheduler.reservation_ids(account['name']))
         accounts.append(public)
-    return {"accounts": accounts}
+    return {"accounts": accounts, "dual_requests": scheduler.dual_requests}
+
+
+class AccountRequestMode(BaseModel):
+    enabled: bool = Field(strict=True)
+
+
+@app.patch("/api/admin/account-request-mode")
+async def admin_account_request_mode(body: AccountRequestMode, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    scheduler.set_dual_requests(body.enabled)
+    return {"dual_requests": scheduler.dual_requests}
 
 
 @app.patch("/api/admin/accounts/{name}")
@@ -990,8 +1002,7 @@ async def admin_task_action(task_id: str, action: str, x_admin_key: str | None =
             return {"ok": True, "status": "stopped"}
         if not row.get("account"):
             raise HTTPException(409, "Task has no assigned account")
-        owner = scheduler.reserved.get(row["account"])
-        if owner and owner != task_id:
+        if not scheduler.can_resume(row["account"], task_id):
             raise HTTPException(409, "Account is reserved by another task")
         if action == "open":
             lock = pool._locks.get(row["account"])
@@ -1003,7 +1014,7 @@ async def admin_task_action(task_id: str, action: str, x_admin_key: str | None =
             return {"ok":True, "status":"queued"}
         if not row.get("conversation_id") and not row.get("result_url"):
             raise HTTPException(409, "Uncertain submission: use Open chat to inspect history before resubmitting")
-        scheduler.reserved[row["account"]] = task_id
+        scheduler.reserved.setdefault(row["account"], task_id)
         store.update(task_id, status="queued", phase="downloading" if row.get("result_url") else "checking",
                      error=None, finished_at=None, next_check_at=None, check_round=0)
         TASK_RUNNERS[task_id] = asyncio.create_task(_run_task(task_id))

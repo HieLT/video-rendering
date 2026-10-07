@@ -308,11 +308,13 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
         <button class="btn btn-p" onclick="openAddAccount()">＋ Add Account</button>
       </div>
       <button id="deleteSelectedAccounts" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('accounts')">Delete selected (0)</button>
+      <p><label><input id="dualRequests" type="checkbox" onchange="setAccountRequestMode(this)"> Cho phép 2 request đồng thời / account</label></p>
+      <p class="tiny">Áp dụng cho Video Tasks và Projects. Hai video chạy trong hai chat riêng; quota vẫn tối đa 2 video/account. Khi tắt, các request đang chạy tiếp tục, request mới chờ account trống.</p>
       <div class="account-groups" aria-label="Account email groups">
         <button class="account-group" id="accountGroupGmail" aria-pressed="true" onclick="switchAccountGroup('gmail')"><strong>Gmail (@gmail.com)</strong><span class="account-counts">Loading…</span></button>
         <button class="account-group" id="accountGroupOther" aria-pressed="false" onclick="switchAccountGroup('other')"><strong>Non-Gmail (không phải Gmail)</strong><span class="account-counts">Loading…</span></button>
       </div>
-      <p class="tiny">Sẵn sàng gen: Dispatch bật, đăng nhập hợp lệ, còn quota/credit và không bận hoặc bị giới hạn. Tài khoản chưa có email thuộc nhóm Non-Gmail.</p>
+      <p class="tiny">Sẵn sàng gen: Dispatch bật, đăng nhập hợp lệ, còn quota/credit và còn slot request. Tài khoản chưa có email thuộc nhóm Non-Gmail.</p>
       <div id="accountsTable"></div>
       <div id="googleImportProgress" class="tiny" aria-live="polite"></div>
     </div>
@@ -608,6 +610,7 @@ function switchAccountGroup(group){
 async function loadAccounts(){
   if(bulkDeleting.accounts)return;
   const [a,j,imports]=await Promise.all([api('/api/admin/accounts'),api('/api/admin/jobs'),api('/api/admin/accounts/google-bulk/progress')]);
+  if(!q('#dualRequests').disabled)q('#dualRequests').checked=!!a.dual_requests;
   q('#googleImportProgress').innerHTML=Object.values(imports.imports||{}).map(p=>{
     const count=status=>p.rows.filter(r=>r.status===status).length;
     return '<h3>Google import: '+(p.status==='running'?'Đang chạy':'Đã xong')+'</h3><p>'+count('queued')+' chờ · '+count('running')+' đang chạy · '+count('success')+' thành công · '+count('failed')+' thất bại</p><details><summary>Chi tiết</summary>'+p.rows.map(r=>'<div>'+esc(r.email)+' — '+esc(r.status)+(r.error?' · '+esc(r.error):'')+'</div>').join('')+'</details>';
@@ -616,11 +619,20 @@ async function loadAccounts(){
   accountSnapshot=a.accounts;accountJobs=j.jobs||{};
   renderAccounts();
 }
+async function setAccountRequestMode(input){
+  const enabled=input.checked;input.disabled=true;
+  try{
+    const result=await api('/api/admin/account-request-mode',{method:'PATCH',body:{enabled}});
+    input.checked=!!result.dual_requests;
+  }catch(e){input.checked=!enabled;alert(e.message);}
+  finally{input.disabled=false;}
+  await loadAccounts();
+}
 function renderAccounts(){
   const jobs=accountJobs;
   for(const [group,id] of [['gmail','accountGroupGmail'],['other','accountGroupOther']]){
     const members=accountSnapshot.filter(x=>accountEmailGroup(x)===group);
-    const ready=members.filter(x=>x.ready_to_generate&&!x.busy&&jobs[x.name]?.status!=='running').length;
+    const ready=members.filter(x=>x.ready_to_generate&&jobs[x.name]?.status!=='running').length;
     const button=q('#'+id);
     button.setAttribute('aria-pressed',String(group===accountGroup));
     button.querySelector('.account-counts').textContent=`${members.length} tài khoản · ${ready} sẵn sàng gen`;
@@ -639,7 +651,7 @@ function renderAccounts(){
       index+1,
       accLabel(x)+warn,
       esc(({google:"Google",facebook:"Facebook",cookies:"Cookies imported",unknown:"Unknown"})[x.account_type]||"Unknown"),
-      badge,
+      badge+(x.active_requests?`<div class="tiny">${Number(x.active_requests)} request đang chạy</div>`:''),
       `<label class="sw"><input type="checkbox" ${x.scheduling?'checked':''} onchange="setSched('${x.name}',this.checked)"><i></i></label>`,
       `<b>${x.used_today}</b> / ${x.limit}`,
       fmt(x.last_used_at),

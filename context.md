@@ -281,3 +281,13 @@ Mở `http://127.0.0.1:8000`. Sau khi thay code Python cần restart server; tha
 - BrowserQueue vẫn tối đa 10 sessions, FIFO và chia sẻ giữa process; timestamp admission trong SQLite giãn các lượt khởi động ít nhất 0,5 giây, kể cả Generate All, bulk import và lượt kiểm tra video. Không giữ transaction SQLite trong lúc sleep.
 - `config.PROXY` mặc định rỗng; `.env.local` cũng đặt `DOLA_PROXY=`.
 - Kiểm tra: 66 tests bulk/queue/scheduler pass; bổ sung kiểm tra model API default 5 và reject >5. Integration process-shared queue/recovery/quota pass. Browser workflow 40 Scenes pass với bundled Chromium channel; headless shell bị renderer crash nên dùng launch override trong RAM, không sửa test UI. Không chạy generation Dola thật hoặc restart server người dùng.
+
+## Chế độ 2 request/account (2026-10-07)
+
+- Tab Accounts có nút “Cho phép 2 request đồng thời / account”, mặc định tắt. PATCH `/api/admin/account-request-mode` nhận `{ "enabled": true/false }`, yêu cầu admin auth. Trạng thái được lưu trong `pool_usage.db`, bảng additive `scheduler_settings`, giữ qua restart.
+- Bật chế độ cho phép cùng account giữ tối đa 2 video chưa hoàn tất. Sau khi Dola xác nhận request đầu, Chrome đóng và request thứ hai có thể được gửi vào chat mới, không chờ video đầu xong. Video Tasks và Projects cùng áp dụng vì dùng chung scheduler.
+- Profile/browser account lock, BrowserQueue tối đa 10 và giãn lượt 0,5 giây, quota/API key limits, retry/ETA/check/download/selection pipeline giữ nguyên. Không mở đồng thời hai Chrome dùng cùng persistent profile; hai generation chạy đồng thời ở Dola.
+- Quota vẫn 2 theo cơ chế reset hiện có. Assignment chưa dispatch giữ quota slot; ledger claim idempotent, không tăng quota khi polling/recovery. UI Accounts hiển thị số request đang chạy và readiness khi còn slot thứ hai.
+- Tắt chế độ không hủy các request đã nhận; chặn assignment mới cho account còn request. Restart/Check now/Stop quản lý được cả hai tasks, hoàn tất hoặc Stop một task vẫn giữ reservation của task còn lại. Legacy recovery phase=ready vẫn không tự giữ account.
+- Validation offline: 9 tests mới cho capacity/quota/restart/toggle/auth/profile lock, 62 scheduler/queue tests và 78 account/bulk/storage/review tests pass. Browser toggle bật/reload/tắt, workflow 40 Scenes, Production UX 40x3=120 candidates pass; process integration pass. Tests dùng temporary stores/mock generation, chưa xác nhận Dola thật có chấp nhận hai generation/account; không restart server người dùng.
+- Chạy: `.\.venv\Scripts\python.exe -m unittest test_account_request_mode -q` và `.\.venv\Scripts\python.exe test_account_request_mode_ui.py`.

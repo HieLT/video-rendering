@@ -446,8 +446,8 @@ class BrowserPool:
         row = self._meta(account)
         return not row or row["credit_balance"] is None or row["credit_balance"] >= required
 
-    def _schedulable(self, a: dict) -> bool:
-        return (a["name"] not in self.reservations and a["scheduling"] and a.get("login_ok") == 1 and a.get("auth_state") == "active" and not a["cooling"] and not a["rate_limited"]
+    def _schedulable(self, a: dict, *, allow_reserved: bool = False) -> bool:
+        return ((allow_reserved or a["name"] not in self.reservations) and a["scheduling"] and a.get("login_ok") == 1 and a.get("auth_state") == "active" and not a["cooling"] and not a["rate_limited"]
                 and not a["quota_blocked"] and a["used_today"] < DAILY_LIMIT
                 and (a["credit_balance"] is None or a["credit_balance"] >= 2))
 

@@ -90,6 +90,51 @@ class VideoScheduler:
         self.store,self.pool=store,pool
         self.reserved={}
         pool.reservations=self.reserved
+        self.dual_requests = False
+        db = getattr(pool, '_conn', None)
+        if db is not None:
+            db.execute("CREATE TABLE IF NOT EXISTS scheduler_settings (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS video_job_account_claims(task_id TEXT,account TEXT,PRIMARY KEY(task_id,account))")
+            db.commit()
+            setting = db.execute("SELECT value FROM scheduler_settings WHERE name='dual_requests'").fetchone()
+            self.dual_requests = bool(setting and setting[0] == '1')
+
+    def set_dual_requests(self, enabled):
+        with self.pool._conn:
+            self.pool._conn.execute("INSERT OR REPLACE INTO scheduler_settings(name,value) VALUES('dual_requests',?)",
+                                    ('1' if enabled else '0',))
+        self.dual_requests = enabled
+
+    def reservation_ids(self, account):
+        rows = self.store._conn.execute(
+            "SELECT id FROM tasks WHERE account=? AND deleted_at IS NULL AND (status IN ('queued','processing') OR (status='needs_recovery' AND COALESCE(phase,'ready')<>'ready')) ORDER BY created_at",
+            (account,)).fetchall()
+        owners = {row[0] for row in rows}
+        owner = self.reserved.get(account)
+        if owner:
+            owners.add(owner)
+        return owners
+
+    def can_resume(self, account, task_id):
+        owners = self.reservation_ids(account)
+        return task_id in owners or len(owners) < (2 if self.dual_requests else 1)
+
+    def eligible(self, account):
+        lock = self.pool._locks.get(account['name'])
+        if lock and lock.locked():
+            return False
+        if not self.dual_requests:
+            return self.pool._schedulable(account)
+        if not self.pool._schedulable(account, allow_reserved=True):
+            return False
+        owners = self.reservation_ids(account['name'])
+        if len(owners) >= 2:
+            return False
+        # Pending assignments also hold quota before on_submit charges it.
+        unclaimed = sum(not self.pool._conn.execute(
+            "SELECT 1 FROM video_job_account_claims WHERE task_id=? AND account=?",
+            (owner, account['name'])).fetchone() for owner in owners)
+        return account['used_today'] + unclaimed < 2
 
     def recover_reservations(self):
         rows=self.store._conn.execute("SELECT * FROM tasks WHERE (status IN ('queued','processing') OR (status='needs_recovery' AND COALESCE(phase,'ready')<>'ready')) AND deleted_at IS NULL ORDER BY created_at").fetchall()
@@ -162,6 +207,8 @@ class VideoScheduler:
         db.commit()
         if db.execute("SELECT 1 FROM video_job_account_claims WHERE task_id=? AND account=?",(row["id"],row["account"])).fetchone(): return
         used=self.pool.used_today(row["account"])
+        if self.dual_requests and used >= 2:
+            raise worker.AccountLimitedError("Account has reached its two-video quota")
         now=time.time()
         with db:
             inserted=db.execute("INSERT OR IGNORE INTO video_job_account_claims VALUES (?,?)",(row["id"],row["account"])).rowcount
@@ -173,8 +220,8 @@ class VideoScheduler:
     async def account(self,row):
         if row.get("account"):
             owner=self.reserved.get(row["account"])
-            if owner and owner!=row["id"]: return False
-            self.reserved[row["account"]]=row["id"]
+            if owner and owner!=row["id"] and not self.can_resume(row["account"], row["id"]): return False
+            self.reserved.setdefault(row["account"],row["id"])
             return True
         accounts = self.pool.list_accounts()
         if not accounts:
@@ -182,9 +229,8 @@ class VideoScheduler:
                               error='No account profiles in pool', finished_at=time.time())
             return False
         for acc in accounts:
-            lock=self.pool._locks.get(acc["name"])
-            if self.pool._schedulable(acc) and not (lock and lock.locked()):
-                self.reserved[acc["name"]]=row["id"]
+            if self.eligible(acc):
+                self.reserved.setdefault(acc["name"],row["id"])
                 self.store.update(row["id"],account=acc["name"],account_uuid=self.pool.account_uuid(acc["name"]))
                 return True
         return False
