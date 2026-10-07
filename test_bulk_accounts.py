@@ -1,9 +1,49 @@
 import asyncio
+import ast
 import unittest
+from pathlib import Path
+from pydantic import BaseModel, Field, ValidationError
 from bulk_accounts import parse_accounts, run_import
 
 
 class BulkTests(unittest.IsolatedAsyncioTestCase):
+    def test_api_defaults_to_five_and_rejects_more(self):
+        tree = ast.parse(Path('server.py').read_text(encoding='utf-8'))
+        model = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'GoogleBulkAdd')
+        namespace = {'BaseModel': BaseModel, 'Field': Field}
+        exec(compile(ast.Module(body=[model], type_ignores=[]), 'server.py', 'exec'), namespace)
+        request = namespace['GoogleBulkAdd']
+        self.assertEqual(request(text='a@example.com|fixture').concurrency, 5)
+        for count in (0, 6, 20, True, 1.5):
+            with self.assertRaises(ValidationError):
+                request(text='a@example.com|fixture', concurrency=count)
+
+    async def test_slow_submit_does_not_serialize_workers_and_cap_is_five(self):
+        accounts = [(f'{i}@example.com', 'fixture') for i in range(7)]
+        progress = {'rows': [{'status': 'queued'} for _ in accounts]}
+        started = []
+        release = asyncio.Event()
+        five_started = asyncio.Event()
+        async def submit(email, password):
+            started.append(email)
+            if len(started) == 5:
+                five_started.set()
+            await release.wait()
+            return email
+        task = asyncio.create_task(run_import(accounts, 20, progress, submit, lambda _: 'success'))
+        try:
+            await asyncio.wait_for(five_started.wait(), 4)
+            self.assertEqual(len(started), 5)
+            self.assertEqual(sum(r['status'] == 'queued' for r in progress['rows']), 2)
+            release.set()
+            await asyncio.wait_for(task, 4)
+            self.assertEqual(len(started), 7)
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def test_ten_accounts_start_five_before_any_finishes(self):
         accounts = [(f'{i}@example.com', 'fixture') for i in range(10)]
         progress = {'rows': [{'status': 'queued'} for _ in accounts]}

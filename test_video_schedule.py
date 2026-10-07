@@ -223,15 +223,38 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
         finally:os.chdir(previous)
 
 class QueueTests(unittest.IsolatedAsyncioTestCase):
+    async def test_launch_spacing_shared_between_queue_instances(self):
+        with tempfile.TemporaryDirectory() as root:
+            queues = [BrowserQueue(root) for _ in range(3)]
+            starts = []
+            release = asyncio.Event()
+            all_started = asyncio.Event()
+            async def job(queue):
+                async with queue.slot():
+                    starts.append(asyncio.get_running_loop().time())
+                    if len(starts) == 3:
+                        all_started.set()
+                    await release.wait()
+            tasks = [asyncio.create_task(job(queue)) for queue in queues]
+            try:
+                await asyncio.wait_for(all_started.wait(), 4)
+                self.assertTrue(all(b - a >= .49 for a, b in zip(starts, starts[1:])))
+                self.assertTrue(all(not task.done() for task in tasks))
+            finally:
+                release.set()
+                await asyncio.gather(*tasks)
+
     async def test_limit_fifo_and_cancelled_waiter(self):
         with tempfile.TemporaryDirectory() as root:
             queue=BrowserQueue(root,limit=2)
             active=0;peak=0;order=[]
             release=asyncio.Event()
+            two_started=asyncio.Event()
             async def job(index):
                 nonlocal active,peak
                 async with queue.slot():
                     order.append(index);active+=1;peak=max(peak,active)
+                    if len(order)==2: two_started.set()
                     if index<2: await release.wait()
                     await asyncio.sleep(.01)
                     active-=1
@@ -239,6 +262,7 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
             for index in range(6):
                 tasks.append(asyncio.create_task(job(index)))
                 await asyncio.sleep(.03)
+            await asyncio.wait_for(two_started.wait(), 3)
             self.assertEqual(order,[0,1])
             tasks[3].cancel()
             with self.assertRaises(asyncio.CancelledError): await tasks[3]

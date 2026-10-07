@@ -838,7 +838,7 @@ ACCOUNT_IMPORT_TASKS = set()
 
 class GoogleBulkAdd(BaseModel):
     text: str = Field(max_length=200_000, repr=False)
-    concurrency: int = Field(default=2, ge=1, le=20, strict=True)
+    concurrency: int = Field(default=5, ge=1, le=5, strict=True)
 
 
 @app.post("/api/admin/accounts/google-bulk", status_code=202)

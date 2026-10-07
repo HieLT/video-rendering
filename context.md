@@ -151,7 +151,7 @@ Nếu cần cài dependencies/browser:
 .\.venv\Scripts\python.exe -m patchright install chromium
 ```
 
-Config đọc `.env.local`, biến môi trường terminal ưu tiên. Default code: MAX_CONCURRENCY=100, MAX_PENDING_TASKS=500; local config có thể override. Để không dùng explicit application proxy, đặt `DOLA_PROXY=`; mặc định code là http://127.0.0.1:7890. Không chép nội dung keys/passwords vào context.
+Config đọc `.env.local`, biến môi trường terminal ưu tiên. Default code: MAX_CONCURRENCY=100, MAX_PENDING_TASKS=500; local config có thể override. Proxy mặc định trong code là rỗng (`DOLA_PROXY=`), không cấu hình explicit application proxy. Không chép nội dung keys/passwords vào context.
 
 Sau sửa Python cần restart server; sau sửa HTML cần reload/Ctrl+F5. Người dùng muốn tự chạy server; không tự mở lại hoặc dừng server của người dùng chỉ để kiểm thử UI.
 
@@ -273,3 +273,11 @@ C:\dola\.venv\Scripts\python.exe run_server.py --host 127.0.0.1 --port 8000
 ```
 
 Mở `http://127.0.0.1:8000`. Sau khi thay code Python cần restart server; thay UI thì Ctrl+F5. Dùng launcher này trên Windows, không thêm `--reload`.
+
+## Môi trường và giãn lượt browser (2026-10-07)
+
+- Workspace mới: `E:\video-rendering`, Python 3.11 trong `.venv` ngay trong project. Dependencies runtime/dev và Patchright Chromium đã cài. `start_server.ps1` dùng venv trong project.
+- Google nhanh / nhiều account: mặc định 5 phiên song song, giới hạn 1–5 ở UI/API và worker; mỗi lượt bắt đầu cách nhau ít nhất 0,5 giây. Submit không giữ start lock trong lúc chờ hoàn tất.
+- BrowserQueue vẫn tối đa 10 sessions, FIFO và chia sẻ giữa process; timestamp admission trong SQLite giãn các lượt khởi động ít nhất 0,5 giây, kể cả Generate All, bulk import và lượt kiểm tra video. Không giữ transaction SQLite trong lúc sleep.
+- `config.PROXY` mặc định rỗng; `.env.local` cũng đặt `DOLA_PROXY=`.
+- Kiểm tra: 66 tests bulk/queue/scheduler pass; bổ sung kiểm tra model API default 5 và reject >5. Integration process-shared queue/recovery/quota pass. Browser workflow 40 Scenes pass với bundled Chromium channel; headless shell bị renderer crash nên dùng launch override trong RAM, không sửa test UI. Không chạy generation Dola thật hoặc restart server người dùng.

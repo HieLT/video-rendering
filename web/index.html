@@ -675,7 +675,7 @@ function openAddAccount(retryName=null){
   accountRetryUuid=retryName;
   showDlg(`<h2>${retryName?"Retry Account":"Add Account"}</h2>
     <label>Login method</label><select id="f_method" onchange="accountMethodChanged()"><option value="cookies">Import cookies</option><option value="google">Google</option>${retryName?'':'<option value="google_bulk">Google nhanh / nhiều account</option>'}<option value="facebook">Facebook</option></select>
-    <div id="f_google_bulk" hidden><label>Mỗi dòng: email|password</label><textarea id="f_bulk_text" rows="8" autocomplete="off" spellcheck="false" placeholder="email@example.com|password"></textarea><label>Số phiên song song (1–20)</label><input id="f_bulk_concurrency" type="number" min="1" max="20" value="2"><p class="tiny">Bỏ qua dòng trống và gộp email trùng. Tiến trình tiếp tục khi đóng hộp thoại; dừng nếu tắt server. CAPTCHA/2FA cần hoàn tất trong trình duyệt.</p></div>
+    <div id="f_google_bulk" hidden><label>Mỗi dòng: email|password</label><textarea id="f_bulk_text" rows="8" autocomplete="off" spellcheck="false" placeholder="email@example.com|password"></textarea><label>Số phiên song song (1–5)</label><input id="f_bulk_concurrency" type="number" min="1" max="5" value="5"><p class="tiny">Mỗi lượt bắt đầu cách nhau 0,5 giây. Bỏ qua dòng trống và gộp email trùng. Tiến trình tiếp tục khi đóng hộp thoại; dừng nếu tắt server. CAPTCHA/2FA cần hoàn tất trong trình duyệt.</p></div>
     <div id="f_google" hidden><label>Google Email</label><input id="f_email" autocomplete="off"><label>Password</label><input id="f_pass" type="password" autocomplete="new-password"><label>TOTP Secret (optional)</label><input id="f_totp" type="password"></div>
     <div id="f_cookies"><label>Netscape cookie file (.txt)</label><input id="f_cookie_file" type="file" accept=".txt"><p class="tiny">Choose the original cookie export for one Dola account. The session will be checked before enabling the account.</p></div>
     <div id="f_facebook" hidden><label>Facebook email or phone number</label><input id="f_fb_account" autocomplete="off"><label>Facebook password</label><input id="f_fb_password" type="password" autocomplete="new-password"><p class="tiny">Login is submitted once. Complete any verification in the browser within 5 minutes.</p></div>
@@ -694,7 +694,7 @@ async function submitAddAccount(){
       const text=q('#f_bulk_text').value;
       const concurrency=Number(q('#f_bulk_concurrency').value);
       if(!text.trim())throw new Error('Paste email|password, one account per line');
-      if(!Number.isInteger(concurrency)||concurrency<1||concurrency>20)throw new Error('Số phiên song song phải từ 1 đến 20');
+      if(!Number.isInteger(concurrency)||concurrency<1||concurrency>5)throw new Error('Số phiên song song phải từ 1 đến 5');
       await api('/api/admin/accounts/google-bulk',{method:'POST',body:{text,concurrency}});
       q('#f_bulk_text').value='';hide('dlg');refresh();return;
     }

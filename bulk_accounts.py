@@ -21,6 +21,7 @@ def parse_accounts(text):
 
 
 async def run_import(accounts, concurrency, progress, submit, job_status):
+    concurrency = min(5, max(1, concurrency))
     queue = asyncio.Queue()
     for index, credentials in enumerate(accounts):
         queue.put_nowait((index, credentials))
@@ -40,7 +41,7 @@ async def run_import(accounts, concurrency, progress, submit, job_status):
                         await asyncio.sleep(max(0, .5 - (loop.time() - last_start)))
                     row['status'] = 'running'
                     last_start = loop.time()
-                    identifier = await submit(email, password)
+                identifier = await submit(email, password)
                 password = None
                 row['uuid'] = identifier
                 while job_status(identifier) == 'running':
