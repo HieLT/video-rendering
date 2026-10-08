@@ -15,6 +15,7 @@ class AssetLibrary:
         self.store = store
 
     def upload(self, project_id, name, asset_type, filename, data):
+        project_id = self.store.library_project_id(project_id)
         if self.store.get_project(project_id) is None:
             raise RecordNotFoundError("Project not found")
         self.store._text(name, "name")

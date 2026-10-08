@@ -37,6 +37,84 @@ class RequestModeTests(unittest.IsolatedAsyncioTestCase):
     async def assign(self, task):
         return await self.scheduler.account(self.store.get(task))
 
+    async def test_prefer_unused_account_and_preserve_assigned_account(self):
+        name = 'zz_unused'
+        (self.pool.accounts_dir / name).mkdir()
+        self.pool._ensure_meta(name)
+        with self.pool._conn:
+            self.pool._conn.execute("UPDATE accounts_meta SET login_ok=1,auth_state='active',scheduling=1 WHERE name=?", (name,))
+        self.pool._claim('fixture')
+        self.pool._conn.commit()
+        for dual in (False, True):
+            with self.subTest(dual=dual):
+                self.scheduler.set_dual_requests(dual)
+                self.scheduler.reserved.clear()
+                self.store.update('first', account=None, account_uuid=None)
+                self.assertTrue(await self.assign('first'))
+                self.assertEqual(self.store.get('first')['account'], name)
+                # Existing tasks stay with their saved account despite quota ordering.
+                self.scheduler.reserved.clear()
+                self.store.update('first', account='fixture')
+                self.assertTrue(await self.assign('first'))
+                self.assertEqual(self.store.get('first')['account'], 'fixture')
+        self.scheduler.reserved.clear()
+        self.store.update('first', account=None)
+        self.pool.set_scheduling(name, False)
+        self.assertTrue(await self.assign('first'))
+        self.assertEqual(self.store.get('first')['account'], 'fixture')
+
+    async def test_project_allowlist_inherits_to_chapters_and_never_falls_back(self):
+        name='second_account'
+        (self.pool.accounts_dir/name).mkdir()
+        self.pool._ensure_meta(name)
+        with self.pool._conn:
+            self.pool._conn.execute("UPDATE accounts_meta SET login_ok=1,auth_state='active',scheduling=1 WHERE name=?",(name,))
+        project=self.store.create_project('Project')
+        chapter=self.store.create_chapter(project['id'],'Chapter')
+        scene=self.store.create_scene(chapter['id'],1)
+        self.store._conn.execute("UPDATE tasks SET scene_id=? WHERE id='first'",(scene['id'],));self.store._conn.commit()
+        uuid=self.pool.account_uuid(name)
+        self.store.set_project_accounts(project['id'],[uuid])
+        self.assertEqual(self.store.project_accounts(chapter['id'])['account_uuids'],[uuid])
+        self.store.set_project_accounts(chapter['id'],['chapter-only'])
+        self.assertEqual(self.store.task_allowed_accounts(self.store.get('first')),{'chapter-only'})
+        self.assertEqual(self.store.project_accounts(project['id'])['account_uuids'],[uuid])
+        self.store.set_project_accounts(chapter['id'],[])
+        self.assertIsNone(self.store.task_allowed_accounts(self.store.get('first')))
+        self.store.set_project_accounts(chapter['id'],[],inherit=True)
+        self.assertEqual(self.store.task_allowed_accounts(self.store.get('first')),{uuid})
+
+        self.pool.set_scheduling(name,False)
+        self.assertFalse(await self.assign('first'))
+        self.assertIsNone(self.store.get('first')['account'])
+        self.pool.set_scheduling(name,True)
+        self.assertTrue(await self.assign('first'))
+        self.assertEqual(self.store.get('first')['account'],name)
+        # Changing policy preserves monitoring of already submitted work.
+        self.store.update('first',conversation_id='existing')
+        self.store.set_project_accounts(project['id'],[self.pool.account_uuid('fixture')])
+        self.assertTrue(await self.assign('first'))
+        self.assertEqual(self.store.get('first')['account'],name)
+        self.store.update('first',conversation_id=None)
+        self.assertTrue(await self.assign('first'))
+        self.assertEqual(self.store.get('first')['account'],'fixture')
+        self.store.set_project_accounts(project['id'],[])
+        self.assertIsNone(self.store.task_allowed_accounts(self.store.get('first')))
+
+    async def test_domain_dispatch_exact_and_case_insensitive(self):
+        for name,email in [('fixture',' First@MAIL8686.US '),('second','other@trusticloud.us'),('third','x@gmail.com')]:
+            (self.pool.accounts_dir/name).mkdir(exist_ok=True)
+            self.pool._ensure_meta(name)
+            self.pool.set_email(name,email)
+            self.pool.set_scheduling(name,True)
+        self.assertEqual(self.pool.set_group_scheduling('other',False,'mail8686.us'),1)
+        rows={a['name']:a for a in self.pool.list_accounts()}
+        self.assertFalse(rows['fixture']['scheduling'])
+        self.assertTrue(rows['second']['scheduling'])
+        self.assertTrue(rows['third']['scheduling'])
+        self.assertEqual(self.pool.set_group_scheduling('other',False),2)
+        self.assertEqual(self.pool.set_group_scheduling('other',True,'MAIL8686.US'),1)
+
     async def test_default_keeps_one_request(self):
         self.assertFalse(self.scheduler.dual_requests)
         self.assertTrue(await self.assign('first'))

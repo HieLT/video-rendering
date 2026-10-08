@@ -214,7 +214,7 @@ class MigrationTests(unittest.TestCase):
             before=store.get('old');store._conn.close()
             for _ in range(2):
                 store=TaskStore(str(path))
-                self.assertEqual(store._conn.execute('PRAGMA user_version').fetchone()[0],6)
+                self.assertEqual(store._conn.execute('PRAGMA user_version').fetchone()[0],9)
                 self.assertEqual(store.list_scene_requirements(s),[dict(name='Hero',alias='Hero',position=3,asset_id='asset')])
                 self.assertEqual(store.get('old'),before)
                 self.assertEqual(store.get_scene(s)['selected_task_id'],'old')

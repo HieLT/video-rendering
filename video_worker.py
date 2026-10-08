@@ -102,6 +102,16 @@ async ({conversationId, msToken, fp, afterIndex = 0}) => {
       const bold = [...text.matchAll(/\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi)];
       if (bold.some(m => /Dreamina\s+Seedance\b/i.test(m[1] || m[2] || m[3] || ""))) accepted = true;
     }
+    // Some delayed copyright refusals contain only text, without tool error metadata.
+    // Match a complete refusal sentence, not keywords in the echoed user prompt.
+    const copyrightText = messageTexts.find(text => /(?:^|[\n\r])\s*\u8457\u4f5c\u6a29\u3092\u4fdd\u8b77\u3059\u308b\u305f\u3081[\u3001,\s]*\u751f\u6210\u3055\u308c\u305f\u52d5\u753b\u3092\u8868\u793a\u3067\u304d\u307e\u305b\u3093[\u3002.!]/u.test(text));
+    if (copyrightText) {
+      terminalRejection = {code: "copyright_text", reason: copyrightText, terminal: true};
+    }
+    const promptRefusal = messageTexts.find(text => /(?:^|[\n\r])\s*ご希望のコンテンツを生成できません。他の内容をお試しください。/u.test(text));
+    if (promptRefusal) {
+      terminalRejection = {code: "prompt_refusal_text", reason: promptRefusal, terminal: true};
+    }
     const ext = msg.ext || {};
     const code = String(ext.ai_creation_res_code);
     // Observed terminal video rejection; API metadata is unaffected by page translation.
@@ -133,7 +143,7 @@ async ({conversationId, msToken, fp, afterIndex = 0}) => {
   }
   // A finished response without confirmation is retryable, including generic errors.
   // No response yet, unfinished messages, and unknown state must keep waiting.
-  const rejection = responseFinished && !responseGenerating && !videos.length && (terminalRejection || !accepted)
+  const rejection = responseFinished && !responseGenerating && !videos.length && (terminalRejection || knownRejection || !accepted)
     ? (terminalRejection || knownRejection || {code: "missing_confirmation", reason: texts.join("\n") || "Response finished without generation confirmation"})
     : null;
   return {ok: true, status: resp.status, texts, videos, videoModels, rejection,
@@ -226,7 +236,7 @@ async def generate_video(account: str, prompt: str, ratio: str = "9:16",
     Exceptions: RiskControlError, CreditError, TimeoutError, FileNotFoundError
     """
     timeout = timeout or config.VIDEO_TIMEOUT
-    async with async_playwright() as p:
+    async with async_playwright(video=True) as p:
         context = await launch_account_context(p, account)
         try:
             page = context.pages[0] if context.pages else await context.new_page()

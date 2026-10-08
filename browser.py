@@ -1,4 +1,6 @@
 """Patchright persistent context launcher: Explicit proxy and anti-detection parameters."""
+import asyncio
+from urllib.parse import urlsplit
 from pathlib import Path
 
 import config
@@ -19,6 +21,68 @@ async def focus_account_context(account: str) -> bool:
     page = next((page for page in pages if "dola.com" in page.url), pages[0])
     await page.bring_to_front()
     return True
+
+
+class BrowserClosedByUserError(RuntimeError):
+    """Submission browser disappeared before acceptance."""
+
+
+def is_browser_closed_error(error):
+    seen=set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(error, BrowserClosedByUserError) or type(error).__name__ == 'TargetClosedError':
+            return True
+        if 'Target page, context or browser has been closed' in str(error):
+            return True
+        error=error.__cause__ or error.__context__
+    return False
+
+
+class AccountSessionExpiredError(RuntimeError):
+    """Dola explicitly requires a new login."""
+
+async def ensure_account_session(page, context):
+    import re
+    login = page.get_by_text(re.compile(r"^(Log in|Log In|Sign in|Sign In|\u30ed\u30b0\u30a4\u30f3)$"))
+    visible = any([await item.is_visible() for item in await login.all()])
+    if not visible:
+        return
+    cookies = await context.cookies("https://www.dola.com")
+    url = urlsplit(page.url)
+    login_page = url.hostname == "www.dola.com" and url.path.rstrip("/") in ("/login", "/passport/login")
+    if login_page or not cookie_value(cookies, "sessionid"):
+        raise AccountSessionExpiredError("Dola requires login again")
+
+
+CHAT_OPEN_LOCKS = {}
+
+async def focus_task_conversation(account: str, conversation_id: str) -> bool:
+    """Reuse the exact chat tab, without navigating an automation-owned page."""
+    async with CHAT_OPEN_LOCKS.setdefault(account, asyncio.Lock()):
+        entry = ACTIVE_CONTEXTS.get(account)
+        if not entry:
+            return False
+        context, headless = entry
+        if headless:
+            raise RuntimeError("Account browser is running headless and cannot be displayed")
+        target_path = "/chat/" + str(conversation_id)
+        for page in context.pages:
+            if page.is_closed():
+                continue
+            url = urlsplit(page.url)
+            if url.hostname == "www.dola.com" and url.path.rstrip("/") == target_path:
+                await page.bring_to_front()
+                return True
+        page = await context.new_page()
+        try:
+            await page.goto("https://www.dola.com" + target_path, timeout=60000,
+                            wait_until="domcontentloaded")
+            await page.bring_to_front()
+        except Exception:
+            await page.close()
+            raise
+        return True
 
 
 LAUNCH_ARGS = [

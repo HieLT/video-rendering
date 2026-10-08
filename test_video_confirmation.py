@@ -81,12 +81,48 @@ async def run():
                 other = reply('Follow-up', index=12, ext={'is_finish':'1', 'ai_creation_tool_list':malformed})
                 assert not (await classify([user(), reply(EN), other]))['rejection']
             print('PASS delayed copyright rejection, JSON tool metadata, and retry boundaries')
+            text_only = reply('\u8457\u4f5c\u6a29\u3092\u4fdd\u8b77\u3059\u308b\u305f\u3081\u3001\u751f\u6210\u3055\u308c\u305f\u52d5\u753b\u3092\u8868\u793a\u3067\u304d\u307e\u305b\u3093\u3002', index=12)
+            result = await classify([user(), reply(EN), text_only])
+            assert result['accepted'] and result['rejection']['code'] == 'copyright_text'
+            assert not (await classify([user(), reply(EN), text_only], after=12))['rejection']
+            assert not (await classify([user(), reply(EN), text_only, user(13)]))['rejection']
+            assert not (await classify([user(), reply(EN), text_only, reply('Thinking', index=14, done=False)]))['rejection']
+            for code in ('710082031', '710082041'):
+                refusal = reply('Refused', index=12, ext={'is_finish':'1','ai_creation_res_code':code})
+                assert (await classify([user(),reply(EN),refusal]))['rejection']['code'] == code
+            from video_schedule import is_policy_rejection
+            prompt_refusal = 'ご希望のコンテンツを生成できません。他の内容をお試しください。'
+            for messages in ([user(),reply(prompt_refusal)], [user(),reply(EN),reply(prompt_refusal,index=12)]):
+                result=await classify(messages)
+                assert result['rejection']['code']=='prompt_refusal_text'
+                assert result['rejection']['reason']==prompt_refusal
+                assert is_policy_rejection(result['rejection'])
+            assert not (await classify([user(),reply(prompt_refusal,done=False)]))['rejection']
+            print('PASS prompt refusal stops with original text, including delayed refusal')
+            confirmation_request = """Only two videos can be generated at a time. The current request is one video, so I'll generate it directly.
+Video generation currently supports durations from 4 to 15 seconds. Your scene is dialogue-heavy and requires clear pacing; I recommend 12 seconds. If you want a different length, let me know.
+I'll proceed with:
+- Aspect ratio: 16:9
+- Duration: 12 seconds
+- Task type: r2v (using the five reference images for character, faction, and environment identity)
+Confirm with "Generate" and I'll create it."""
+            from video_schedule import is_policy_rejection
+            for code in (None, '710082031', '710082041'):
+                ext={'is_finish':'1'}
+                if code: ext['ai_creation_res_code']=code
+                result=await classify([user(),reply(confirmation_request,ext=ext)])
+                assert result['rejection'] and not result['accepted']
+                assert not is_policy_rejection(result['rejection']),result
+            print('PASS confirmation request is retryable, not policy')
+            print('PASS text-only copyright and explicit rejection after acceptance')
+
             video = reply('Video done')
             video['content'].append({'block_type':2074, 'is_finish':True, 'content':{'creation_block':{'creations':[{'type':2,'video':{'download_url':'https://example.test/video.mp4'}}]}}})
             result = await classify([user(),video])
             assert result['videos'] and not result['rejection']
             assert not (await classify([user(), reply(EN), blocked, video]))['rejection']
             assert not (await classify([user(), reply(EN), copyright_reply, video]))['rejection']
+            assert not (await classify([user(), reply(EN), text_only, video]))['rejection']
             print('PASS completed video without confirmation and video precedence')
             raw = reply(JA); raw['content'] = json.dumps(raw['content'])
             assert (await classify([user(),raw]))['accepted']

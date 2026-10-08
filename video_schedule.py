@@ -6,7 +6,7 @@ import shutil
 import time
 from pathlib import Path
 from browser_queue import async_playwright
-from browser import launch_account_context, cookie_value
+from browser import launch_account_context, cookie_value, ensure_account_session, AccountSessionExpiredError, BrowserClosedByUserError, is_browser_closed_error
 from video_worker import POLL_JS, extract_unwatermarked_url, _download
 import video_worker_ui as worker
 import config
@@ -17,6 +17,11 @@ MAX_RECHECKS = 3
 MAX_RETRIES = 10
 DEFAULT_ETA = 1800
 EARLY_CHECK_SECONDS = 300
+
+def is_policy_rejection(error):
+    return isinstance(error, dict) and str(error.get("code")) in {
+        "copyright_text", "prompt_refusal_text", "710082022", "710092007",
+    }
 
 def parse_eta(texts):
     hour = r"\u6642\u9593|\u5c0f\u65f6|\u5c0f\u6642|hours?|hrs?|gi\u1edd"
@@ -46,6 +51,7 @@ async def inspect_page(page, context, conversation_id, after_index, seconds, sto
         remaining = deadline-time.monotonic()
         try:
             async def read():
+                await ensure_account_session(page, context)
                 cookies = await context.cookies("https://www.dola.com")
                 return await page.evaluate(POLL_JS, {
                     "conversationId":conversation_id, "afterIndex":after_index,
@@ -68,15 +74,17 @@ async def inspect_page(page, context, conversation_id, after_index, seconds, sto
                     return {"kind":"accepted", "poll":result}
             else:
                 previous_rejection = None
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, AccountSessionExpiredError):
             raise
-        except Exception:
+        except Exception as exc:
+            if stop_on_accept and (is_browser_closed_error(exc) or page.is_closed()):
+                raise BrowserClosedByUserError('Submission browser was closed') from exc
             previous_rejection = None
         await asyncio.sleep(min(2 if stop_on_accept else 5, max(0,deadline-time.monotonic())))
     return {"kind":"pending", "poll":last or {}}
 
 async def inspect_conversation(row):
-    async with async_playwright() as p:
+    async with async_playwright(video=True) as p:
         context = await launch_account_context(p, row["account"], headless=False, use_extension=True)
         try:
             page = context.pages[0] if context.pages else await context.new_page()
@@ -217,7 +225,35 @@ class VideoScheduler:
                            (used+1,now,self.pool.account_uuid(row["account"])))
                 db.execute("UPDATE accounts_meta SET last_used_at=? WHERE name=?",(now,row["account"]))
 
+    def refund_rejected_claim(self, row):
+        """Undo only this task's local usage claim, once; never credit a completed video."""
+        if row.get('video_url') or row.get('result_url') or not row.get('account'):
+            return
+        db = getattr(self.pool, '_conn', None)
+        if db is None:
+            return
+        exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_job_account_claims'").fetchone()
+        if not exists:
+            return
+        with db:
+            removed = db.execute("DELETE FROM video_job_account_claims WHERE task_id=? AND account=?",
+                                 (row['id'],row['account'])).rowcount
+            if removed:
+                # Do not subtract an old claim from a later usage window.
+                charged_at = row.get('submitted_at') or row.get('started_at') or row.get('created_at')
+                if charged_at and time.time() - charged_at < 86400:
+                    db.execute("UPDATE account_usage SET used=MAX(0,used-1) WHERE uuid=?",
+                               (self.pool.account_uuid(row['account']),))
+
     async def account(self,row):
+        allowed = self.store.task_allowed_accounts(row)
+        if row.get("account") and allowed is not None:
+            assigned_uuid = row.get("account_uuid") or self.pool.account_uuid(row["account"])
+            # Keep monitoring already submitted jobs; apply restrictions before a new submission.
+            if assigned_uuid not in allowed and not (row.get("conversation_id") or row.get("accepted_at") or row.get("dispatch_uncertain") or row.get("result_url")):
+                self.release(row)
+                self.store.update(row["id"], account=None, account_uuid=None)
+                row=self.store.get(row["id"])
         if row.get("account"):
             owner=self.reserved.get(row["account"])
             if owner and owner!=row["id"] and not self.can_resume(row["account"], row["id"]): return False
@@ -228,14 +264,24 @@ class VideoScheduler:
             self.store.update(row['id'], status='failed', phase='failed', failure_code='NO_USABLE_ACCOUNTS',
                               error='No account profiles in pool', finished_at=time.time())
             return False
-        for acc in accounts:
-            if self.eligible(acc):
+        # Prefer unused daily quota; stable sort preserves pool order for ties.
+        for acc in sorted(accounts, key=lambda a: a.get("used_today", 0)):
+            if (allowed is None or acc.get("uuid") in allowed) and self.eligible(acc):
                 self.reserved.setdefault(acc["name"],row["id"])
                 self.store.update(row["id"],account=acc["name"],account_uuid=self.pool.account_uuid(acc["name"]))
                 return True
         return False
 
+    def stop(self,row,reason):
+        self.store.update(row['id'],status='stopped',phase='stopped',next_check_at=None,
+                          error=reason,finished_at=time.time())
+        self.release(row)
+
     def retry(self,row,error):
+        if is_policy_rejection(error):
+            self.refund_rejected_claim(row)
+            self.stop(row,'Dola policy rejection; automatic retry stopped: '+str(error))
+            return False
         if (row.get("retry_count") or 0)>=MAX_RETRIES:
             self.review(row["id"],"Exhausted 10 generation retries: "+str(error))
             return False
@@ -261,6 +307,9 @@ class VideoScheduler:
                                   check_round=0,dispatch_uncertain=0,error=None)
             return outcome
         def rejected(poll):
+            if is_policy_rejection(poll.get("rejection")):
+                # Close this session; run() stops the policy-rejected task.
+                return False
             current = self.store.get(task_id)
             if (poll.get("latestIndex") or 0) <= (current.get("after_index") or 0):
                 self.review(task_id, "Cannot safely identify rejected submission; inspect conversation")
@@ -350,6 +399,10 @@ class VideoScheduler:
                     await self.complete(row,poll)
                     return
                 if kind=="rejected":
+                    if is_policy_rejection(poll.get("rejection")):
+                        self.refund_rejected_claim(row)
+                        self.stop(row,'Dola policy rejection; automatic retry stopped: '+str(poll['rejection']))
+                        return
                     if row.get("dispatch_uncertain") and (poll.get("latestIndex") or 0)<=(row.get("after_index") or 0):
                         self.review(task_id,"Cannot identify the interrupted submission; inspect conversation")
                         return
@@ -373,6 +426,14 @@ class VideoScheduler:
                     self.review(task_id,"No video after first check and 3 rechecks (5 minutes apart)")
                     return
                 self.store.update(task_id,phase="waiting",status="processing",check_round=rounds+1,next_check_at=time.time()+CHECK_INTERVAL)
+            except AccountSessionExpiredError as exc:
+                row=self.store.get(task_id)
+                self.pool.auth_result(row["account"], "expired", str(exc))
+                self.release(row)
+                self.store.update(task_id, account=None, account_uuid=None, conversation_id=None,
+                                  after_index=0, accepted_at=None, dispatch_uncertain=0,
+                                  check_round=0, eta_seconds=None, eta_raw=None)
+                if not self.retry(self.store.get(task_id), exc): return
             except (worker.CreditInsufficientError, worker.AccountLimitedError, worker.CreditError) as exc:
                 row=self.store.get(task_id)
                 if isinstance(exc,worker.AccountLimitedError):
@@ -391,6 +452,9 @@ class VideoScheduler:
                     # A cleanup error after acceptance is not a failed generation.
                     self.store.update(task_id,error="Browser cleanup after acceptance: "+str(exc))
                     continue
+                if is_browser_closed_error(exc) and not row.get("accepted_at"):
+                    self.stop(row,'Submission browser closed; automatic retry stopped')
+                    return
                 if row.get("phase")=="downloading":
                     self.review(task_id,"Video generated; download failed: "+str(exc))
                     return

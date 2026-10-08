@@ -320,6 +320,25 @@ class BrowserPool:
             })
         return out
 
+    @staticmethod
+    def email_domain(email):
+        import re
+        match = re.fullmatch(r'[^@\s]+@([^@\s]+)', (email or '').strip().lower())
+        return match.group(1) if match else ''
+
+    def set_group_scheduling(self, group: str, enabled: bool, domain=None):
+        if group not in ('gmail', 'other'):
+            raise ValueError('Unknown account group')
+        domain = domain.strip().lower() if domain is not None else None
+        names = [a['name'] for a in self.list_accounts()
+                 if ('gmail' if self.email_domain(a.get('email')) == 'gmail.com' else 'other') == group
+                 and (domain is None or self.email_domain(a.get('email')) == domain)]
+        with self._conn:
+            self._conn.executemany(
+                'UPDATE accounts_meta SET scheduling=?, dispatch_manual=1 WHERE name=?',
+                [(int(enabled), name) for name in names])
+        return len(names)
+
     def set_scheduling(self, name: str, on: bool, manual: bool = True):
         self._conn.execute(
             "UPDATE accounts_meta SET scheduling=?, dispatch_manual=? WHERE name=?", (1 if on else 0, int(manual), name))

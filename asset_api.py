@@ -20,6 +20,11 @@ class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
 
 
+class ProjectAccounts(BaseModel):
+    inherit: bool = False
+    account_uuids: list[str] = Field(default_factory=list, max_length=10000)
+
+
 class SceneCreate(BaseModel):
     scene_number: int = Field(..., ge=1, strict=True)
     scene_name: str = Field('', max_length=200)
@@ -97,6 +102,26 @@ def register_asset_routes(app, store, admin_auth, client_auth, request_factory, 
     def list_projects(x_admin_key: str | None = Header(default=None)):
         admin_auth(x_admin_key)
         return {'projects': store.list_projects()}
+
+    @router.get('/projects/{project_id}/accounts')
+    def project_accounts(project_id: str, x_admin_key: str | None = Header(default=None)):
+        admin_auth(x_admin_key)
+        return _call(store.project_accounts, project_id)
+
+    @router.put('/projects/{project_id}/accounts')
+    def set_project_accounts(project_id: str, body: ProjectAccounts, x_admin_key: str | None = Header(default=None)):
+        admin_auth(x_admin_key)
+        return _call(store.set_project_accounts, project_id, body.account_uuids, inherit=body.inherit)
+
+    @router.post('/projects/{project_id}/chapters', status_code=201)
+    def create_chapter(project_id: str, body: ProjectCreate, x_admin_key: str | None = Header(default=None)):
+        admin_auth(x_admin_key)
+        return _call(store.create_chapter, project_id, body.name)
+
+    @router.get('/projects/{project_id}/chapters')
+    def list_chapters(project_id: str, x_admin_key: str | None = Header(default=None)):
+        admin_auth(x_admin_key)
+        return {'chapters': _call(store.list_chapters, project_id)}
 
     @router.get('/projects/{project_id}')
     def get_project(project_id: str, x_admin_key: str | None = Header(default=None)):

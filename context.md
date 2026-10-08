@@ -291,3 +291,49 @@ Mở `http://127.0.0.1:8000`. Sau khi thay code Python cần restart server; tha
 - Tắt chế độ không hủy các request đã nhận; chặn assignment mới cho account còn request. Restart/Check now/Stop quản lý được cả hai tasks, hoàn tất hoặc Stop một task vẫn giữ reservation của task còn lại. Legacy recovery phase=ready vẫn không tự giữ account.
 - Validation offline: 9 tests mới cho capacity/quota/restart/toggle/auth/profile lock, 62 scheduler/queue tests và 78 account/bulk/storage/review tests pass. Browser toggle bật/reload/tắt, workflow 40 Scenes, Production UX 40x3=120 candidates pass; process integration pass. Tests dùng temporary stores/mock generation, chưa xác nhận Dola thật có chấp nhận hai generation/account; không restart server người dùng.
 - Chạy: `.\.venv\Scripts\python.exe -m unittest test_account_request_mode -q` và `.\.venv\Scripts\python.exe test_account_request_mode_ui.py`.
+
+
+### Project chapters (2026-10-08)
+
+- A project can contain chapters. In Projects, open a project and choose **+ Create Chapter**; open the chapter to import scenes, import scene info, generate all ready scenes, and review/select outputs for that chapter only.
+- All chapters share the parent project's Reference Library. Uploading from any chapter stores the image once under the parent project. Reference names/aliases resolve against that shared library; chapters may each use Scene 01 without collisions.
+- Existing scenes, tasks and selected outputs remain attached to their original project. Project-level Generate All covers its direct scenes only, not chapter scenes. Existing separate projects are not automatically combined.
+- Shared reference replacement/removal affects linked scenes across chapters; existing task reference snapshots retain their history.
+- Implementation: projects.parent_project_id (one chapter level), schema v7 with pre-upgrade backup; chapter creation/list endpoints at /api/admin/projects/{project_id}/chapters. Scene and generation endpoints keep using the selected chapter's ID. Assets resolve to the parent project ID.
+- Restart the server and refresh the browser to apply. Offline coverage: test_project_chapters.py and test_project_chapters_ui.py.
+
+
+### Project account selection and domain Dispatch (2026-10-08)
+
+- Project / chapter toolbar: **Run Accounts (optional)** opens an account checklist with email/name/domain search. No selections means all eligible accounts; otherwise only saved account UUIDs can be assigned. Chapters inherit the parent project setting. This does not reserve those accounts exclusively for one project.
+- Dispatch, login, quota, cooldown and concurrency rules still apply. When selected accounts are unavailable, tasks wait rather than using an unselected account. Already submitted videos retain their account for monitoring; unsubmitted assignments are rechecked.
+- Schema v8 adds project_account_allowlist. GET/PUT /api/admin/projects/{project_id}/accounts reads/writes the parent project's list. Deleted/unavailable account UUIDs remain restricted until explicitly removed from the checklist.
+- Accounts lists sort by created_at descending. Non-Gmail groups email domains case-insensitively. Each domain has a filter, readiness count and its own Dispatch toggle. Gmail and all Non-Gmail master toggles remain. Missing/invalid emails appear under Unknown domain.
+- Restart the server and refresh the browser to apply. Offline validation: 42 account/scheduler/chapter/migration tests passed; browser UI verified account selection/save/clear, search, newest-first ordering, and isolated domain Dispatch. No live generation was performed for these checks.
+
+
+### Chapter-specific Run Accounts and domain tabs
+
+- Run Accounts now saves a chapter-specific override when **Use parent project accounts** is unchecked. Checked means inherit the parent project selection (the default for existing chapters). A chapter override with no checked accounts explicitly allows all eligible accounts; it does not inherit a restricted parent list. Changes do not modify sibling chapters or the parent.
+- The account picker opens with domain tabs only. Click @domain to show its accounts, search within that domain, and Select visible as needed. Selections persist across tab switches and Save applies the whole selection. Clear selection clears every domain.
+- Schema v9 adds project_account_overrides to distinguish inheritance from an explicit all-accounts choice. Shared reference images remain project-wide. Restart server and refresh UI to apply.
+
+
+### Current behavior update (2026-10-09)
+
+This section supersedes earlier retry and browser spacing descriptions.
+
+- Run from `C:\dola\video-rendering` with the virtual environment activated: `python run_server.py --host 127.0.0.1 --port 8000`. Without activation: `C:\dola\.venv\Scripts\python.exe run_server.py --host 127.0.0.1 --port 8000`. Restart the server after backend updates and refresh the browser with Ctrl+F5.
+- Project-generated task names include scene number and chapter/project name, for example `scene1_chapter1+2`.
+- Video Tasks **Try again** for failed/stopped scene tasks requeues the SAME task ID in place. It retains batch position, creation time, scene/chapter link, original prompt/configuration/reference snapshot. It clears the old account/chat and dispatch checkpoints for a fresh submission. Old errors are stored in `tasks.retry_history` and shown under Retry history. This does not create another candidate or use newly edited scene inputs.
+- Generate All and Try again use the shared BrowserQueue: at most 10 managed Playwright sessions, with video sessions starting at least 20 seconds apart. Requests can wait in the queue; 10 is the browser capacity, not the number of remotely generating videos. Result-check browser sessions also use the video interval. Non-video session spacing remains 0.5 seconds, subject to the shared FIFO and capacity.
+- Closing the submission browser manually stops that task instead of automatically reopening it. Expired login sessions are handled by releasing the unusable account and selecting another eligible account.
+- Explicit copyright/policy refusals stop the task even after an earlier generation confirmation. Recognized terminal codes include 710082022 and 710092007, the Japanese copyright refusal, and the exact Japanese content refusal below. Preserve the original error text; do not automatically open a new chat to retry these refusals.
+- A completed ordinary confirmation/question response without an actual terminal refusal remains retryable; requests such as Confirm with Generate are not classified as copyright rejection.
+- On a terminal policy refusal without a video/result URL, remove that task/account's local usage claim and subtract one local used slot, once. Claims older than 24 hours are not subtracted from later usage. This does not change Dola's own credit accounting or retroactively repair already stopped tasks.
+- Open chat resolves the saved conversation for the exact task, including when one account has two tasks; tasks without a saved conversation cannot open an arbitrary chat.
+- Chapters share parent references and may inherit or override Run Accounts. Account selection uses domain tabs; account lists show newest accounts first, with domain-specific Dispatch controls.
+- `convert_darius_chapters.py` is a guarded one-time migration for the original four Darius/Garen projects; it is not part of startup and should not be rerun after conversion.
+- Local databases, SQLite backups, accounts, reference images and downloads are not uploaded to Git. A clone alone does not include runtime data.
+
+Terminal content refusal: ご希望のコンテンツを生成できません。他の内容をお試しください。

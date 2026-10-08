@@ -5,6 +5,7 @@ from scene_import import ImportValidationError
 class SceneInfoMixin:
     def _migrate_v6(self):
         if self._conn.execute('PRAGMA user_version').fetchone()[0] >= 6:
+            self._migrate_v7()
             return
         columns = {row[1] for row in self._conn.execute('PRAGMA table_info(scenes)')}
         if 'scene_summary' not in columns:
@@ -12,6 +13,7 @@ class SceneInfoMixin:
         if self._conn.execute('PRAGMA foreign_key_check').fetchall():
             raise sqlite3.IntegrityError('Scene summary migration failed foreign_key_check')
         self._conn.execute('PRAGMA user_version=6')
+        self._migrate_v7()
 
     def _scene_info_plan(self, project_id, payload):
         self._require('projects', project_id)

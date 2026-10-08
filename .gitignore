@@ -57,3 +57,7 @@ downloads_unique/
 /experiment_eta_reopen.py
 
 /test_eta_reopen_experiment.py
+
+# SQLite snapshots also contain private account/task data
+*.sqlite3
+*.sqlite3-*

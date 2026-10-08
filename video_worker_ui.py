@@ -14,7 +14,7 @@ from patchright.async_api import TimeoutError as PlaywrightTimeoutError
 from gap import find_gap_x
 
 import config
-from browser import cookie_value, launch_account_context
+from browser import cookie_value, launch_account_context, ensure_account_session, BrowserClosedByUserError, is_browser_closed_error
 from dola_client import CREDIT_FAIL_PATTERN, CreditError
 from video_worker import GenerationRejectedError, POLL_JS, RiskControlError, _download, extract_unwatermarked_url
 
@@ -569,7 +569,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
 async def resume_video(account: str, conversation_id: str, timeout: int,
                        on_poll=None, on_balance=None, name: str = "") -> dict:
     """Recovers accepted session after server restart without re-sending prompt."""
-    async with async_playwright() as p:
+    async with async_playwright(video=True) as p:
         context = await launch_account_context(p, account, headless=False, use_extension=True)
         try:
             page = context.pages[0] if context.pages else await context.new_page()
@@ -1047,7 +1047,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
         timeout = 86400 * 7
     elif reference_image_paths:
         timeout = max(timeout, config.REFERENCE_VIDEO_TIMEOUT)
-    async with async_playwright() as p:
+    async with async_playwright(video=True) as p:
         context = await launch_account_context(
             p, account, headless=False if use_extension else None,
             use_extension=use_extension)
@@ -1061,6 +1061,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             await page.wait_for_timeout(5000)
             cookies = await context.cookies("https://www.dola.com")
             ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
+            await ensure_account_session(page, context)
             await _preflight_balance(page, ms_token, fp, config.VIDEO_REQUIRED_POINTS)
 
             after_index = after_index_start
@@ -1069,6 +1070,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 # ---- UI Submission ----
                 for setup_attempt in range(3):
                     try:
+                        await ensure_account_session(page, context)
                         await _prepare_video_composer(page, account, bool(reference_image_paths))
                         if reference_image_paths:
                             await attach_reference_images(page, reference_image_paths)
@@ -1235,6 +1237,11 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                     after_index = exc.latest_index
                     _log(f"[{account}] Dola {exc.code}: retry {retry + 1}/10 in conversation {conv_id}; preserving request parameters")
                     await page.wait_for_timeout(5000)
+        except Exception as exc:
+            if is_browser_closed_error(exc) or ('page' in locals() and page.is_closed()):
+                raise BrowserClosedByUserError('Submission browser was closed') from exc
+            await ensure_account_session(page, context)
+            raise
         finally:
             if finish_composer_trace:
                 try:

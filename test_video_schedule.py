@@ -3,6 +3,7 @@ import asyncio
 import json
 import sqlite3
 import tempfile
+import time
 import unittest
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -45,6 +46,28 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
     async def drive(self,submit,checks):
         with self.clock(),patch.object(schedule.asyncio,"sleep",self.sleep),patch.object(self.scheduler,"submit",submit),patch.object(schedule,"inspect_conversation",checks),patch.object(self.scheduler,"references",AsyncMock(return_value=["one","two","three"])):
             await self.scheduler.run("job",{})
+    def test_policy_refund_once_and_preserves_other_usage(self):
+        db=sqlite3.connect(':memory:')
+        self.pool._conn=db
+        db.execute('CREATE TABLE account_usage(uuid TEXT,used INTEGER)')
+        db.execute('INSERT INTO account_usage VALUES (?,2)',('uuid-fixture',))
+        db.execute('CREATE TABLE video_job_account_claims(task_id TEXT,account TEXT,PRIMARY KEY(task_id,account))')
+        db.execute("INSERT INTO video_job_account_claims VALUES ('job','fixture')")
+        db.commit()
+        row={**self.store.get('job'),'account':'fixture','submitted_at':time.time()}
+        try:
+            self.scheduler.retry(row,{'code':'copyright_text','reason':'blocked'})
+            self.scheduler.retry(row,{'code':'copyright_text','reason':'blocked'})
+            self.assertEqual(db.execute('SELECT used FROM account_usage').fetchone()[0],1)
+            self.assertEqual(self.store.get('job')['status'],'stopped')
+            db.execute("INSERT INTO video_job_account_claims VALUES ('job','fixture')")
+            db.commit()
+            self.scheduler.refund_rejected_claim({**row,'video_url':'video.mp4'})
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM video_job_account_claims').fetchone()[0],1)
+            self.scheduler.refund_rejected_claim({**row,'submitted_at':time.time()-90000})
+            self.assertEqual(db.execute('SELECT used FROM account_usage').fetchone()[0],1)
+        finally:db.close()
+
     def test_eta(self):
         samples=[
             ("**Dreamina Seedance** 25\u5206\u5f8c",1500),
@@ -140,6 +163,76 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.get("job")["status"], "needs_recovery")
         self.assertEqual(self.store.get("job")["after_index"], 6)
 
+    async def test_confirmation_and_generic_rejections_continue_sending(self):
+        self.store.update('job',account='fixture',conversation_id='chat')
+        async def generate(*args,**kwargs):
+            for index,code in enumerate(('missing_confirmation','710082031','710082041'),start=2):
+                poll={'latestIndex':index,'rejection':{'code':code,'reason':'Confirm with Generate and I will create it.'}}
+                self.assertTrue(kwargs['on_rejected'](poll))
+                self.assertEqual(self.store.get('job')['conversation_id'],'chat')
+                self.assertEqual(self.store.get('job')['duration'],30)
+            return self.accepted()
+        with patch.object(schedule.worker,'generate_video',AsyncMock(side_effect=generate)):
+            outcome=await self.scheduler.submit(self.store.get('job'),[])
+        self.assertEqual(outcome['kind'],'accepted')
+        self.assertEqual(self.store.get('job')['retry_count'],3)
+        self.assertNotEqual(self.store.get('job')['status'],'stopped')
+
+    async def test_live_policy_stops_without_retry(self):
+        self.store.update('job',account='fixture',conversation_id='old')
+        async def generate(*args,**kwargs):
+            poll={'latestIndex':12,'rejection':{'code':'copyright_text'}}
+            self.assertFalse(kwargs['on_rejected'](poll))
+            return {'kind':'rejected','poll':poll}
+        with patch.object(schedule.worker,'generate_video',AsyncMock(side_effect=generate)) as worker:
+            await self.drive(self.scheduler.submit,AsyncMock())
+        worker.assert_awaited_once()
+        self.assertEqual(self.store.get('job')['status'],'stopped')
+        self.assertEqual(self.store.get('job')['retry_count'],0)
+        self.assertEqual(self.store.get('job')['conversation_id'],'old')
+
+    async def test_closed_submission_stops_even_if_dispatch_uncertain(self):
+        for uncertain in (0,1):
+            self.store.update('job',status='queued',phase='ready',account='fixture',
+                              accepted_at=None,dispatch_uncertain=uncertain,conversation_id='old')
+            submit=AsyncMock(side_effect=schedule.BrowserClosedByUserError('closed'))
+            await self.drive(submit,AsyncMock())
+            submit.assert_awaited_once()
+            self.assertEqual(self.store.get('job')['status'],'stopped')
+            self.assertEqual(self.store.get('job')['retry_count'],0)
+
+    async def test_monitor_propagates_closed_browser(self):
+        page=type('Page',(),{'evaluate':AsyncMock(side_effect=schedule.BrowserClosedByUserError('closed')),'is_closed':lambda self:True})()
+        context=type('Context',(),{'cookies':AsyncMock(return_value=[])})()
+        with patch.object(schedule,'ensure_account_session',AsyncMock()):
+            with self.assertRaises(schedule.BrowserClosedByUserError):
+                await schedule.inspect_page(page,context,'old',0,20,True)
+
+    async def test_expired_account_rotates_and_preserves_request(self):
+        self.store.update("job", account="old", conversation_id="old-chat")
+        self.pool.auth_result = lambda *args: expired.append(args)
+        expired=[]
+        attempts=[]
+        async def account(row):
+            if not row.get("account"):
+                self.store.update("job",account="replacement")
+            return True
+        async def submit(row, paths):
+            attempts.append(row["account"])
+            if row["account"]=="old":
+                raise schedule.AccountSessionExpiredError("Login required")
+            self.assertIsNone(row["conversation_id"])
+            self.assertEqual(row["after_index"],0)
+            self.assertEqual(row["prompt"],"original prompt")
+            self.assertEqual(paths,["one","two","three"])
+            self.store.update("job",status="stopped")
+            return {"kind":"pending","poll":{}}
+        with patch.object(self.scheduler,"account",account):
+            await self.drive(AsyncMock(side_effect=submit),AsyncMock())
+        self.assertEqual(attempts,["old","replacement"])
+        self.assertEqual(expired[0][:2],("old","expired"))
+        self.assertEqual(self.store.get("job")["retry_count"],1)
+
     async def test_uncertain_response_keeps_monitoring_until_acceptance(self):
         self.store.update("job", account="fixture", conversation_id="123")
         async def generate(*args, **kwargs):
@@ -172,29 +265,20 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
         checks=AsyncMock(return_value={"kind":"pending","poll":{}})
         await self.drive(AsyncMock(side_effect=submit),checks)
         self.assertEqual(self.store.get("job")["retry_count"],1)
-    async def test_delayed_copyright_rejection_retries_saved_request(self):
-        self.store.update("job", account="fixture", conversation_id="123", phase="checking",
-                          status="processing", accepted_at=900, retry_count=9)
-        rejected={"kind":"rejected", "poll":{"latestIndex":12,
-            "rejection":{"code":"710092007", "reason":"Copyright refusal", "terminal":True}}}
-        checks=AsyncMock(return_value=rejected)
-        async def generate(account, prompt, **kwargs):
-            self.assertEqual(account,"fixture")
-            self.assertEqual(prompt,"original prompt")
-            self.assertEqual(kwargs["reference_image_paths"],["one","two","three"])
-            self.assertEqual((kwargs["ratio"],kwargs["duration"],kwargs["model"]),("16:9",30,"seedance-2.5"))
-            self.assertEqual(kwargs["start_conversation_id"],"123")
-            self.assertEqual(kwargs["after_index_start"],12)
-            self.assertEqual(self.store.get("job")["retry_count"],10)
-            return {"kind":"rejected", "poll":{**rejected["poll"],"latestIndex":14}}
-        with self.clock(), patch.object(schedule,"inspect_conversation",checks), \
-                patch.object(self.scheduler,"references",AsyncMock(return_value=["one","two","three"])), \
-                patch.object(schedule.worker,"generate_video",AsyncMock(side_effect=generate)) as generate_mock:
-            await self.scheduler.run("job",{})
-        generate_mock.assert_awaited_once()
-        self.assertEqual(self.store.get("job")["status"],"needs_recovery")
-        self.assertEqual(self.store.get("job")["retry_count"],10)
-        self.assertIn("710092007",self.store.get("job")["error"])
+    async def test_delayed_copyright_rejection_stops_saved_request(self):
+        self.store.update('job',account='fixture',conversation_id='old',phase='checking',
+                          status='processing',accepted_at=900,retry_count=3)
+        checks=AsyncMock(return_value={'kind':'rejected','poll':{'latestIndex':12,
+                          'rejection':{'code':'710092007','reason':'Copyright refusal'}}})
+        submit=AsyncMock()
+        await self.drive(submit,checks)
+        submit.assert_not_awaited()
+        row=self.store.get('job')
+        self.assertEqual(row['status'],'stopped')
+        self.assertEqual(row['retry_count'],3)
+        self.assertEqual(row['conversation_id'],'old')
+        self.assertIsNone(row['next_check_at'])
+        self.assertFalse(self.scheduler.reserved)
 
     async def test_video_wins_and_download_happens_after_inspection(self):
         self.store.update("job",account="fixture",conversation_id="123",phase="checking",accepted_at=900)
@@ -223,6 +307,30 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
         finally:os.chdir(previous)
 
 class QueueTests(unittest.IsolatedAsyncioTestCase):
+    async def test_video_spacing_and_shared_capacity(self):
+        from unittest.mock import patch
+        import browser_queue
+        self.assertEqual(browser_queue.VIDEO_START_INTERVAL,20)
+        self.assertEqual(browser_queue.LIMIT,10)
+        with tempfile.TemporaryDirectory() as root, patch('browser_queue.VIDEO_START_INTERVAL',.15), patch('browser_queue.START_INTERVAL',0):
+            starts=[]
+            release=asyncio.Event()
+            async def job():
+                async with BrowserQueue(root,limit=2).slot(video=True):
+                    starts.append(time.time())
+                    await release.wait()
+            tasks=[asyncio.create_task(job()) for _ in range(3)]
+            try:
+                await asyncio.sleep(.5)
+                self.assertEqual(len(starts),2)
+                self.assertGreaterEqual(starts[1]-starts[0],.14)
+                release.set()
+                await asyncio.wait_for(asyncio.gather(*tasks),2)
+                self.assertEqual(len(starts),3)
+            finally:
+                release.set()
+                await asyncio.gather(*tasks)
+
     async def test_launch_spacing_shared_between_queue_instances(self):
         with tempfile.TemporaryDirectory() as root:
             queues = [BrowserQueue(root) for _ in range(3)]
@@ -231,7 +339,7 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
             all_started = asyncio.Event()
             async def job(queue):
                 async with queue.slot():
-                    starts.append(asyncio.get_running_loop().time())
+                    starts.append(time.time())
                     if len(starts) == 3:
                         all_started.set()
                     await release.wait()

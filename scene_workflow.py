@@ -59,7 +59,7 @@ class SceneWorkflowMixin:
         errors = configuration_errors(scene, references)
         for row in rows:
             if row['asset_id'] is not None:
-                if row['asset_project_id'] != scene['project_id']:
+                if row['asset_project_id'] != self._library_project_id(scene['project_id']):
                     errors.append('Reference asset belongs to another project')
                 try:
                     if not resolve_asset_path(row['file_path']).is_file():
@@ -95,7 +95,7 @@ class SceneWorkflowMixin:
 
     def _import_plan(self, project_id, payload):
         self._require('projects', project_id)
-        assets = [dict(row) for row in self._conn.execute('SELECT * FROM assets WHERE project_id=? AND retired_at IS NULL ORDER BY id', (project_id,))]
+        assets = [dict(row) for row in self._conn.execute('SELECT * FROM assets WHERE project_id=? AND retired_at IS NULL ORDER BY id', (self._library_project_id(project_id),))]
         existing = [dict(row) for row in self._conn.execute('SELECT id,scene_number FROM scenes WHERE project_id=?', (project_id,))]
         return validate_import_payload(payload, assets, existing)
 
@@ -131,7 +131,7 @@ class SceneWorkflowMixin:
         with self._lock, self._conn:
             self._conn.execute('BEGIN IMMEDIATE')
             scene = self._require('scenes', scene_id)
-            assets = [dict(row) for row in self._conn.execute('SELECT * FROM assets WHERE project_id=? AND retired_at IS NULL', (scene['project_id'],))]
+            assets = [dict(row) for row in self._conn.execute('SELECT * FROM assets WHERE project_id=? AND retired_at IS NULL', (self._library_project_id(scene['project_id']),))]
             lookup = asset_name_index(assets)
             resolved_count = 0
             for ref in self._ordered_scene_requirements(scene_id):

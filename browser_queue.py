@@ -11,6 +11,7 @@ from patchright.async_api import async_playwright as _playwright
 ROOT = Path(__file__).resolve().parent / ".runtime"
 LIMIT = 10
 START_INTERVAL = 0.5
+VIDEO_START_INTERVAL = 20.0
 
 def lock_file(path):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,11 +51,12 @@ class BrowserQueue:
         db = sqlite3.connect(self.root / "browser_queue.db", timeout=10)
         db.execute("CREATE TABLE IF NOT EXISTS tickets (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT UNIQUE, active INTEGER DEFAULT 0)")
         db.execute("CREATE TABLE IF NOT EXISTS launch_clock (id INTEGER PRIMARY KEY CHECK(id=1), last_start REAL NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS video_launch_clock (id INTEGER PRIMARY KEY CHECK(id=1), last_start REAL NOT NULL)")
         db.commit()
         return db
 
     @asynccontextmanager
-    async def slot(self):
+    async def slot(self, *, video=False):
         owner = uuid.uuid4().hex
         path = self.root / (owner + ".lock")
         guard = lock_file(path)
@@ -79,10 +81,16 @@ class BrowserQueue:
                     clock = db.execute("SELECT last_start FROM launch_clock WHERE id=1").fetchone()
                     now = time.time()
                     delay = max(0, START_INTERVAL - (now - clock[0])) if clock else 0
+                    if video:
+                        video_clock = db.execute("SELECT last_start FROM video_launch_clock WHERE id=1").fetchone()
+                        if video_clock:
+                            delay = max(delay, VIDEO_START_INTERVAL - (now - video_clock[0]))
                     ready = first and first[0] == owner and active < self.limit and delay == 0
                     if ready:
                         db.execute("UPDATE tickets SET active=1 WHERE owner=?", (owner,))
                         db.execute("INSERT OR REPLACE INTO launch_clock(id,last_start) VALUES(1,?)", (now,))
+                        if video:
+                            db.execute("INSERT OR REPLACE INTO video_launch_clock(id,last_start) VALUES(1,?)", (now,))
                 if ready: break
                 await asyncio.sleep(min(.2, delay) if delay else .2)
             yield
@@ -95,8 +103,8 @@ class BrowserQueue:
 QUEUE = BrowserQueue()
 
 @asynccontextmanager
-async def async_playwright():
+async def async_playwright(*, video=False):
     # No Node driver or Chromium is started while waiting for the FIFO ticket.
-    async with QUEUE.slot():
+    async with QUEUE.slot(video=video):
         async with _playwright() as p:
             yield p

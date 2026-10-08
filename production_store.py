@@ -15,7 +15,7 @@ from review_store import ReviewStoreMixin
 from scene_info import SceneInfoMixin
 from scene_import import asset_name_key, normalize_reference_alias, validate_aliases, SceneNotReadyError
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 9
 ASSET_TYPES = {"character", "environment", "prop", "special_state"}
 
 
@@ -28,6 +28,79 @@ class AssetInUseError(ValueError):
 
 
 class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin, SceneInfoMixin):
+    def _migrate_v7(self):
+        columns = {row[1] for row in self._conn.execute('PRAGMA table_info(projects)')}
+        if 'parent_project_id' not in columns:
+            self._conn.execute('ALTER TABLE projects ADD COLUMN parent_project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT')
+        self._conn.execute('CREATE INDEX IF NOT EXISTS projects_parent ON projects(parent_project_id)')
+        self._conn.execute('PRAGMA user_version=7')
+        self._migrate_v8()
+
+    def _migrate_v8(self):
+        self._conn.execute("""CREATE TABLE IF NOT EXISTS project_account_allowlist (
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            account_uuid TEXT NOT NULL, PRIMARY KEY(project_id,account_uuid))""")
+        self._conn.execute('PRAGMA user_version=8')
+        self._conn.execute('CREATE TABLE IF NOT EXISTS project_account_overrides (project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE)')
+        self._conn.execute('PRAGMA user_version=9')
+
+    def _account_owner(self, project_id):
+        project=self._require('projects',project_id)
+        override=self._conn.execute('SELECT 1 FROM project_account_overrides WHERE project_id=?',(project_id,)).fetchone()
+        return project_id if override or not project.get('parent_project_id') else project['parent_project_id']
+
+    def project_accounts(self, project_id):
+        with self._lock:
+            owner=self._account_owner(project_id)
+            ids=[row[0] for row in self._conn.execute(
+                'SELECT account_uuid FROM project_account_allowlist WHERE project_id=? ORDER BY account_uuid',(owner,))]
+            return {'project_id':owner, 'account_uuids':ids, 'all_accounts':not ids, 'inherited':owner!=project_id}
+
+    def set_project_accounts(self, project_id, account_uuids, inherit=False):
+        if not isinstance(account_uuids,list) or any(not isinstance(x,str) or not x.strip() for x in account_uuids):
+            raise ValueError('Expected a list of account UUIDs')
+        ids=sorted(set(x.strip() for x in account_uuids))
+        with self._lock, self._conn:
+            project=self._require('projects',project_id)
+            owner=project_id
+            if inherit:
+                if not project.get('parent_project_id'):
+                    raise ValueError('Only chapters can inherit account settings')
+                self._conn.execute('DELETE FROM project_account_overrides WHERE project_id=?',(project_id,))
+                ids=[]
+            elif project.get('parent_project_id'):
+                self._conn.execute('INSERT OR IGNORE INTO project_account_overrides VALUES (?)',(project_id,))
+            self._conn.execute('DELETE FROM project_account_allowlist WHERE project_id=?',(owner,))
+            self._conn.executemany('INSERT INTO project_account_allowlist VALUES (?,?)',[(owner,x) for x in ids])
+        return self.project_accounts(project_id)
+
+    def task_allowed_accounts(self, row):
+        if not row.get('scene_id'):
+            return None
+        with self._lock:
+            scene=self._require('scenes',row['scene_id'])
+            owner=self._account_owner(scene['project_id'])
+            ids={r[0] for r in self._conn.execute(
+                'SELECT account_uuid FROM project_account_allowlist WHERE project_id=?',(owner,))}
+            return ids or None
+
+    def _library_project_id(self, project_id):
+        project = self._require('projects', project_id)
+        return project.get('parent_project_id') or project_id
+
+    def library_project_id(self, project_id):
+        with self._lock:
+            return self._library_project_id(project_id)
+
+    def create_chapter(self, project_id, name):
+        return self.create_project(name, parent_project_id=project_id)
+
+    def list_chapters(self, project_id):
+        with self._lock:
+            self._require('projects', project_id)
+            return [dict(row) for row in self._conn.execute(
+                'SELECT * FROM projects WHERE parent_project_id=? ORDER BY created_at,id', (project_id,))]
+
     def _backup_before_migration(self):
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
         if version > SCHEMA_VERSION:
@@ -220,13 +293,21 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin, SceneInfoMixin)
             fields["start_end"] = int(fields["start_end"])
         return fields
 
-    def create_project(self, name, *, project_id=None):
+    def create_project(self, name, *, project_id=None, parent_project_id=None):
         name = self._text(name, "name").strip()
         identifier = project_id or uuid.uuid4().hex
         self._text(identifier, "project_id")
         now = time.time()
         with self._lock, self._conn:
-            self._conn.execute("INSERT INTO projects VALUES (?,?,?,?)", (identifier, name, now, now))
+            if parent_project_id:
+                parent = self._require('projects', parent_project_id)
+                if parent.get('parent_project_id'):
+                    raise ValueError('Chapters must belong directly to a project')
+                self._conn.execute("INSERT INTO projects(id,name,created_at,updated_at,parent_project_id) VALUES (?,?,?,?,?)",
+                                   (identifier, name, now, now, parent_project_id))
+            else:
+                self._conn.execute("INSERT INTO projects(id,name,created_at,updated_at) VALUES (?,?,?,?)",
+                                   (identifier, name, now, now))
             return self._require("projects", identifier)
 
     def get_project(self, project_id):
@@ -291,6 +372,7 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin, SceneInfoMixin)
             raise ValueError("Unsupported asset type")
         self._text(file_path, "file_path")
         identifier = asset_id or Path(file_path).stem
+        project_id = self.library_project_id(project_id)
         file_path = validate_asset_path(project_id, identifier, file_path)
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -308,6 +390,7 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin, SceneInfoMixin)
             return dict(row) if row else None
 
     def list_project_assets(self, project_id):
+        project_id = self.library_project_id(project_id)
         with self._lock:
             self._require("projects", project_id)
             return [dict(r) for r in self._conn.execute("SELECT * FROM assets WHERE project_id=? AND retired_at IS NULL ORDER BY created_at, id", (project_id,))]
@@ -331,7 +414,7 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin, SceneInfoMixin)
             asset = self._require("assets", asset_id)
             if asset.get("retired_at") is not None:
                 raise AssetInUseError("Asset has been retired from the current project")
-            if asset["project_id"] != scene["project_id"]:
+            if asset["project_id"] != self._library_project_id(scene["project_id"]):
                 raise ValueError("Asset and scene must belong to the same project")
             requirements = self._ordered_scene_requirements(scene_id)
             if any(ref["asset_id"] == asset_id for ref in requirements):
@@ -432,6 +515,7 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin, SceneInfoMixin)
             scene = self._scene_details(scene_id)
             if not scene["ready"]:
                 raise SceneNotReadyError(scene)
+            scene["project_name"] = self._require("projects", scene["project_id"])["name"]
             return scene, self._ordered_scene_assets(scene_id)
 
     def _validate_reference_snapshot(self, scene_id, references):
@@ -448,7 +532,7 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin, SceneInfoMixin)
             position = self._positive_int(ref["position"], "position")
             if asset.get("retired_at") is not None:
                 raise ValueError("New attempts cannot use a retired asset")
-            if asset["project_id"] != scene["project_id"] or asset["file_path"] != ref["file_path"]:
+            if asset["project_id"] != self._library_project_id(scene["project_id"]) or asset["file_path"] != ref["file_path"]:
                 raise ValueError("Snapshot asset must belong to the scene project and match its immutable path")
             if position <= previous_position or asset["id"] in seen:
                 raise ValueError("Snapshot must have unique assets in position order")

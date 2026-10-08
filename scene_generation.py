@@ -26,7 +26,9 @@ def task_reference_paths(task):
 def prepare_scene_request(scene, references, request_factory, count=1):
     """One scene preparation path for regenerate and project orchestration."""
     snapshot = build_reference_snapshot(references)
-    req = request_factory(name=scene['scene_name'], prompt=scene['prompt'], model=scene['model'],
+    name = (f"scene{scene['scene_number']}_{scene['project_name']}"[:200]
+            if scene.get('project_name') else scene['scene_name'])
+    req = request_factory(name=name, prompt=scene['prompt'], model=scene['model'],
                           ratio=scene['ratio'], duration=scene['duration'], start_end=bool(scene['start_end']),
                           reference_aliases=[r['reference_alias'] for r in references], count=count)
     return req, snapshot

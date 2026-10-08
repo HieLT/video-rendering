@@ -115,11 +115,11 @@ class SceneInfoMigrationTests(unittest.TestCase):
             path=Path(folder)/'tasks.db';scene,rows=self.legacy(path)
             for _ in range(2):
                 store=TaskStore(str(path))
-                self.assertEqual(store._conn.execute('PRAGMA user_version').fetchone()[0],6)
+                self.assertEqual(store._conn.execute('PRAGMA user_version').fetchone()[0],9)
                 self.assertIsNone(store.get_scene(scene['id'])['scene_summary'])
                 for table,old in rows.items():
                     current=[tuple(row) for row in store._conn.execute('SELECT * FROM '+table)]
-                    self.assertEqual([row[:-1] for row in current] if table=='scenes' else current,old)
+                    self.assertEqual([row[:-1] for row in current] if table in ('scenes','projects') else current,old)
                 store._conn.close()
             with closing(sqlite3.connect(str(path)+'.before_v6.bak')) as conn:self.assertEqual(conn.execute('PRAGMA user_version').fetchone()[0],5)
     def test_migration_failure_rolls_back(self):

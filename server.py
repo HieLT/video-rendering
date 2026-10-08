@@ -569,6 +569,21 @@ async def admin_account_request_mode(body: AccountRequestMode, x_admin_key: str 
     return {"dual_requests": scheduler.dual_requests}
 
 
+class AccountGroupDispatch(BaseModel):
+    enabled: bool
+    domain: str | None = None
+
+
+@app.patch("/api/admin/account-groups/{group}/dispatch")
+async def admin_group_dispatch(group: str, body: AccountGroupDispatch,
+                               x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if group not in ('gmail', 'other'):
+        raise HTTPException(422, 'Unknown account group')
+    count = pool.set_group_scheduling(group, body.enabled, body.domain)
+    return {'ok': True, 'group': group, 'enabled': body.enabled, 'count': count}
+
+
 @app.patch("/api/admin/accounts/{name}")
 async def admin_account_patch(name: str, body: AccountPatch,
                               x_admin_key: str | None = Header(default=None)):
@@ -971,7 +986,7 @@ async def admin_task_delete(task_id: str, x_admin_key: str | None = Header(defau
 @app.post("/api/admin/tasks/{task_id}/{action}")
 async def admin_task_action(task_id: str, action: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    if action not in ("open", "resume", "check", "stop"):
+    if action not in ("open", "resume", "check", "stop", "retry"):
         raise HTTPException(404, "Unknown task action")
     async with TASK_ACTION_LOCKS.setdefault(task_id, asyncio.Lock()):
         row = store.get(task_id)
@@ -979,22 +994,37 @@ async def admin_task_action(task_id: str, action: str, x_admin_key: str | None =
             raise HTTPException(404, "Task not found")
         if row["status"] == "completed" and action != "open":
             raise HTTPException(409, "Task already completed")
+        if action == "open":
+            if not row.get("account") or not row.get("conversation_id"):
+                raise HTTPException(409, "This task has no saved conversation yet")
+            from browser import focus_task_conversation
+            if await focus_task_conversation(row["account"], row["conversation_id"]):
+                return {"ok": True, "status": "open", "conversation_id": row["conversation_id"]}
+            lock = pool._locks.get(row["account"])
+            if row["account"] in WEB_SESSIONS or (lock and lock.locked()):
+                raise HTTPException(409, "Account browser is starting or closing; try again shortly")
+            WEB_SESSIONS[row["account"]] = {"status":"starting", "started_at":time.time()}
+            asyncio.create_task(_run_open_web(row["account"], row["conversation_id"]))
+            return {"ok": True, "status": "queued", "conversation_id": row["conversation_id"]}
         runner = TASK_RUNNERS.get(task_id)
         if runner and not runner.done():
-            if action == "open":
-                from browser import focus_account_context
-                if await focus_account_context(row["account"]):
-                    return {"ok": True, "status": row["status"]}
-                if row.get("phase") != "waiting":
-                    raise HTTPException(409, "Task already running or queued")
-            else:
-                if action != "stop" and row.get("phase") != "waiting":
-                    raise HTTPException(409, "Task already running or queued")
-                runner.cancel()
-                try:
-                    await runner
-                except asyncio.CancelledError:
-                    pass
+            if action != "stop" and row.get("phase") != "waiting":
+                raise HTTPException(409, "Task already running or queued")
+            runner.cancel()
+            try:
+                await runner
+            except asyncio.CancelledError:
+                pass
+        if action == "retry":
+            try:
+                if row.get('reference_snapshot') is not None:
+                    task_reference_paths(row)
+                store.retry_task(task_id, max_pending=config.MAX_PENDING_TASKS)
+            except (ValueError, FileNotFoundError) as exc:
+                raise HTTPException(409, str(exc)) from exc
+            scheduler.release(row)
+            TASK_RUNNERS[task_id] = asyncio.create_task(_run_task(task_id))
+            return {"ok": True, "status": "queued", "task_id": task_id}
         if action == "stop":
             store.update(task_id, status="stopped", phase="stopped", next_check_at=None,
                          error="Monitoring stopped by user; Dola generation is not cancelled", finished_at=time.time())
@@ -1004,14 +1034,6 @@ async def admin_task_action(task_id: str, action: str, x_admin_key: str | None =
             raise HTTPException(409, "Task has no assigned account")
         if not scheduler.can_resume(row["account"], task_id):
             raise HTTPException(409, "Account is reserved by another task")
-        if action == "open":
-            lock = pool._locks.get(row["account"])
-            if lock and lock.locked():
-                raise HTTPException(409, "Account browser is busy")
-            if row["account"] not in WEB_SESSIONS:
-                WEB_SESSIONS[row["account"]] = {"status":"starting", "started_at":time.time()}
-                asyncio.create_task(_run_open_web(row["account"], row.get("conversation_id")))
-            return {"ok":True, "status":"queued"}
         if not row.get("conversation_id") and not row.get("result_url"):
             raise HTTPException(409, "Uncertain submission: use Open chat to inspect history before resubmitting")
         scheduler.reserved.setdefault(row["account"], task_id)

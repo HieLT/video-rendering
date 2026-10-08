@@ -44,6 +44,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 #deleteSelectedAccounts,#deleteSelectedTasks{margin-bottom:12px}
 .toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
 .toolbar .hint{color:var(--sub);font-size:12px}
+.account-groups[hidden],#projectAccountChoices [hidden]{display:none!important}
 .account-groups{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:14px}
 .account-group{flex:1;min-width:220px;text-align:left;padding:16px;border:1px solid #dce4e2;border-radius:12px;background:transparent;color:inherit;cursor:pointer;font:inherit}
 .account-group[aria-pressed="true"]{border-color:#00ad7c;background:#e7f7f1}
@@ -315,6 +316,12 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
         <button class="account-group" id="accountGroupOther" aria-pressed="false" onclick="switchAccountGroup('other')"><strong>Non-Gmail (không phải Gmail)</strong><span class="account-counts">Loading…</span></button>
       </div>
       <p class="tiny">Sẵn sàng gen: Dispatch bật, đăng nhập hợp lệ, còn quota/credit và còn slot request. Tài khoản chưa có email thuộc nhóm Non-Gmail.</p>
+      <div class="account-groups">
+        <button class="btn" id="dispatchGmail" disabled onclick="toggleGroupDispatch('gmail')">Gmail Dispatch</button>
+        <button class="btn" id="dispatchOther" disabled onclick="toggleGroupDispatch('other')">Non-Gmail Dispatch</button>
+      </div>
+      <p class="tiny">B&#7853;t/t&#7855;t Dispatch cho c&#7843; nh&#243;m. Task &#273;&#227; g&#225;n account v&#7851;n ti&#7871;p t&#7909;c; task ch&#432;a g&#225;n ch&#7881; ch&#7885;n account &#273;ang b&#7853;t. Kh&#244;ng thay &#273;&#7893;i tr&#7841;ng th&#225;i &#273;&#259;ng nh&#7853;p.</p>
+      <div id="accountDomains" class="account-groups" hidden></div>
       <div id="accountsTable"></div>
       <div id="googleImportProgress" class="tiny" aria-live="polite"></div>
     </div>
@@ -400,9 +407,10 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
     </div>
     <div class="card" id="projectDetail" hidden>
       <div class="toolbar"><h3 id="projectTitle"></h3><button class="btn" id="projectBack">Back to projects</button></div>
+      <div id="projectChapters" class="card"></div>
       <div id="projectProgress" class="project-progress" aria-live="polite"></div>
       <div id="projectSummary" class="project-summary"></div>
-      <div class="project-actions"><button class="btn" data-action="import">Import Scenes</button><button class="btn" data-action="import-info">Import Scene Info</button><button class="btn" data-action="library">Reference Library</button><button class="btn" data-action="outputs">View Selected Outputs</button><button class="btn" data-action="rename">Rename</button><button class="btn" data-action="refresh">Refresh project</button><label>Candidates per Scene <select id="projectCandidateCount"><option value="1">x1</option><option value="2">x2</option><option value="3">x3</option><option value="4">x4</option><option value="5">x5</option></select></label><button class="btn btn-p" id="projectGenerateAll">Generate All Ready</button><button class="btn" id="projectSelectLatest" data-loading="Selecting...">Select latest completed for unselected scenes</button></div>
+      <div class="project-actions"><button class="btn" data-action="import">Import Scenes</button><button class="btn" data-action="import-info">Import Scene Info</button><button class="btn" data-action="library">Reference Library</button><button class="btn" data-action="project-accounts">Run Accounts (optional)</button><button class="btn" data-action="outputs">View Selected Outputs</button><button class="btn" data-action="rename">Rename</button><button class="btn" data-action="refresh">Refresh project</button><label>Candidates per Scene <select id="projectCandidateCount"><option value="1">x1</option><option value="2">x2</option><option value="3">x3</option><option value="4">x4</option><option value="5">x5</option></select></label><button class="btn btn-p" id="projectGenerateAll">Generate All Ready</button><button class="btn" id="projectSelectLatest" data-loading="Selecting...">Select latest completed for unselected scenes</button></div>
       <details class="project-key"><summary>Gateway API Key (optional)</summary><label for="projectGatewayKey">Only if generation API authentication is enabled</label><br><input id="projectGatewayKey" type="password" autocomplete="off"></details>
       <div id="projectMissing"></div><div id="projectScenes"></div>
     </div>
@@ -599,11 +607,23 @@ async function deleteSelectedRows(kind){
 }
 
 /* ---- Accounts ---- */
-let accountGroup='gmail', accountSnapshot=[], accountJobs={};
+let accountDomain=null;
+let accountGroup='gmail', accountSnapshot=[], accountJobs={}, dispatchUpdating=false;
+async function toggleGroupDispatch(group,domain=null){
+  if(dispatchUpdating)return;
+  const enabled=!accountSnapshot.some(x=>accountEmailGroup(x)===group&&(domain===null||accountEmailDomain(x)===domain)&&x.scheduling);
+  dispatchUpdating=true;renderAccounts();
+  try{await api('/api/admin/account-groups/'+group+'/dispatch',{method:'PATCH',body:{enabled,domain}});}
+  catch(e){alert(e.message);}
+  finally{try{await loadAccounts();}finally{dispatchUpdating=false;renderAccounts();}}
+}
+function accountEmailDomain(account){const match=/^[^@\s]+@([^@\s]+)$/.exec((account.email||'').trim().toLowerCase());return match?match[1]:'';}
+function switchAccountDomain(domain){if(bulkDeleting.accounts)return;accountDomain=domain;deleteSelection.accounts.clear();renderAccounts();}
+q('#accountDomains').addEventListener('click',event=>{const button=event.target.closest('button');if(!button||button.disabled)return;if(button.dataset.domainAction==='filter')switchAccountDomain(button.dataset.domain);else if(button.dataset.domainAction==='dispatch')toggleGroupDispatch('other',button.dataset.domain);else switchAccountDomain(null);});
 function accountEmailGroup(account){return /^[^@\s]+@gmail\.com$/i.test((account.email||'').trim())?'gmail':'other';}
 function switchAccountGroup(group){
   if(bulkDeleting.accounts)return;
-  accountGroup=group;
+  accountGroup=group;accountDomain=null;
   deleteSelection.accounts.clear();
   renderAccounts();
 }
@@ -633,13 +653,29 @@ function renderAccounts(){
   for(const [group,id] of [['gmail','accountGroupGmail'],['other','accountGroupOther']]){
     const members=accountSnapshot.filter(x=>accountEmailGroup(x)===group);
     const ready=members.filter(x=>x.ready_to_generate&&jobs[x.name]?.status!=='running').length;
+    const enabledCount=members.filter(x=>x.scheduling).length;
+    const dispatchButton=q(group==='gmail'?'#dispatchGmail':'#dispatchOther');
+    dispatchButton.disabled=dispatchUpdating||!members.length;
+    dispatchButton.textContent=(enabledCount?'T\u1eaft':'B\u1eadt')+' Dispatch '+(group==='gmail'?'Gmail':'Non-Gmail')+' ('+enabledCount+'/'+members.length+' \u0111ang b\u1eadt)';
+
     const button=q('#'+id);
     button.setAttribute('aria-pressed',String(group===accountGroup));
     button.querySelector('.account-counts').textContent=`${members.length} tài khoản · ${ready} sẵn sàng gen`;
   }
-  const visible=accountSnapshot.filter(x=>accountEmailGroup(x)===accountGroup);
+  const domainBox=q('#accountDomains');domainBox.hidden=accountGroup!=='other';
+  const domains=[...new Set(accountSnapshot.filter(x=>accountEmailGroup(x)==='other').map(accountEmailDomain))].sort();
+  if(accountDomain!==null&&!domains.includes(accountDomain))accountDomain=null;
+  domainBox.innerHTML=domains.map(domain=>{
+    const members=accountSnapshot.filter(x=>accountEmailGroup(x)==='other'&&accountEmailDomain(x)===domain);
+    const enabled=members.filter(x=>x.scheduling).length;
+    const ready=members.filter(x=>x.ready_to_generate&&jobs[x.name]?.status!=='running').length;
+    return `<div class="card" style="margin:0;padding:10px"><button class="btn ${accountDomain===domain?'btn-p':''}" aria-pressed="${accountDomain===domain}" data-domain-action="filter" data-domain="${esc(domain)}">${esc(domain?'@'+domain:'Unknown domain')} (${members.length})</button><p class="tiny">${ready} ready</p><button class="btn" data-domain-action="dispatch" data-domain="${esc(domain)}" ${dispatchUpdating?'disabled':''}>${enabled?'T\u1eaft':'B\u1eadt'} Dispatch (${enabled}/${members.length})</button></div>`;
+  }).join('');
+  const visible=accountSnapshot.filter(x=>accountEmailGroup(x)===accountGroup&&(accountGroup!=='other'||accountDomain!==null&&accountEmailDomain(x)===accountDomain))
+    .sort((a,b)=>(Number(b.created_at)||0)-(Number(a.created_at)||0)||String(a.name).localeCompare(String(b.name)));
+
   deleteVisible.accounts=visible.filter(x=>!x.busy&&jobs[x.name]?.status!=='running').map(x=>x.name);
-  const rows=visible.map((x,index)=>{
+  const accountRow=(x,index)=>{
     const jb=jobs[x.name];
     const addFailed=jb&&jb.kind==='add'&&jb.status==='failed'&&x.login_ok!==1;
     const badge=(jb&&jb.kind==='add'&&jb.status==='running')?'<span class="badge b-blue">Adding</span>'
@@ -658,8 +694,19 @@ function renderAccounts(){
       fmt(x.created_at),
       `<button class="btn" style="margin-right:6px" onclick="openWeb('${esc(x.name)}',this)">Open Web</button><button class="btn" style="margin-right:6px" onclick="verify('${esc(x.name)}',this)">Verify</button><button class="btn" onclick="resetQuota('${esc(x.name)}',this)">Reset</button><button class="btn" onclick="openAddAccount('${esc(x.name)}')">Retry</button><button class="btn btn-danger" onclick="delAccount('${esc(x.name)}')">Delete</button>`
     ];
-  });
-  q('#accountsTable').innerHTML=table([selectionHeader('accounts'),'STT','Name','Type','Status','Dispatch','Used Today','Last Used','Created At','Actions'],rows);
+  };
+  const headers=['STT','Name','Type','Status','Dispatch','Used Today','Last Used','Created At','Actions'];
+  if(accountGroup==='other'){
+    const groups=domains.filter(domain=>accountDomain!==null&&domain===accountDomain);
+    q('#accountsTable').innerHTML=(accountDomain===null?'<p>Ch\u1ecdn tab @domain \u0111\u1ec3 xem danh s\u00e1ch account.</p>':visible.length?`<p>${selectionHeader('accounts')} Select all deletable accounts in this domain</p>`:'')+groups.map(domain=>{
+      const members=visible.filter(x=>accountEmailDomain(x)===domain);
+      const ready=members.filter(x=>x.ready_to_generate&&jobs[x.name]?.status!=='running').length;
+      const enabled=members.filter(x=>x.scheduling).length;
+      return `<section data-account-domain="${esc(domain)}" style="border:1px solid #b7d4cd;border-radius:10px;margin:16px 0;padding:14px;overflow-x:auto"><h3>${esc(domain?'@'+domain:'Unknown domain')}</h3><p>${members.length} t\u00e0i kho\u1ea3n &middot; ${ready} s\u1eb5n s\u00e0ng gen &middot; ${enabled}/${members.length} Dispatch b\u1eadt</p>${table(['',...headers],members.map(accountRow))}</section>`;
+    }).join('');
+  }else{
+    q('#accountsTable').innerHTML=table([selectionHeader('accounts'),...headers],visible.map(accountRow));
+  }
   updateDeleteSelection('accounts');
 }
 
@@ -996,6 +1043,23 @@ async function taskAction(id,action){
   try{await api('/api/admin/tasks/'+encodeURIComponent(id)+'/'+action,{method:'POST'});await loadTasks();if(curTab==='projects')await ProjectReview.refresh(true);}
   catch(e){alert(e.message);}
 }
+const sceneRetryPending=new Set();
+async function retrySceneTask(taskId,button){
+  if(sceneRetryPending.has(taskId))return;
+  sceneRetryPending.add(taskId);button.disabled=true;button.textContent='Queuing...';
+  try{
+    await api('/api/admin/tasks/'+encodeURIComponent(taskId)+'/retry',{method:'POST'});
+    button.dataset.retrySubmitted='1';button.textContent='Queued';
+    ProjectReview.invalidate();
+    await loadTasks();
+  }catch(e){alert(e.message);}
+  finally{sceneRetryPending.delete(taskId);if(button.isConnected&&!button.dataset.retrySubmitted){button.disabled=false;button.textContent='Try again';}}
+}
+function taskRetryHistory(t){
+  let history=[];try{history=JSON.parse(t.retry_history||'[]');}catch(e){}
+  if(!history.length)return '';
+  return '<details class="tiny"><summary>Retry history ('+history.length+')</summary>'+history.map((h,i)=>'<div style="white-space:pre-wrap;overflow-wrap:anywhere">#'+(i+1)+' '+esc(h.status||'')+' '+esc(h.error||'')+'</div>').join('')+'</details>';
+}
 async function deleteTask(id){
   if(!confirm('Delete this record from Video Generated? The video file will be kept.'))return;
   try{await api('/api/admin/tasks/'+encodeURIComponent(id),{method:'DELETE'});await loadTasks();}
@@ -1025,13 +1089,16 @@ function taskControls(t){
     controls.push('<a class="btn" href="'+esc(t.video_url)+'" target="_blank" rel="noopener">Open</a>');
   }
   if(t.account&&!t.conversation_id&&t.status!=='completed'){
-    controls.push('<button class="btn" title="Open this account in Dola; no conversation was saved for this task" data-account="'+esc(t.account)+'" onclick="openWeb(this.dataset.account,this)">Open chat</button>');
+    controls.push('<button class="btn" disabled title="This task has no saved conversation yet">No chat yet</button>');
   }
   if(t.account&&t.conversation_id&&t.status!=='completed'){
     controls.push('<button class="btn" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;open&quot;)">Open chat</button>');
   }
   if(t.account&&(t.conversation_id||t.result_url)&&t.status!=='completed'){
     controls.push('<button class="btn" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;check&quot;)">Check now</button>');
+  }
+  if(t.scene_id&&['failed','stopped'].includes(t.status)&&!t.deleted_at){
+    controls.push('<button class="btn btn-p" title="Retry this task in place using its original prompt, references and settings" data-scene-retry="'+esc(t.id)+'" onclick="retrySceneTask(this.dataset.sceneRetry,this)">Try again</button>');
   }
   if(['queued','processing','needs_recovery'].includes(t.status)){
     controls.push('<button class="btn btn-danger" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;stop&quot;)">Stop</button>');
@@ -1157,7 +1224,7 @@ async function loadTasks(){
     taskPromptCell(t),
     accountNumbers.get(t.account)||'?',
     (t.duration||10)+'s',
-    (({needs_recovery:'<span class="badge b-red">Needs recovery</span>',stopped:'<span class="badge b-gray">Stopped</span>'})[t.status]||sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>')+taskScheduleInfo(t),
+    (({needs_recovery:'<span class="badge b-red">Needs recovery</span>',stopped:'<span class="badge b-gray">Stopped</span>'})[t.status]||sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>')+taskScheduleInfo(t)+taskRetryHistory(t),
     fmt(t.created_at),
     t.video_url
       ?'<span class="video-file" title="'+esc(t.id)+'.mp4">'+esc(t.id)+'.mp4</span><span class="tiny">MP4 video</span>'
@@ -1286,10 +1353,11 @@ window.ProjectReview = (() => {
   }
   function renderProjects() {
     el('projectHome').hidden=!!state.project || !!state.panel;
-    el('projectList').innerHTML=state.projects.length ? state.projects.map(p=>{
+    el('projectList').innerHTML=state.projects.length ? state.projects.filter(p=>!p.parent_project_id).map(p=>{
       const data=state.home[p.id];const sum=data && data.summary;
       return `<article class="project-home-card"><h4>${esc(p.name)}</h4>
-        <p>Scenes: ${sum ? sum.total_scenes : 'Loading...'}</p>
+        <p>Chapters: ${state.projects.filter(c=>c.parent_project_id===p.id).length}</p>
+        <p>Scenes in project: ${sum ? sum.total_scenes : 'Loading...'}</p>
         <p>Selected: ${sum ? `${sum.selected} / ${sum.total_scenes}` : 'Loading...'}</p>
         <p>Production Status: ${data && data.production_complete ? 'COMPLETE' : 'IN PROGRESS'}</p>
         <button class="btn btn-p" data-action="open" data-project-id="${esc(p.id)}" aria-label="${esc(p.name)}">Open Project</button></article>`;
@@ -1305,7 +1373,14 @@ window.ProjectReview = (() => {
     const data=state.data;
     const project=state.projects.find(p=>p.id===state.project);
     el('projectDetail').hidden=!!state.panel;
-    el('projectTitle').textContent=project ? project.name : 'Project';
+    const parent=project && state.projects.find(p=>p.id===project.parent_project_id);
+    el('projectTitle').textContent=parent ? `${parent.name} / ${project.name}` : (project ? project.name : 'Project');
+    el('projectBack').textContent=parent ? 'Back to project' : 'Back to projects';
+    const chapters=state.projects.filter(p=>p.parent_project_id===(parent ? parent.id : state.project));
+    el('projectChapters').innerHTML=parent
+      ? `<p>Chapter: <strong>${esc(project.name)}</strong> &middot; References shared from <strong>${esc(parent.name)}</strong>.</p><p>Import, Generate All and selected outputs below apply to this chapter only.</p><div class="project-actions">${chapters.map(c=>`<button class="btn ${c.id===state.project ? 'btn-p' : ''}" data-action="open" data-project-id="${esc(c.id)}">${esc(c.name)}</button>`).join('')}</div>`
+      : `<div class="toolbar"><h4>Chapters</h4><button class="btn btn-p" data-action="create-chapter">+ Create Chapter</button></div><p>All chapters share this project's Reference Library. Open a chapter to import and generate its scenes.</p><div class="project-actions">${chapters.map(c=>`<button class="btn" data-action="open" data-project-id="${esc(c.id)}">${esc(c.name)}</button>`).join('') || '<span>No chapters yet.</span>'}</div>${chapters.length ? '<p>Scenes and Generate All below belong directly to this project; they do not include chapter scenes.</p>' : ''}`;
+
     el('projectProgress').textContent=`${data.summary.selected} / ${data.summary.total_scenes} SELECTED${data.production_complete ? ' - Production complete' : ''}`;
     el('projectSummary').innerHTML=`<span class="badge b-gray">Scenes: ${data.summary.total_scenes}</span>`+Object.entries(data.summary).filter(([key])=>key!=='total_scenes')
       .map(([key,count])=>`<span class="badge b-gray">${esc(label(key))}: ${count}</span>`).join('');
@@ -1449,7 +1524,7 @@ window.ProjectReview = (() => {
   el('projectGatewayKey').addEventListener('input',()=>{el('videoApiKey').value=el('projectGatewayKey').value;});
   el('projectCloseVersions').addEventListener('click',closeVersions);
   el('projectBack').addEventListener('click',()=>{
-    if(state.busy)return;closePanel();closeVersions();state.project=null;state.data=null;state.request++;
+    if(state.busy)return;closePanel();closeVersions();state.project=(state.projects.find(p=>p.id===state.project)||{}).parent_project_id||null;state.data=null;state.request++;
     el('projectDetail').hidden=true;state.dirty=true;refresh(true);
   });
   el('projectGenerateAll').addEventListener('click',event=>act(event.target,async()=>{
@@ -1525,9 +1600,32 @@ window.ProjectReview = (() => {
     const groups=missingGroups();
     el('projectMissing').innerHTML=groups.length ? `<section class="project-missing"><h4>Missing References - ${groups.length}</h4><button class="btn btn-p" data-action="bulk">Bulk Upload References</button>${groups.map(ref=>`<div class="project-asset" data-drop-reference="${esc(ref.name)}"><strong>${esc(ref.name)}</strong><p>Drop image here to stage it for this reference.</p><p>Used by Scenes: ${ref.scenes.join(', ')}</p><button class="btn" data-action="upload-missing" data-name="${esc(ref.name)}">Upload</button></div>`).join('')}</section>` : '';
   }
-  function projectForm(rename=false){
+  let runAccountDomain=null;
+  async function projectAccountsPanel(){
+    runAccountDomain=null;
+    panel('project-accounts','Accounts allowed for this project','<p>Loading...</p>');
+    const ticket=state.panelRequest;
+    const [settings,data]=await Promise.all([projectRequest(`/api/admin/projects/${path(state.project)}/accounts`),api('/api/admin/accounts')]);
+    if(ticket!==state.panelRequest)return;
+    const selected=new Set(settings.account_uuids);
+    const accounts=[...data.accounts].sort((a,b)=>(Number(b.created_at)||0)-(Number(a.created_at)||0));
+    for(const id of selected)if(!accounts.some(a=>a.uuid===id))accounts.push({uuid:id,name:id,email:'Unavailable account',scheduling:false});
+    const chapter=!!state.projects.find(p=>p.id===state.project)?.parent_project_id;
+    const domains=[...new Set(accounts.map(accountEmailDomain))].sort();
+    panel('project-accounts',chapter?'Accounts for this chapter':'Accounts for this project',`<p>Optional: leave all unchecked to use all eligible accounts. ${chapter?'Settings saved here apply only to this chapter.':'Chapters inherit these settings unless configured separately.'} Dispatch, quota and request slots still apply.</p><p>Already submitted videos keep their original account. New submissions wait if none of the selected accounts are available.</p>${chapter?`<label><input type="checkbox" id="projectAccountInherit" ${settings.inherited?'checked':''}> Use parent project accounts</label>`:''}<div class="project-actions" id="runAccountDomains">${domains.map(d=>`<button class="btn" data-action="run-account-domain" data-domain="${esc(d)}">${esc(d?'@'+d:'Unknown domain')} (${accounts.filter(a=>accountEmailDomain(a)===d).length})</button>`).join('')}</div><p>Choose a domain tab to view accounts. Selections are kept when switching tabs.</p><input id="projectAccountSearch" placeholder="Search within domain"><div class="project-actions"><button class="btn" data-action="accounts-clear">Clear selection (All accounts)</button><button class="btn" data-action="accounts-select-visible">Select visible</button></div><div style="max-height:420px;overflow:auto" id="projectAccountChoices">${accounts.map(a=>`<label style="display:block;padding:8px;border-bottom:1px solid #ddd" hidden data-run-domain="${esc(accountEmailDomain(a))}" data-account-search="${esc([a.email,a.name].join(' ').toLowerCase())}"><input type="checkbox" value="${esc(a.uuid)}" ${selected.has(a.uuid)?'checked':''}> ${esc(a.email||a.display_name||a.name)} <small>${esc(a.name)} &middot; Dispatch ${a.scheduling?'on':'off'}</small></label>`).join('')}</div><p id="projectAccountCount"></p><button class="btn btn-p" data-action="save-project-accounts">Save accounts</button>`);
+    filterRunAccounts();updateProjectAccountCount();
+  }
+  function filterRunAccounts(){
+    const inherited=!!el('projectAccountInherit')?.checked;
+    const query=el('projectAccountSearch').value.trim().toLowerCase();
+    el('projectAccountChoices').querySelectorAll('label').forEach(x=>{x.hidden=runAccountDomain===null||x.dataset.runDomain!==runAccountDomain||!x.dataset.accountSearch.includes(query);x.querySelector('input').disabled=inherited;});
+    el('runAccountDomains').querySelectorAll('button').forEach(x=>{x.classList.toggle('btn-p',x.dataset.domain===runAccountDomain);x.setAttribute('aria-pressed',String(x.dataset.domain===runAccountDomain));});
+  }
+  function updateProjectAccountCount(){const n=el('projectAccountChoices').querySelectorAll('input:checked').length;el('projectAccountCount').textContent=el('projectAccountInherit')?.checked?'Using parent project accounts':n?`${n} selected accounts`:'All eligible accounts';}
+  function projectForm(rename=false, chapter=false){
     const project=state.projects.find(p=>p.id===state.project);
-    panel(rename ? 'rename' : 'create',rename ? 'Rename Project' : 'Create Project',`<form class="project-form" id="projectNameForm"><label>Project Name<input id="projectNameInput" maxlength="200" required value="${rename ? esc(project.name) : ''}"></label><div class="project-actions"><button type="button" class="btn" data-action="close-panel">Cancel</button><button type="submit" class="btn btn-p" data-loading="${rename ? 'Saving...' : 'Creating...'}">${rename ? 'Save Name' : 'Create Project'}</button></div></form>`);
+    const kind=chapter || (rename && project && project.parent_project_id) ? 'Chapter' : 'Project';
+    panel(rename ? 'rename' : chapter ? 'create-chapter' : 'create',rename ? `Rename ${kind}` : `Create ${kind}`,`<form class="project-form" id="projectNameForm"><label>${kind} Name<input id="projectNameInput" maxlength="200" required value="${rename ? esc(project.name) : ''}"></label><div class="project-actions"><button type="button" class="btn" data-action="close-panel">Cancel</button><button type="submit" class="btn btn-p" data-loading="${rename ? 'Saving...' : 'Creating...'}">${rename ? 'Save Name' : `Create ${kind}`}</button></div></form>`);
     el('projectNameInput').focus();
   }
   function importPanel(){
@@ -1554,7 +1652,7 @@ window.ProjectReview = (() => {
       await projectRequest(`/api/admin/scenes/${path(scene.id)}/references/resolve`,{method:'POST'});
   }
   async function libraryPanel(){
-    panel('library','Reference Library','<p>Loading...</p>');const ticket=state.panelRequest;
+    panel('library','Shared Project Reference Library','<p>Loading...</p>');const ticket=state.panelRequest;
     const projectId=state.project;
     const result=await projectRequest(`/api/admin/projects/${path(projectId)}/assets`);
     if(ticket!==state.panelRequest || projectId!==state.project)return;
@@ -1709,6 +1807,16 @@ window.ProjectReview = (() => {
     if(action==='confirm-replace'){await confirmReplace(button.dataset.assetId);return true;}
     if(action==='confirm-remove'){const result=await projectRequest(`/api/admin/assets/${path(button.dataset.assetId)}/remove`,{method:'POST'});await refresh(true);await libraryPanel();message(result.cleanup_warning || 'Reference removed from current usage. History preserved.');return true;}
     if(action==='confirm-scene-generate'){await projectRequest(`/api/admin/scenes/${path(button.dataset.sceneId)}/generate`,{method:'POST',body:{count:Number(button.dataset.count),request_id:button.dataset.requestId},headers:auth()});closePanel();message(`${button.dataset.count} candidates queued.`);await refresh(true);return true;}
+    if(action==='project-accounts'){await projectAccountsPanel();return true;}
+    if(action==='run-account-domain'){runAccountDomain=button.dataset.domain;filterRunAccounts();return true;}
+    if(action==='accounts-clear'){if(el('projectAccountInherit'))el('projectAccountInherit').checked=false;filterRunAccounts();el('projectAccountChoices').querySelectorAll('input').forEach(x=>x.checked=false);updateProjectAccountCount();return true;}
+    if(action==='accounts-select-visible'){if(el('projectAccountInherit'))el('projectAccountInherit').checked=false;filterRunAccounts();el('projectAccountChoices').querySelectorAll('label').forEach(x=>{if(!x.hidden)x.querySelector('input').checked=true;});updateProjectAccountCount();return true;}
+    if(action==='save-project-accounts'){
+      const account_uuids=[...el('projectAccountChoices').querySelectorAll('input:checked')].map(x=>x.value);
+      await projectRequest(`/api/admin/projects/${path(state.project)}/accounts`,{method:'PUT',body:{account_uuids,inherit:!!el('projectAccountInherit')?.checked}});
+      const inherited=!!el('projectAccountInherit')?.checked;closePanel();message(inherited?'Chapter uses parent project accounts.':account_uuids.length?`Current project/chapter restricted to ${account_uuids.length} accounts.`:'Current project/chapter uses all eligible accounts.');return true;
+    }
+    if(action==='create-chapter'){projectForm(false,true);return true;}
     if(action==='create'){projectForm();return true;}
     if(action==='rename'){projectForm(true);return true;}
     if(action==='close-panel'){closePanel();el(state.project ? 'projectDetail' : 'projectHome').scrollIntoView({block:'start',behavior:'smooth'});return true;}
@@ -1735,6 +1843,8 @@ window.ProjectReview = (() => {
     return false;
   }
   root.addEventListener('input',event=>{
+    if(['projectAccountSearch','projectAccountInherit'].includes(event.target.id)){filterRunAccounts();updateProjectAccountCount();}
+    if(event.target.closest('#projectAccountChoices'))updateProjectAccountCount();
     if(event.target.id==='projectInfoJSON'){state.validated=null;el('projectInfoSubmit').disabled=true;el('projectInfoPreview').replaceChildren();}
     if(event.target.id==='projectImportJSON'){state.validated=null;el('projectImportSubmit').disabled=true;el('projectImportSubmit').textContent='Import';el('projectImportPreview').replaceChildren();}
   });
@@ -1745,8 +1855,9 @@ window.ProjectReview = (() => {
       if(form.id==='projectNameForm'){
         const name=el('projectNameInput').value.trim();if(!name)throw new Error('Project name cannot be empty.');
         const rename=state.panel==='rename';
-        const project=await projectRequest(rename ? `/api/admin/projects/${path(state.project)}` : '/api/admin/projects',{method:rename ? 'PATCH' : 'POST',body:{name}});
-        closePanel();closeVersions();state.project=project.id;state.data=null;await refresh(true);message(rename ? 'Project renamed.' : 'Project created. Import scenes to get started.');
+        const chapter=state.panel==='create-chapter';
+        const project=await projectRequest(rename ? `/api/admin/projects/${path(state.project)}` : chapter ? `/api/admin/projects/${path(state.project)}/chapters` : '/api/admin/projects',{method:rename ? 'PATCH' : 'POST',body:{name}});
+        closePanel();closeVersions();state.project=project.id;state.data=null;await refresh(true);message(rename ? 'Name updated.' : chapter ? 'Chapter created. References are shared with the project.' : 'Project created. Add chapters or import scenes to get started.');
       }else{
         const name=el('projectAssetName').value.trim();if(!name)throw new Error('Reference name cannot be empty.');
         const file=el('projectAssetFile').files[0];if(!file)throw new Error('Choose a reference image.');
