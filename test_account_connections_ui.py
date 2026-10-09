@@ -78,9 +78,35 @@ async def main():
                 await page.wait_for_selector('#dlg', state='hidden')
                 assert imports[0]['connection_id'] == 'fixture'
                 assert imports[0]['concurrency'] == 10
+                await page.get_by_role('button', name='Quản lý proxy', exact=True).click()
+                await page.wait_for_selector('#proxyManagerList [data-proxy-id="fixture"]')
+                assert await page.locator('#proxyManagerList [data-proxy-id="fixture"]').is_disabled()
+                await page.locator('#proxyImportText').fill('203.0.113.10:8080:fixture:private-A | ID: 100\ninvalid')
+                await page.locator('#proxyImportButton').click()
+                await page.wait_for_function("document.querySelector('#proxyManagerMessage').textContent.includes('Dòng 2')")
+                assert 'proxy-100' not in fixture.path.read_text()
+                await page.locator('#proxyImportText').fill('203.0.113.10:8080:fixture:private-A | ID: 100\n203.0.113.11:8081:fixture:private-B | ID: 101\n203.0.113.10:8080:fixture:private-A | ID: 100')
+                await page.locator('#proxyImportButton').click()
+                await page.wait_for_function("document.querySelector('#proxyManagerMessage').textContent.includes('Đã thêm 2 proxy')")
+                await page.wait_for_selector('#proxyManagerList [data-proxy-id="proxy-100"]')
+                assert await page.locator('#proxyImportText').input_value() == ''
+                assert 'private-A' not in await page.content()
+                await page.locator('#dlg').get_by_role('button', name='Đóng', exact=True).click()
+                await page.locator(selector).select_option('proxy-100')
+                await page.wait_for_function("id => {const select=document.querySelector('[data-account-connection=\"'+id+'\"]');return select.value==='proxy-100'&&!select.disabled;}", arg=first_id)
+                assert account_connection('one') == 'proxy-100'
+                await page.get_by_role('button', name='Quản lý proxy', exact=True).click()
+                await page.wait_for_selector('#proxyManagerList [data-proxy-id="proxy-100"]')
+                assert await page.locator('#proxyManagerList [data-proxy-id="proxy-100"]').is_disabled()
+                await page.locator('#proxyManagerList [data-proxy-id="proxy-100"]').locator('..').locator('summary').click()
+                assert 'one@gmail.com' in await page.locator('#proxyManagerList').inner_text()
+                page.on('dialog', lambda dialog: dialog.accept())
+                await page.locator('#proxyManagerList [data-proxy-id="proxy-101"]').click()
+                await page.wait_for_selector('#proxyManagerList [data-proxy-id="proxy-101"]', state='detached')
+                assert 'proxy-101' not in fixture.path.read_text()
                 assert not errors, errors
                 assert 'fixture-secret' not in await page.content()
-                print('PASS connection UI: batch assignment, reload persistence, separate routes, Google bulk selection, no credentials in page; no live login/generation')
+                print('PASS connection/proxy UI: batch and individual assignment, persistence, Google bulk selection, atomic validation, multi-proxy paste, duplicates, in-use guard, unused deletion, no credentials in responses; no live login/generation')
             finally:
                 await browser.close()
     finally:

@@ -338,6 +338,15 @@ This section supersedes earlier retry and browser spacing descriptions.
 
 Terminal content refusal: ご希望のコンテンツを生成できません。他の内容をお試しください。
 
+### Proxy management UI (2026-10-09)
+
+- Accounts toolbar now has **Quản lý proxy**. Paste one or many lines as `host:port:username:password | ID: provider-id`, then click **Thêm proxy**. ID is optional; blank lines and exact duplicate proxies are skipped. Hostnames/IPv4 and HTTP proxies with authentication are supported by this paste format.
+- Validate the whole paste before one atomic save. Invalid lines report their line number without quoting credentials; nothing from that batch is saved. Reusing an existing ID with different settings, or an endpoint/username with a different password, is rejected instead of silently changing existing account routes.
+- The manager lists proxy labels/endpoints and accounts using them. Unused proxies can be deleted; assigned proxies are protected until their accounts change connection. Deleted-account mappings do not prevent removal. **Mạng hiện tại** stays available independently of the proxy list.
+- New imports immediately populate individual account dropdowns, bulk **Gán kết nối**, and the Add/Google import forms. Passwords are cleared from the paste box after success and never returned by management/list APIs; settings remain only in ignored `.connections.local.json`.
+- Admin APIs: GET `/api/admin/proxies`, POST `/api/admin/proxies/import`, DELETE `/api/admin/proxies/{identifier}`. Account list reads the routing file once per request for larger account/proxy collections.
+- Validation: 45 offline management/routing/bulk/scheduler/relay/browser-lifecycle tests passed. Browser acceptance passed multiple-proxy paste, atomic error handling, duplicate skipping, selecting a newly imported proxy for an existing account, viewing assigned accounts and guarded/unused deletion. No real proxy records/accounts were changed by tests and no live login/generation was submitted. Restart backend and Ctrl+F5 to apply.
+
 ### Authenticated proxy with the Dola30 extension (2026-10-09)
 
 Ghi chú bàn giao: đã sửa lỗi Open Web sau khi chuyển account từ mạng hiện tại sang proxy có username/password. Đổi kết nối trực tiếp bằng dropdown trong cột **Kết nối** (tự lưu), hoặc tick nhiều account rồi **Gán kết nối**. Đóng browser lỗi, restart backend bằng launcher trong workspace `F:\video-rendering`, Ctrl+F5 rồi mở lại Open Web để nạp bản sửa. Không cần xóa profile hay database. Cấu hình proxy và mapping account chỉ có trên máy local; khi clone code ở máy khác cần chuyển riêng `.connections.local.json` cùng dữ liệu runtime, không đưa file này lên Git.

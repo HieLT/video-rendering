@@ -306,7 +306,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
     <div class="card">
       <div class="toolbar">
         <h3 style="margin:0">Account List</h3>
-        <button class="btn btn-p" onclick="openAddAccount()">＋ Add Account</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="openProxyManager()">Quản lý proxy</button><button class="btn btn-p" onclick="openAddAccount()">＋ Add Account</button></div>
       </div>
       <button id="deleteSelectedAccounts" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('accounts')">Delete selected (0)</button>
       <button id="assignSelectedConnection" class="btn" hidden disabled onclick="openAccountConnections()">Gán kết nối</button>
@@ -617,6 +617,35 @@ let accountDomain=null;
 let accountGroup='gmail', accountSnapshot=[], accountJobs={}, dispatchUpdating=false;
 let connectionChoices=[{id:'direct',label:'Mạng hiện tại (không proxy)'}];
 const connectionUpdates=new Set();
+async function openProxyManager(){
+  showDlg(`<h2>Quản lý proxy</h2><p>Thêm proxy trước, sau đó chọn cho từng account ở cột Kết nối hoặc dùng Gán kết nối cho nhiều account.</p><label for="proxyImportText">Thêm một hoặc nhiều proxy, mỗi dòng một proxy</label><textarea id="proxyImportText" rows="5" autocomplete="off" spellcheck="false" placeholder="203.0.113.10:8080:username:password | ID: 12345"></textarea><p class="tiny">ID không bắt buộc. Dòng trống và proxy trùng được bỏ qua. Nếu có dòng lỗi, toàn bộ lượt thêm chưa được lưu.</p><button class="btn btn-p" id="proxyImportButton" onclick="importProxyPaste()">Thêm proxy</button><p id="proxyManagerMessage" role="status"></p><div id="proxyManagerList" style="max-height:320px;overflow:auto">Đang tải…</div><div class="row"><button class="btn" onclick="hide('dlg')">Đóng</button></div>`);
+  try{await loadProxyManager();}catch(e){if(q('#proxyManagerMessage'))q('#proxyManagerMessage').textContent=e.message;}
+}
+async function loadProxyManager(){
+  const result=await api('/api/admin/proxies');
+  const target=q('#proxyManagerList');if(!target)return;
+  target.innerHTML=result.proxies.length?result.proxies.map(p=>`<div style="border-top:1px solid #ddd;padding:12px 0"><strong>${esc(p.label)}</strong> <span class="tiny">${esc(p.server)}</span><p class="tiny">${p.accounts.length} account đang dùng</p>${p.accounts.length?`<details><summary>Xem account</summary>${p.accounts.map(a=>`<div>${esc(a.label)}</div>`).join('')}</details>`:''}<button class="btn btn-danger" data-proxy-id="${esc(p.id)}" ${p.accounts.length?'disabled title="Đổi kết nối các account trước khi xóa"':''} onclick="deleteManagedProxy(this)">Xóa proxy</button></div>`).join(''):'<p>Chưa có proxy. Mạng hiện tại luôn có sẵn trong lựa chọn Kết nối.</p>';
+}
+async function importProxyPaste(){
+  const input=q('#proxyImportText'),button=q('#proxyImportButton'),message=q('#proxyManagerMessage');
+  if(!input.value.trim()){message.textContent='Nhập ít nhất một proxy.';return;}
+  button.disabled=true;input.disabled=true;
+  try{
+    const result=await api('/api/admin/proxies/import',{method:'POST',body:{text:input.value}});
+    input.value='';message.textContent=`Đã thêm ${result.added} proxy; bỏ qua ${result.skipped} dòng trùng.`;
+    await loadAccounts();await loadProxyManager();
+  }catch(e){message.textContent=e.message;}
+  finally{button.disabled=false;input.disabled=false;}
+}
+async function deleteManagedProxy(button){
+  if(!confirm('Xóa proxy chưa có account sử dụng?'))return;
+  button.disabled=true;
+  try{
+    await api('/api/admin/proxies/'+encodeURIComponent(button.dataset.proxyId),{method:'DELETE'});
+    await loadAccounts();await loadProxyManager();
+    if(q('#proxyManagerMessage'))q('#proxyManagerMessage').textContent='Đã xóa proxy.';
+  }catch(e){if(q('#proxyManagerMessage'))q('#proxyManagerMessage').textContent=e.message;button.disabled=false;}
+}
 function connectionOptions(selected='direct'){
   return connectionChoices.map(c=>`<option value="${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.label)}</option>`).join('');
 }

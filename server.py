@@ -549,6 +549,7 @@ async def admin_login(body: AdminLogin):
 async def admin_accounts(x_admin_key: str | None = Header(default=None)):
     import account_connections
     _admin_auth(x_admin_key)
+    routing = account_connections.routing_snapshot()
     accounts = []
     for account in pool.list_accounts():
         public = pool.public_account(account)
@@ -557,15 +558,46 @@ async def admin_accounts(x_admin_key: str | None = Header(default=None)):
             and JOBS.get(account["name"], {}).get("status") != "running"
         )
         public["active_requests"] = len(scheduler.reservation_ids(account['name']))
-        public['connection_id'] = account_connections.account_connection(account['name'])
+        public['connection_id'] = routing['accounts'].get(account['name'], 'direct')
         accounts.append(public)
     return {"accounts": accounts, "dual_requests": scheduler.dual_requests,
-            "connections": account_connections.choices()}
+            "connections": routing['connections']}
 
 
 class AccountConnectionAssignment(BaseModel):
     accounts: list[str] = Field(min_length=1, max_length=500)
     connection_id: str
+
+
+class ProxyImport(BaseModel):
+    text: str = Field(repr=False)
+
+
+@app.get('/api/admin/proxies')
+async def admin_proxies(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return {'proxies': account_connections.proxy_records(pool.list_accounts())}
+
+
+@app.post('/api/admin/proxies/import')
+async def admin_proxy_import(body: ProxyImport, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    try:
+        return account_connections.import_proxies(body.text)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.delete('/api/admin/proxies/{identifier}')
+async def admin_proxy_delete(identifier: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    try:
+        account_connections.remove_proxy(identifier, set(pool.accounts))
+    except KeyError as exc:
+        raise HTTPException(404, 'Proxy không tồn tại') from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {'ok': True}
 
 
 @app.patch('/api/admin/account-connections')
