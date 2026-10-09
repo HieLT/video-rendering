@@ -382,6 +382,7 @@ main.accounts-view{max-width:1440px}
       <p class="tiny">B&#7853;t/t&#7855;t Dispatch cho c&#7843; nh&#243;m. Task &#273;&#227; g&#225;n account v&#7851;n ti&#7871;p t&#7909;c; task ch&#432;a g&#225;n ch&#7881; ch&#7885;n account &#273;ang b&#7853;t. Kh&#244;ng thay &#273;&#7893;i tr&#7841;ng th&#225;i &#273;&#259;ng nh&#7853;p.</p>
       <div id="accountDomains" class="account-groups" hidden></div>
       <div id="accountProxyStats" aria-label="Thống kê account theo proxy"></div>
+      <div id="domainWebProgress" class="tiny" aria-live="polite"></div>
       <div id="accountsTable"></div>
       <div id="googleImportProgress" class="tiny" aria-live="polite"></div>
     </div>
@@ -620,6 +621,20 @@ async function openWeb(name,btn){
   btn.disabled=false;btn.textContent=old;
 }
 
+async function openDomainWeb(domain,btn){
+  btn.disabled=true;
+  try{await api('/api/admin/accounts/open-web-domain',{method:'POST',body:{domain}});await loadAccounts();}
+  catch(e){alert(e.message);}
+  finally{btn.disabled=false;}
+}
+async function stopDomainWeb(){
+  try{await api('/api/admin/accounts/open-web-domain/stop',{method:'POST'});await loadAccounts();}
+  catch(e){alert(e.message);}
+}
+function domainWebButton(domain){
+  return `<button class="btn" data-open-web-domain="${esc(domain)}" onclick="openDomainWeb(this.dataset.openWebDomain,this)">Open Web cả domain</button>`;
+}
+
 const deleteSelection={accounts:new Set(),tasks:new Set()};
 const deleteVisible={accounts:[],tasks:[]};
 const bulkDeleting={accounts:false,tasks:false};
@@ -810,6 +825,8 @@ async function loadAccounts(){
   }).join('');
   if(bulkDeleting.accounts)return;
   accountSnapshot=a.accounts;accountJobs=j.jobs||{};
+  const webQueue=a.web_queue;
+  q('#domainWebProgress').innerHTML=webQueue?`Open Web: ${Number(webQueue.active)} cửa sổ · ${Number(webQueue.queued)} chờ · ${Number(webQueue.opened)} đã mở · ${Number(webQueue.skipped)} bỏ qua. Cách nhau 5 giây, tối đa 10 cửa sổ.${webQueue.running?' <button class="btn" onclick="stopDomainWeb()">Dừng mở thêm</button>':''}`:'';
   connectionChoices=a.connections||[{id:'direct',label:'Mạng hiện tại (không proxy)'}];
   renderAccounts();
 }
@@ -885,10 +902,10 @@ function renderAccounts(){
       const members=visible.filter(x=>accountEmailDomain(x)===domain);
       const ready=members.filter(x=>x.ready_to_generate&&jobs[x.name]?.status!=='running').length;
       const enabled=members.filter(x=>x.scheduling).length;
-      return `<section class="account-domain" data-account-domain="${esc(domain)}"><h3>${esc(domain?'@'+domain:'Unknown domain')}</h3><p>${members.length} t\u00e0i kho\u1ea3n &middot; ${ready} s\u1eb5n s\u00e0ng gen &middot; ${enabled}/${members.length} Dispatch b\u1eadt</p>${accountTable(members)}</section>`;
+      return `<section class="account-domain" data-account-domain="${esc(domain)}"><div class="toolbar"><h3>${esc(domain?'@'+domain:'Unknown domain')}</h3>${domainWebButton(domain)}</div><p>${members.length} t\u00e0i kho\u1ea3n &middot; ${ready} s\u1eb5n s\u00e0ng gen &middot; ${enabled}/${members.length} Dispatch b\u1eadt</p>${accountTable(members)}</section>`;
     }).join('');
   }else{
-    q('#accountsTable').innerHTML=accountTable(visible,true);
+    q('#accountsTable').innerHTML=domainWebButton('gmail.com')+accountTable(visible,true);
   }
   updateDeleteSelection('accounts');
 }

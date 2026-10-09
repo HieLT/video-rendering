@@ -47,6 +47,12 @@ async def main():
                 await page.locator('#accountGroupOther').click()
                 await page.locator('[data-domain-action="filter"][data-domain="mtnewtoy.us"]').click()
                 await page.wait_for_selector('#accountsTable tbody tr:nth-child(22)')
+                domain_button=page.get_by_role('button',name='Open Web cả domain',exact=True)
+                assert await domain_button.get_attribute('data-open-web-domain')=='mtnewtoy.us'
+                await page.route('**/api/admin/accounts/open-web-domain',lambda route:route.fulfill(status=202,json={'queued':22}))
+                async with page.expect_request('**/api/admin/accounts/open-web-domain') as request_info:
+                    await domain_button.click()
+                assert (await request_info.value).post_data_json=={'domain':'mtnewtoy.us'}
                 assert await page.locator('[data-proxy-stat="direct"] .proxy-stat-count').inner_text()=='22 acc'
                 selector=page.locator('#accountsTable select').first
                 proxy_id=await selector.locator('option').evaluate_all("options=>options.find(o=>o.value!=='direct').value")

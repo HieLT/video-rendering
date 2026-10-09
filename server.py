@@ -59,6 +59,7 @@ app.mount("/videos", StaticFiles(directory=config.DOWNLOAD_DIR), name="videos")
 # Background jobs (add/verify), in-memory
 JOBS: dict[str, dict] = {}
 WEB_SESSIONS: dict[str, dict] = {}
+DOMAIN_WEB_QUEUE = None
 UPLOADED_REFERENCES: dict[str, tuple[Path, list[str]]] = {}
 
 SIZE_TO_RATIO = {
@@ -318,6 +319,8 @@ async def resume_incomplete_tasks():
 @app.on_event("shutdown")
 async def stop_task_runners():
     global SERVER_GUARD
+    if DOMAIN_WEB_QUEUE:
+        DOMAIN_WEB_QUEUE.stop()
     runners = list(TASK_RUNNERS.values())
     for runner in runners:
         runner.cancel()
@@ -561,7 +564,8 @@ async def admin_accounts(x_admin_key: str | None = Header(default=None)):
         public['connection_id'] = routing['accounts'].get(account['name'], 'direct')
         accounts.append(public)
     return {"accounts": accounts, "dual_requests": scheduler.dual_requests,
-            "connections": routing['connections']}
+            "connections": routing['connections'],
+            "web_queue": DOMAIN_WEB_QUEUE.snapshot() if DOMAIN_WEB_QUEUE else None}
 
 
 class AccountConnectionAssignment(BaseModel):
@@ -810,9 +814,44 @@ async def admin_account_open_web(name: str, x_admin_key: str | None = Header(def
         raise HTTPException(409, "Account browser is starting or closing; please retry shortly")
     if name in WEB_SESSIONS:
         raise HTTPException(409, "Account web session is already open")
+    if len(WEB_SESSIONS) >= 10:
+        raise HTTPException(409, "Đã mở 10 cửa sổ Open Web; đóng một cửa sổ trước khi mở thêm")
     WEB_SESSIONS[name] = {"status": "starting", "started_at": time.time()}
     asyncio.create_task(_run_open_web(name))
     return {"ok": True, "status": "starting"}
+
+
+class DomainOpenWeb(BaseModel):
+    domain: str = Field(max_length=253)
+
+
+@app.post('/api/admin/accounts/open-web-domain', status_code=202)
+async def open_web_domain(body: DomainOpenWeb, x_admin_key: str | None = Header(default=None)):
+    global DOMAIN_WEB_QUEUE
+    _admin_auth(x_admin_key)
+    domain = body.domain.strip().lower().lstrip('@')
+    accounts = []
+    for account in pool.list_accounts():
+        match = re.fullmatch(r'[^@\s]+@([^@\s]+)', (account.get('email') or '').strip().lower())
+        if (match.group(1) if match else '') == domain:
+            accounts.append(account)
+    if not accounts:
+        raise HTTPException(404, 'Không có account thuộc domain này')
+    if DOMAIN_WEB_QUEUE is None:
+        from account_web_queue import AccountWebQueue
+        async def open_account(name):
+            return await admin_account_open_web(name, x_admin_key=config.ADMIN_KEY)
+        DOMAIN_WEB_QUEUE = AccountWebQueue(open_account, lambda: len(WEB_SESSIONS))
+    names = [a['name'] for a in accounts if a['name'] not in WEB_SESSIONS]
+    return DOMAIN_WEB_QUEUE.enqueue(names)
+
+
+@app.post('/api/admin/accounts/open-web-domain/stop')
+async def stop_domain_open_web(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if DOMAIN_WEB_QUEUE:
+        DOMAIN_WEB_QUEUE.stop()
+    return {'ok': True}
 
 
 def find_duplicate_account(name, identity_hash):

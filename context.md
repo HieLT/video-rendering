@@ -338,6 +338,13 @@ This section supersedes earlier retry and browser spacing descriptions.
 
 Terminal content refusal: ご希望のコンテンツを生成できません。他の内容をお試しください。
 
+### Domain Open Web queue (2026-10-09)
+
+- Each account domain section (including Gmail) has Open Web cả domain. It queues all accounts in that domain through the existing Open Web launch path, preserving profiles and assigned proxies. Existing Open Web sessions are excluded; repeated clicks deduplicate pending accounts.
+- New launches start at least 5 seconds apart. At most 10 Open Web sessions may coexist, counting manual openings and starting sessions. Pending accounts wait until a window closes. Busy/unavailable accounts are skipped without aborting the remaining queue. This does not solve captcha automatically.
+- The queue runs in memory on the backend, survives dashboard reloads/tab changes, and stops on server shutdown. Accounts shows active, pending, opened and skipped counts, plus Dừng mở thêm to cancel pending openings without closing existing windows. Restarting the backend clears the queue.
+- Admin endpoints: POST `/api/admin/accounts/open-web-domain` with `{domain}`, and POST `/api/admin/accounts/open-web-domain/stop`. Validation: virtual-clock tests cover 23 accounts, 5-second spacing, the 10-window cap, release on close, deduplication, error handling and stop; domain API auth/scope and browser button/layout acceptance passed. No real browsers/accounts were opened by tests. Restart backend and Ctrl+F5 to apply.
+
 ### Compact Accounts layout (2026-10-09)
 
 - Above the table, Account theo proxy shows the total assigned account count for every saved proxy (including zero), the current machine network, and any missing connection definitions. Counts cover the whole pool regardless of Gmail/domain filters and refresh after connection changes; no extra API or credentials are exposed.

@@ -46,7 +46,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         def auth(key):
             if key != 'fixture-admin':
                 raise HTTPException(401, 'Unauthorized')
-        self.ns = dict(app=app, pool=self.pool, scheduler=self.scheduler,
+        self.ns = dict(app=app, pool=self.pool, scheduler=self.scheduler, DOMAIN_WEB_QUEUE=None,
                        account_connections=connections, JOBS=self.jobs, WEB_SESSIONS=self.web,
                        _admin_auth=auth, Header=Header, HTTPException=HTTPException,
                        BaseModel=BaseModel, Field=Field)
