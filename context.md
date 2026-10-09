@@ -338,9 +338,25 @@ This section supersedes earlier retry and browser spacing descriptions.
 
 Terminal content refusal: ご希望のコンテンツを生成できません。他の内容をお試しください。
 
+### Compact Accounts layout (2026-10-09)
+
+- Above the table, Account theo proxy shows the total assigned account count for every saved proxy (including zero), the current machine network, and any missing connection definitions. Counts cover the whole pool regardless of Gmail/domain filters and refresh after connection changes; no extra API or credentials are exposed.
+- Account rows keep Open Web visible and move Verify, Reset quota, Retry login and Delete into an accessible floating action menu. Escape, outside clicks and scrolling close the menu; Escape returns focus to its trigger.
+- Account type is shown below the email, and last-used time below quota. Long emails truncate with the full value available on hover. Connection dropdowns fit their cells, dates use two predictable lines, and desktop rows are 52 pixels tall in the 22-account browser fixture.
+- Accounts uses a wider desktop container and a fixed column layout without horizontal table scrolling. At widths of 860 pixels or less, rows become compact cards with all controls visible. The mobile header wraps and navigation can scroll independently.
+- Validation: `test_accounts_layout_ui.py` passed with 22 temporary accounts at viewport widths 390, 820, 900, 1024, 1280 and 1440 pixels, checking overflow, row height, proxy controls, Open Web and action-menu keyboard handling. Account connection/proxy management and request-mode browser regressions passed. No live account profiles or generation were used. Frontend changes apply with Ctrl+F5.
+
+### Automatic proxy distribution (2026-10-09)
+
+- Accounts toolbar has **Tự chia proxy**. It previews distribution across all saved usable proxies, never selecting **Mạng hiện tại** for an eligible account. Scope is the whole account pool, independent of the current Gmail/domain tab. Click **Áp dụng** to save.
+- Account counts are balanced as evenly as busy reservations allow. Busy browsers/login jobs/unfinished videos keep their existing connection and are listed as skipped; their existing proxy assignments count toward balancing. A busy account already using the machine network stays unchanged until it is idle and the user runs distribution again.
+- Existing balanced routes are preserved where possible to avoid unnecessary IP changes. The backend rechecks busy state on Apply, and writes the batch atomically. Preview does not save; repeated distribution with unchanged state is idempotent. Missing proxies produces an error instead of using direct access.
+- Admin API: POST `/api/admin/account-connections/distribute`, with optional `?preview=true`. Validation: 21 management/routing tests and browser acceptance passed, including even distribution, proxy-only selection, preserved busy accounts, preview/apply recheck and repeated-run stability. Tests use temporary settings; no real account routing was redistributed automatically. Restart backend and Ctrl+F5 to apply.
+
 ### Proxy management UI (2026-10-09)
 
 - Accounts toolbar now has **Quản lý proxy**. Paste one or many lines as `host:port:username:password | ID: provider-id`, then click **Thêm proxy**. ID is optional; blank lines and exact duplicate proxies are skipped. Hostnames/IPv4 and HTTP proxies with authentication are supported by this paste format.
+- Duplicate results now identify every skipped line, its proxy label/endpoint, and whether it matches a saved proxy or an earlier line in the same paste. No username/password is returned. Validation: 16 management/routing tests and browser duplicate-detail acceptance passed.
 - Validate the whole paste before one atomic save. Invalid lines report their line number without quoting credentials; nothing from that batch is saved. Reusing an existing ID with different settings, or an endpoint/username with a different password, is rejected instead of silently changing existing account routes.
 - The manager lists proxy labels/endpoints and accounts using them. Unused proxies can be deleted; assigned proxies are protected until their accounts change connection. Deleted-account mappings do not prevent removal. **Mạng hiện tại** stays available independently of the proxy list.
 - New imports immediately populate individual account dropdowns, bulk **Gán kết nối**, and the Add/Google import forms. Passwords are cleared from the paste box after success and never returned by management/list APIs; settings remain only in ignored `.connections.local.json`.

@@ -24,7 +24,8 @@ async def main():
                 page = await context.new_page()
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 async def route(request):
-                    path = urlsplit(request.request.url).path
+                    parsed = urlsplit(request.request.url)
+                    path = parsed.path
                     if path == '/':
                         return await request.fulfill(content_type='text/html', body=Path('web/index.html').read_text(encoding='utf-8'))
                     if path == '/api/admin/stats':
@@ -35,7 +36,7 @@ async def main():
                     if path == '/api/admin/accounts/google-bulk':
                         imports.append(request.request.post_data_json)
                         return await request.fulfill(status=202, json={'id': 'fixture-import'})
-                    response = fixture.http.request(request.request.method, path, content=request.request.post_data_buffer, headers=dict(request.request.headers))
+                    response = fixture.http.request(request.request.method, path+('?' + parsed.query if parsed.query else ''), content=request.request.post_data_buffer, headers=dict(request.request.headers))
                     await request.fulfill(status=response.status_code, content_type='application/json', body=response.content)
                 await page.route('**/*', route)
                 await page.goto('http://connections.test/')
@@ -88,6 +89,9 @@ async def main():
                 await page.locator('#proxyImportText').fill('203.0.113.10:8080:fixture:private-A | ID: 100\n203.0.113.11:8081:fixture:private-B | ID: 101\n203.0.113.10:8080:fixture:private-A | ID: 100')
                 await page.locator('#proxyImportButton').click()
                 await page.wait_for_function("document.querySelector('#proxyManagerMessage').textContent.includes('Đã thêm 2 proxy')")
+                message=await page.locator('#proxyManagerMessage').inner_text()
+                assert 'Dòng 3: http://203.0.113.10:8080' in message
+                assert 'trùng Proxy 100 ở dòng 1' in message
                 await page.wait_for_selector('#proxyManagerList [data-proxy-id="proxy-100"]')
                 assert await page.locator('#proxyImportText').input_value() == ''
                 assert 'private-A' not in await page.content()
@@ -104,6 +108,17 @@ async def main():
                 await page.locator('#proxyManagerList [data-proxy-id="proxy-101"]').click()
                 await page.wait_for_selector('#proxyManagerList [data-proxy-id="proxy-101"]', state='detached')
                 assert 'proxy-101' not in fixture.path.read_text()
+                await page.locator('#dlg').get_by_role('button', name='Đóng', exact=True).click()
+                from account_connections import assign
+                assign(['one','two'],'direct')
+                before=fixture.path.read_bytes()
+                await page.get_by_role('button',name='Tự chia proxy',exact=True).click()
+                await page.wait_for_function("!document.querySelector('#autoProxyApply').disabled")
+                assert fixture.path.read_bytes()==before
+                await page.locator('#autoProxyApply').click()
+                await page.wait_for_function("document.querySelector('#autoProxySummary').textContent.includes('Đã lưu')")
+                assert account_connection('one')!='direct' and account_connection('two')!='direct'
+                assert account_connection('one')!=account_connection('two')
                 assert not errors, errors
                 assert 'fixture-secret' not in await page.content()
                 print('PASS connection/proxy UI: batch and individual assignment, persistence, Google bulk selection, atomic validation, multi-proxy paste, duplicates, in-use guard, unused deletion, no credentials in responses; no live login/generation')

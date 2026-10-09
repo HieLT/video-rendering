@@ -60,7 +60,8 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         tree = ast.parse(Path('server.py').read_text(encoding='utf-8'))
         names = {'AccountConnectionAssignment', 'assign_account_connections', 'admin_accounts',
                  'AccountAdd', 'GoogleBulkAdd', 'admin_account_add', 'google_bulk_add', 'retry_account',
-                 'ProxyImport', 'admin_proxies', 'admin_proxy_import', 'admin_proxy_delete'}
+                 'ProxyImport', 'admin_proxies', 'admin_proxy_import', 'admin_proxy_delete',
+                 'distribute_account_connections'}
         nodes = [n for n in tree.body if getattr(n, 'name', None) in names]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'server.py', 'exec'), self.ns)
         self.http = TestClient(app)

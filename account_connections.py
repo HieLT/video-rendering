@@ -73,7 +73,7 @@ def import_proxies(text):
     if not 1 <= len(lines) <= 500:
         raise ValueError('Nhập từ 1 đến 500 proxy, mỗi proxy một dòng')
     data = _read()
-    added, skipped = [], 0
+    added, duplicates_report, first_lines = [], [], {}
     for number, line in lines:
         suffix = re.search(r'\s*\|\s*ID\s*:\s*([A-Za-z0-9_-]{1,64})\s*$', line, re.I)
         external_id = suffix.group(1) if suffix else ''
@@ -104,18 +104,22 @@ def import_proxies(text):
         existing = data['connections'].get(identifier)
         if existing and any(existing.get(key) != entry[key] for key in ('server', 'username', 'password')):
             raise ValueError(f'Dòng {number}: ID proxy đã tồn tại với cấu hình khác; không ghi đè')
-        duplicates = [item for item in data['connections'].values()
+        duplicates = [(key, item) for key, item in data['connections'].items()
                       if item.get('server') == server and item.get('username') == username]
         if duplicates:
-            if any(item.get('password') != password for item in duplicates):
+            if any(item.get('password') != password for _, item in duplicates):
                 raise ValueError(f'Dòng {number}: proxy đã tồn tại với mật khẩu khác; không ghi đè')
-            skipped += 1
+            duplicate_id, duplicate = duplicates[0]
+            duplicates_report.append({'line': number, 'id': duplicate_id,
+                                      'label': duplicate['label'], 'server': server,
+                                      'first_line': first_lines.get(duplicate_id)})
             continue
         data['connections'][identifier] = entry
+        first_lines[identifier] = number
         added.append(identifier)
     if added:
         _write(data)
-    return {'added': len(added), 'skipped': skipped}
+    return {'added': len(added), 'skipped': len(duplicates_report), 'duplicates': duplicates_report}
 
 
 def proxy_records(accounts):
@@ -140,6 +144,54 @@ def remove_proxy(identifier, existing_accounts):
     del data['connections'][identifier]
     data['accounts'] = {name: selected for name, selected in data['accounts'].items() if selected != identifier}
     _write(data)
+
+
+def distribute_proxies(accounts, busy, preview=False):
+    data = _read()
+    identifiers = [key for key, entry in data['connections'].items()
+                   if key != 'direct' and entry.get('server')]
+    if not identifiers:
+        raise ValueError('Chưa có proxy. Thêm ít nhất một proxy trước khi tự chia.')
+    counts = dict.fromkeys(identifiers, 0)
+    existing = dict.fromkeys(identifiers, 0)
+    available, skipped = [], []
+    for account in sorted(accounts, key=lambda a: a['name']):
+        name = account['name']
+        selected = data['accounts'].get(name, 'direct')
+        if selected in existing:
+            existing[selected] += 1
+        if name in busy:
+            if selected in counts:
+                counts[selected] += 1
+            skipped.append({'uuid': account['uuid'],
+                            'label': account.get('email') or account.get('display_name') or account['uuid']})
+        else:
+            available.append(account)
+    targets = counts.copy()
+    for _ in available:
+        identifier = min(identifiers, key=lambda key: (targets[key], -max(0, existing[key] - targets[key])))
+        targets[identifier] += 1
+    assigned, pending = {}, []
+    for account in available:
+        name = account['name']
+        current = data['accounts'].get(name, 'direct')
+        if current in counts and counts[current] < targets[current]:
+            assigned[name] = current
+            counts[current] += 1
+        else:
+            pending.append(name)
+    for name in pending:
+        identifier = min((key for key in identifiers if counts[key] < targets[key]), key=lambda key: counts[key])
+        assigned[name] = identifier
+        counts[identifier] += 1
+    changed = sum(data['accounts'].get(name, 'direct') != identifier for name, identifier in assigned.items())
+    if not preview and changed:
+        data['accounts'].update(assigned)
+        _write(data)
+    return {'eligible': len(available), 'changed': changed, 'skipped': skipped,
+            'proxy_count': len(identifiers), 'distribution': [
+                {'id': key, 'label': data['connections'][key]['label'], 'count': counts[key]}
+                for key in identifiers]}
 
 
 def browser_proxy(account):

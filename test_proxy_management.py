@@ -5,6 +5,68 @@ import account_connections as connections
 
 
 class ManagementTests(ConnectionTests):
+    def distribute(self, preview=False, auth=True):
+        return self.http.post('/api/admin/account-connections/distribute'+('?preview=true' if preview else ''),
+                              headers={'X-Admin-Key': 'fixture-admin'} if auth else {})
+
+    def test_auto_distribution_balances_all_accounts_and_never_selects_direct(self):
+        self.import_paste('203.0.113.10:8080:u:p | ID: 100\n203.0.113.11:8080:u:p | ID: 101')
+        for index in range(8):
+            name=f'extra-{index}'
+            (self.root/'accounts'/name).mkdir()
+            self.pool._ensure_meta(name)
+        before=self.path.read_bytes()
+        preview=self.distribute(preview=True).json()
+        self.assertEqual(preview['eligible'],10)
+        self.assertEqual(self.path.read_bytes(),before)
+        result=self.distribute().json()
+        self.assertEqual(sorted(p['count'] for p in result['distribution']),[3,3,4])
+        self.assertTrue(all(connections.account_connection(name)!='direct' for name in self.pool.accounts))
+        repeated=self.distribute().json()
+        self.assertEqual(repeated['changed'],0)
+
+    def test_auto_keeps_busy_accounts_and_counts_their_proxy_assignments(self):
+        self.import_paste('203.0.113.10:8080:u:p | ID: 100')
+        connections.assign(['two'],'fixture')
+        self.jobs['one']={'status':'running'}
+        result=self.distribute().json()
+        self.assertEqual(result['eligible'],1)
+        self.assertEqual(len(result['skipped']),1)
+        self.assertEqual(connections.account_connection('one'),'direct')
+        self.jobs.clear()
+        self.scheduler.reservation_ids.side_effect=lambda name:['video'] if name=='two' else []
+        previous=connections.account_connection('two')
+        result=self.distribute().json()
+        self.assertEqual(connections.account_connection('two'),previous)
+        self.assertNotEqual(connections.account_connection('one'),'direct')
+        self.assertEqual(sorted(p['count'] for p in result['distribution']),[1,1])
+
+    def test_auto_rechecks_busy_state_after_preview(self):
+        preview=self.distribute(preview=True).json()
+        self.assertEqual(preview['eligible'],2)
+        self.web['one']={'status':'open'}
+        result=self.distribute().json()
+        self.assertEqual(result['eligible'],1)
+        self.assertEqual(connections.account_connection('one'),'direct')
+        self.assertEqual(connections.account_connection('two'),'fixture')
+
+    def test_auto_requires_proxy_and_admin_auth(self):
+        self.assertEqual(self.distribute(auth=False).status_code,401)
+        connections.remove_proxy('fixture',set(self.pool.accounts))
+        before=self.path.read_bytes()
+        self.assertEqual(self.distribute().status_code,422)
+        self.assertEqual(self.path.read_bytes(),before)
+
+    def test_auto_preserves_existing_balanced_routes(self):
+        self.import_paste('203.0.113.10:8080:u:p | ID: 100\n203.0.113.11:8080:u:p | ID: 101')
+        for name in ('three','four'):
+            (self.root/'accounts'/name).mkdir()
+            self.pool._ensure_meta(name)
+        connections.assign(['one','two'],'proxy-100')
+        connections.assign(['three'],'proxy-101')
+        connections.assign(['four'],'fixture')
+        self.assertEqual(self.distribute().json()['changed'],0)
+
     def import_paste(self, text, auth=True):
         return self.http.post('/api/admin/proxies/import', json={'text': text},
                              headers={'X-Admin-Key': 'fixture-admin'} if auth else {})
@@ -13,8 +75,15 @@ class ManagementTests(ConnectionTests):
         paste = '\n203.0.113.10:8080:fixture:secret-A | ID: 100\n203.0.113.11:8081:fixture:secret-B | ID: 101\n\n203.0.113.10:8080:fixture:secret-A | ID: 100'
         response = self.import_paste(paste)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {'added': 2, 'skipped': 1})
-        self.assertEqual(self.import_paste(paste).json(), {'added': 0, 'skipped': 3})
+        result = response.json()
+        self.assertEqual((result['added'], result['skipped']), (2, 1))
+        self.assertEqual(result['duplicates'], [{'line': 5, 'id': 'proxy-100', 'label': 'Proxy 100', 'server': 'http://203.0.113.10:8080', 'first_line': 2}])
+        repeated = self.import_paste(paste).json()
+        self.assertEqual((repeated['added'], repeated['skipped']), (0, 3))
+        self.assertEqual([d['line'] for d in repeated['duplicates']], [2, 3, 5])
+        self.assertTrue(all(d['first_line'] is None for d in repeated['duplicates']))
+        self.assertNotIn('secret-A', response.text)
+        self.assertNotIn('fixture', json.dumps(result['duplicates']))
         choices = connections.choices()
         self.assertIn('proxy-100', [p['id'] for p in choices])
         connections.assign(['one'], 'proxy-100')

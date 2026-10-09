@@ -50,6 +50,64 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
 .account-group[aria-pressed="true"]{border-color:#00ad7c;background:#e7f7f1}
 .account-group strong{display:block;margin-bottom:10px}
 .account-group span{display:block;margin-top:5px}
+main.accounts-view{max-width:1440px}
+#accountProxyStats{margin:14px 0}
+.proxy-stats-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.proxy-stat{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;max-width:100%;font-size:12px}
+.proxy-stat-label{overflow-wrap:anywhere;min-width:0}
+.proxy-stat-count{white-space:nowrap;font-weight:600;color:var(--green,#00a878)}
+#accountsTable{min-width:0}
+#accountsTable .account-domain{border:1px solid #b7d4cd;border-radius:10px;margin:16px 0;padding:12px;min-width:0}
+#accountsTable table{table-layout:fixed;width:100%}
+#accountsTable th,#accountsTable td{padding:9px 6px;font-size:12px}
+#accountsTable th{background:#f8faf9}
+#accountsTable tbody tr:hover{background:#f8fbfa}
+#accountsTable .account-col-select{width:28px}
+#accountsTable .account-col-number{width:32px}
+#accountsTable .account-col-connection{width:188px}
+#accountsTable .account-col-status{width:94px}
+#accountsTable .account-col-dispatch{width:68px;text-align:center}
+#accountsTable .account-col-usage{width:94px}
+#accountsTable .account-col-created{width:90px}
+#accountsTable .account-col-actions{width:128px}
+#accountsTable .account-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;font-size:13px}
+#accountsTable .account-secondary{display:block;color:var(--sub);font-size:11px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#accountsTable .account-connection-select{width:100%;min-width:0;padding:6px 5px;border:1px solid var(--line);border-radius:6px;font:inherit;background:#fff;color:var(--text)}
+#accountsTable .account-connection-select:disabled{background:#f5f7f6;color:var(--sub)}
+#accountsTable .account-date{display:block;white-space:nowrap;font-size:11px;line-height:16px}
+.account-actions{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.account-actions .btn{padding:6px 8px;white-space:nowrap;font-size:12px}
+.account-actions .account-more{padding:4px 8px;font-size:18px;line-height:20px}
+.account-action-menu{position:fixed;z-index:80;width:170px;padding:5px;background:#fff;border:1px solid var(--line);border-radius:9px;box-shadow:0 8px 24px #1233}
+.account-action-menu[hidden]{display:none}
+.account-action-menu button{display:block;width:100%;text-align:left;border:0;background:transparent;padding:9px 12px;border-radius:5px;cursor:pointer;font:inherit}
+.account-action-menu button:hover,.account-action-menu button:focus-visible{background:#eaf5f0}
+@media(max-width:1100px){
+  #accountsTable .account-col-connection{width:160px}#accountsTable .account-col-status{width:82px}
+  #accountsTable .account-col-dispatch{width:60px}#accountsTable .account-col-usage{width:84px}
+  #accountsTable .account-col-created{width:80px}#accountsTable .account-col-actions{width:118px}
+}
+@media(max-width:860px){
+  header{height:auto;min-height:56px;flex-wrap:wrap;gap:8px;padding:12px}
+  .head-r{flex-wrap:wrap;gap:10px;min-width:0}
+  main.accounts-view{padding:12px}#tab-accounts>.card{padding:12px}
+  #tab-accounts .toolbar{align-items:flex-start;gap:12px;flex-wrap:wrap}
+  #accountsTable .account-domain{padding:10px}
+  #accountsTable table,#accountsTable tbody{display:block}
+  #accountsTable thead{display:none}
+  #accountsTable tbody tr{display:grid;grid-template-columns:24px minmax(0,1fr) minmax(0,1fr);gap:8px 10px;padding:12px 0;border-bottom:1px solid var(--line)}
+  #accountsTable td{display:block;width:auto!important;min-width:0;padding:0;border:0;text-align:left!important}
+  #accountsTable td::before{content:attr(data-label);display:block;color:var(--sub);font-size:11px;margin-bottom:3px}
+  #accountsTable .account-col-select{grid-column:1;grid-row:1}
+  #accountsTable .account-col-name{grid-column:2 / 4;grid-row:1}
+  #accountsTable .account-col-number{display:none}
+  #accountsTable .account-col-connection{grid-column:2 / 4}
+  #accountsTable .account-col-status,#accountsTable .account-col-usage{grid-column:2}
+  #accountsTable .account-col-dispatch,#accountsTable .account-col-created{grid-column:3}
+  #accountsTable .account-col-actions{grid-column:2 / 4}
+  #accountsTable .account-col-select::before,#accountsTable .account-col-name::before,#accountsTable .account-col-actions::before{display:none}
+  nav{overflow-x:auto}#tab-accounts .account-group{min-width:0}
+}
 .sw{position:relative;display:inline-block;width:36px;height:20px}
 .sw input{opacity:0;width:0;height:0}
 .sw i{position:absolute;inset:0;background:#cfd8d5;border-radius:999px;transition:.2s;cursor:pointer}
@@ -306,7 +364,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
     <div class="card">
       <div class="toolbar">
         <h3 style="margin:0">Account List</h3>
-        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="openProxyManager()">Quản lý proxy</button><button class="btn btn-p" onclick="openAddAccount()">＋ Add Account</button></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="openAutoProxy()">Tự chia proxy</button><button class="btn" onclick="openProxyManager()">Quản lý proxy</button><button class="btn btn-p" onclick="openAddAccount()">＋ Add Account</button></div>
       </div>
       <button id="deleteSelectedAccounts" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('accounts')">Delete selected (0)</button>
       <button id="assignSelectedConnection" class="btn" hidden disabled onclick="openAccountConnections()">Gán kết nối</button>
@@ -323,6 +381,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
       </div>
       <p class="tiny">B&#7853;t/t&#7855;t Dispatch cho c&#7843; nh&#243;m. Task &#273;&#227; g&#225;n account v&#7851;n ti&#7871;p t&#7909;c; task ch&#432;a g&#225;n ch&#7881; ch&#7885;n account &#273;ang b&#7853;t. Kh&#244;ng thay &#273;&#7893;i tr&#7841;ng th&#225;i &#273;&#259;ng nh&#7853;p.</p>
       <div id="accountDomains" class="account-groups" hidden></div>
+      <div id="accountProxyStats" aria-label="Thống kê account theo proxy"></div>
       <div id="accountsTable"></div>
       <div id="googleImportProgress" class="tiny" aria-live="polite"></div>
     </div>
@@ -476,6 +535,8 @@ function logout(){adminKey='';localStorage.removeItem(LS_KEY);showLogin();}
 
 function switchTab(t){
   curTab=t;
+  document.querySelector('main').classList.toggle('accounts-view',t==='accounts');
+  closeAccountActions();
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
   ['dash','accounts','tasks','keys','projects'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
   if(t==='projects')ProjectReview.invalidate();
@@ -617,6 +678,51 @@ let accountDomain=null;
 let accountGroup='gmail', accountSnapshot=[], accountJobs={}, dispatchUpdating=false;
 let connectionChoices=[{id:'direct',label:'Mạng hiện tại (không proxy)'}];
 const connectionUpdates=new Set();
+let accountMenuTrigger=null;
+function closeAccountActions(){
+  const menu=q('#accountActionMenu');if(menu)menu.hidden=true;
+  if(accountMenuTrigger)accountMenuTrigger.setAttribute('aria-expanded','false');
+}
+function openAccountActions(name,button){
+  let menu=q('#accountActionMenu');
+  if(!menu){menu=document.createElement('div');menu.id='accountActionMenu';menu.className='account-action-menu';menu.setAttribute('role','menu');menu.hidden=true;document.body.appendChild(menu);}
+  if(!menu.hidden&&menu.dataset.account===name){closeAccountActions();return;}
+  closeAccountActions();accountMenuTrigger=button;button.setAttribute('aria-expanded','true');
+  menu.dataset.account=name;
+  menu.innerHTML=`<button role="menuitem" onclick="closeAccountActions();verify('${esc(name)}',this)">Verify</button><button role="menuitem" onclick="closeAccountActions();resetQuota('${esc(name)}',this)">Reset quota</button><button role="menuitem" onclick="closeAccountActions();openAddAccount('${esc(name)}')">Retry login</button><button role="menuitem" class="btn-danger" onclick="closeAccountActions();delAccount('${esc(name)}')">Delete account</button>`;
+  menu.hidden=false;
+  const rect=button.getBoundingClientRect(),height=menu.offsetHeight;
+  menu.style.left=Math.max(8,Math.min(rect.right-menu.offsetWidth,window.innerWidth-menu.offsetWidth-8))+'px';
+  menu.style.top=Math.max(8,rect.bottom+height+8>window.innerHeight?rect.top-height-4:rect.bottom+4)+'px';
+  menu.querySelector('button').focus();
+}
+document.addEventListener('click',event=>{if(!event.target.closest('#accountActionMenu,[data-account-menu-trigger]'))closeAccountActions();});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&q('#accountActionMenu')&&!q('#accountActionMenu').hidden){closeAccountActions();if(accountMenuTrigger?.isConnected)accountMenuTrigger.focus();}});
+window.addEventListener('resize',closeAccountActions);
+window.addEventListener('scroll',closeAccountActions,true);
+function accountTime(timestamp){
+  if(!timestamp)return '-';const value=fmt(timestamp);
+  return `<span class="account-date" title="${esc(value)}">${esc(value.split(' ')[0])}<span class="account-secondary">${esc(value.split(' ')[1])}</span></span>`;
+}
+function autoProxyResult(result){
+  return `<p>${Number(result.eligible)} account rảnh · ${Number(result.proxy_count)} proxy · ${Number(result.changed)} account đổi kết nối.</p>${result.distribution.map(p=>`<div>${esc(p.label)}: <b>${Number(p.count)}</b> account</div>`).join('')}${result.skipped.length?`<p>${result.skipped.length} account đang bận được giữ nguyên kết nối. Chạy lại sau khi các account này rảnh để chia tiếp.</p><details><summary>Xem account bỏ qua</summary>${result.skipped.map(a=>`<div>${esc(a.label)}</div>`).join('')}</details>`:''}`;
+}
+async function openAutoProxy(){
+  showDlg(`<h2>Tự chia proxy</h2><p>Chia đều toàn bộ account giữa các proxy đã lưu. Không chọn Mạng hiện tại. Account đang bận giữ nguyên kết nối.</p><div id="autoProxySummary">Đang tính…</div><p id="autoProxyError" role="status"></p><div class="row"><button class="btn" onclick="hide('dlg')">Đóng</button><button class="btn btn-p" id="autoProxyApply" disabled>Áp dụng</button></div>`);
+  const summary=q('#autoProxySummary'),button=q('#autoProxyApply'),error=q('#autoProxyError');
+  try{
+    const preview=await api('/api/admin/account-connections/distribute?preview=true',{method:'POST'});
+    summary.innerHTML=autoProxyResult(preview);button.disabled=preview.eligible===0;
+    button.onclick=async()=>{
+      button.disabled=true;error.textContent='';
+      try{
+        const result=await api('/api/admin/account-connections/distribute',{method:'POST'});
+        summary.innerHTML='<p>Đã lưu phân bổ proxy.</p>'+autoProxyResult(result);
+        button.hidden=true;await loadAccounts();
+      }catch(e){error.textContent=e.message;button.disabled=false;}
+    };
+  }catch(e){summary.textContent='';error.textContent=e.message;}
+}
 async function openProxyManager(){
   showDlg(`<h2>Quản lý proxy</h2><p>Thêm proxy trước, sau đó chọn cho từng account ở cột Kết nối hoặc dùng Gán kết nối cho nhiều account.</p><label for="proxyImportText">Thêm một hoặc nhiều proxy, mỗi dòng một proxy</label><textarea id="proxyImportText" rows="5" autocomplete="off" spellcheck="false" placeholder="203.0.113.10:8080:username:password | ID: 12345"></textarea><p class="tiny">ID không bắt buộc. Dòng trống và proxy trùng được bỏ qua. Nếu có dòng lỗi, toàn bộ lượt thêm chưa được lưu.</p><button class="btn btn-p" id="proxyImportButton" onclick="importProxyPaste()">Thêm proxy</button><p id="proxyManagerMessage" role="status"></p><div id="proxyManagerList" style="max-height:320px;overflow:auto">Đang tải…</div><div class="row"><button class="btn" onclick="hide('dlg')">Đóng</button></div>`);
   try{await loadProxyManager();}catch(e){if(q('#proxyManagerMessage'))q('#proxyManagerMessage').textContent=e.message;}
@@ -632,7 +738,7 @@ async function importProxyPaste(){
   button.disabled=true;input.disabled=true;
   try{
     const result=await api('/api/admin/proxies/import',{method:'POST',body:{text:input.value}});
-    input.value='';message.textContent=`Đã thêm ${result.added} proxy; bỏ qua ${result.skipped} dòng trùng.`;
+    input.value='';message.innerHTML=`Đã thêm ${Number(result.added)} proxy; bỏ qua ${Number(result.skipped)} dòng trùng.`+(result.duplicates||[]).map(d=>`<br><span>Dòng ${Number(d.line)}: ${esc(d.server)} — trùng ${esc(d.label)}${d.first_line?` ở dòng ${Number(d.first_line)} trong lượt này`:' đã có trong danh sách'}.</span>`).join('');
     await loadAccounts();await loadProxyManager();
   }catch(e){message.textContent=e.message;}
   finally{button.disabled=false;input.disabled=false;}
@@ -718,6 +824,14 @@ async function setAccountRequestMode(input){
 }
 function renderAccounts(){
   const jobs=accountJobs;
+  const proxyCounts=new Map(connectionChoices.map(c=>[c.id,{label:c.label,count:0}]));
+  if(!proxyCounts.has('direct'))proxyCounts.set('direct',{label:'Mạng hiện tại (không proxy)',count:0});
+  for(const account of accountSnapshot){
+    const id=account.connection_id||'direct';
+    if(!proxyCounts.has(id))proxyCounts.set(id,{label:'Proxy không khả dụng ('+id+')',count:0});
+    proxyCounts.get(id).count++;
+  }
+  q('#accountProxyStats').innerHTML='<strong>Account theo proxy</strong><span class="tiny"> · Toàn bộ '+accountSnapshot.length+' account</span><div class="proxy-stats-list">'+[...proxyCounts].map(([id,item])=>`<div class="proxy-stat" data-proxy-stat="${esc(id)}"><span class="proxy-stat-label">${esc(item.label)}</span><span class="proxy-stat-count">${item.count} acc</span></div>`).join('')+'</div>';
   for(const [group,id] of [['gmail','accountGroupGmail'],['other','accountGroupOther']]){
     const members=accountSnapshot.filter(x=>accountEmailGroup(x)===group);
     const ready=members.filter(x=>x.ready_to_generate&&jobs[x.name]?.status!=='running').length;
@@ -753,28 +867,28 @@ function renderAccounts(){
     return [
       selectionBox('accounts',x.name,deleteVisible.accounts.includes(x.name)),
       index+1,
-      accLabel(x)+warn,
-      esc(({google:"Google",facebook:"Facebook",cookies:"Cookies imported",unknown:"Unknown"})[x.account_type]||"Unknown"),
-      `<select aria-label="Kết nối account ${esc(x.email||x.name)}" data-account-connection="${esc(x.name)}" style="min-width:155px;max-width:210px" ${x.busy||x.active_requests||jb?.status==='running'||connectionUpdates.has(x.name)?'disabled title="Đóng browser và hoàn tất hoặc Stop video trước khi đổi kết nối"':''} onchange="changeAccountConnection(this.dataset.accountConnection,this)">${connectionChoices.some(c=>c.id===(x.connection_id||'direct'))?'':`<option value="${esc(x.connection_id)}" selected disabled>Kết nối không khả dụng</option>`}${connectionOptions(x.connection_id||'direct')}</select>`,
+      `<span class="account-name" title="${esc(x.email||x.display_name||x.name)}">${esc(x.display_name||x.email||x.name)}${warn}</span><span class="account-secondary">${esc(({google:'Google',facebook:'Facebook',cookies:'Cookies',unknown:'Unknown'})[x.account_type]||'Unknown')}</span>`,
+      `<select class="account-connection-select" aria-label="Kết nối account ${esc(x.email||x.name)}" data-account-connection="${esc(x.name)}" title="${esc(connectionChoices.find(c=>c.id===(x.connection_id||'direct'))?.label||'Kết nối không khả dụng')}" ${x.busy||x.active_requests||jb?.status==='running'||connectionUpdates.has(x.name)?'disabled':''} onchange="changeAccountConnection(this.dataset.accountConnection,this)">${connectionChoices.some(c=>c.id===(x.connection_id||'direct'))?'':`<option value="${esc(x.connection_id)}" selected disabled>Kết nối không khả dụng</option>`}${connectionOptions(x.connection_id||'direct')}</select>`,
       badge+(x.active_requests?`<div class="tiny">${Number(x.active_requests)} request đang chạy</div>`:''),
       `<label class="sw"><input type="checkbox" ${x.scheduling?'checked':''} onchange="setSched('${x.name}',this.checked)"><i></i></label>`,
-      `<b>${x.used_today}</b> / ${x.limit}`,
-      fmt(x.last_used_at),
-      fmt(x.created_at),
-      `<button class="btn" style="margin-right:6px" onclick="openWeb('${esc(x.name)}',this)">Open Web</button><button class="btn" style="margin-right:6px" onclick="verify('${esc(x.name)}',this)">Verify</button><button class="btn" onclick="resetQuota('${esc(x.name)}',this)">Reset</button><button class="btn" onclick="openAddAccount('${esc(x.name)}')">Retry</button><button class="btn btn-danger" onclick="delAccount('${esc(x.name)}')">Delete</button>`
+      `<b>${x.used_today}</b> / ${x.limit}<span class="account-secondary" title="Last used: ${esc(fmt(x.last_used_at))}">${x.last_used_at?'Last '+esc(fmtHM(x.last_used_at)):'Chưa dùng'}</span>`,
+      accountTime(x.created_at),
+      `<div class="account-actions"><button class="btn" onclick="openWeb('${esc(x.name)}',this)">Open Web</button><button class="btn account-more" data-account-menu-trigger aria-label="Thao tác account ${esc(x.email||x.name)}" aria-haspopup="menu" aria-expanded="false" onclick="openAccountActions('${esc(x.name)}',this)">⋯</button></div>`
     ];
   };
-  const headers=['STT','Name','Type','Kết nối','Status','Dispatch','Used Today','Last Used','Created At','Actions'];
+  const headers=['','STT','Account','Kết nối','Status','Dispatch','Used Today','Created At','Actions'];
+  const columns=['select','number','name','connection','status','dispatch','usage','created','actions'];
+  const accountTable=(members,selectAll=false)=>`<table><thead><tr>${headers.map((header,i)=>`<th class="account-col-${columns[i]}">${i===0&&selectAll?selectionHeader('accounts'):esc(header)}</th>`).join('')}</tr></thead><tbody>${members.map((account,index)=>`<tr data-account-row="${esc(account.name)}">${accountRow(account,index).map((cell,i)=>`<td class="account-col-${columns[i]}" data-label="${esc(headers[i])}">${cell}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   if(accountGroup==='other'){
     const groups=domains.filter(domain=>accountDomain!==null&&domain===accountDomain);
     q('#accountsTable').innerHTML=(accountDomain===null?'<p>Ch\u1ecdn tab @domain \u0111\u1ec3 xem danh s\u00e1ch account.</p>':visible.length?`<p>${selectionHeader('accounts')} Select all deletable accounts in this domain</p>`:'')+groups.map(domain=>{
       const members=visible.filter(x=>accountEmailDomain(x)===domain);
       const ready=members.filter(x=>x.ready_to_generate&&jobs[x.name]?.status!=='running').length;
       const enabled=members.filter(x=>x.scheduling).length;
-      return `<section data-account-domain="${esc(domain)}" style="border:1px solid #b7d4cd;border-radius:10px;margin:16px 0;padding:14px;overflow-x:auto"><h3>${esc(domain?'@'+domain:'Unknown domain')}</h3><p>${members.length} t\u00e0i kho\u1ea3n &middot; ${ready} s\u1eb5n s\u00e0ng gen &middot; ${enabled}/${members.length} Dispatch b\u1eadt</p>${table(['',...headers],members.map(accountRow))}</section>`;
+      return `<section class="account-domain" data-account-domain="${esc(domain)}"><h3>${esc(domain?'@'+domain:'Unknown domain')}</h3><p>${members.length} t\u00e0i kho\u1ea3n &middot; ${ready} s\u1eb5n s\u00e0ng gen &middot; ${enabled}/${members.length} Dispatch b\u1eadt</p>${accountTable(members)}</section>`;
     }).join('');
   }else{
-    q('#accountsTable').innerHTML=table([selectionHeader('accounts'),...headers],visible.map(accountRow));
+    q('#accountsTable').innerHTML=accountTable(visible,true);
   }
   updateDeleteSelection('accounts');
 }

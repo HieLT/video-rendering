@@ -569,6 +569,24 @@ class AccountConnectionAssignment(BaseModel):
     connection_id: str
 
 
+@app.post('/api/admin/account-connections/distribute')
+async def distribute_account_connections(preview: bool = False,
+                                         x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    accounts = pool.list_accounts()
+    busy = set()
+    for account in accounts:
+        name = account['name']
+        lock = pool._locks.get(name)
+        if (account.get('busy') or name in WEB_SESSIONS or (lock and lock.locked())
+                or scheduler.reservation_ids(name) or JOBS.get(name, {}).get('status') == 'running'):
+            busy.add(name)
+    try:
+        return account_connections.distribute_proxies(accounts, busy, preview=preview)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 class ProxyImport(BaseModel):
     text: str = Field(repr=False)
 
