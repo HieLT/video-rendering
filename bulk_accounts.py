@@ -1,6 +1,9 @@
 """In-memory Google import queue; credentials are never included in progress."""
 import asyncio
 
+MAX_CONCURRENCY = 10
+START_INTERVAL = 20.0
+
 
 def parse_accounts(text):
     accounts, seen = [], set()
@@ -21,7 +24,7 @@ def parse_accounts(text):
 
 
 async def run_import(accounts, concurrency, progress, submit, job_status):
-    concurrency = min(5, max(1, concurrency))
+    concurrency = min(MAX_CONCURRENCY, max(1, concurrency))
     queue = asyncio.Queue()
     for index, credentials in enumerate(accounts):
         queue.put_nowait((index, credentials))
@@ -38,7 +41,8 @@ async def run_import(accounts, concurrency, progress, submit, job_status):
                 async with start_lock:
                     loop = asyncio.get_running_loop()
                     if last_start is not None:
-                        await asyncio.sleep(max(0, .5 - (loop.time() - last_start)))
+                        while (remaining := START_INTERVAL - (loop.time() - last_start)) > 0:
+                            await asyncio.sleep(remaining)
                     row['status'] = 'running'
                     last_start = loop.time()
                 identifier = await submit(email, password)

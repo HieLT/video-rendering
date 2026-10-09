@@ -13,13 +13,22 @@ async def focus_account_context(account: str) -> bool:
     if not entry:
         return False
     context, headless = entry
-    if headless:
-        raise RuntimeError("Account browser is running headless and cannot be displayed")
     pages = [page for page in context.pages if not page.is_closed()]
     if not pages:
+        if ACTIVE_CONTEXTS.get(account) is entry:
+            ACTIVE_CONTEXTS.pop(account, None)
         return False
+    if headless:
+        raise RuntimeError("Account browser is running headless and cannot be displayed")
     page = next((page for page in pages if "dola.com" in page.url), pages[0])
-    await page.bring_to_front()
+    try:
+        await page.bring_to_front()
+    except Exception as exc:
+        if not is_browser_closed_error(exc):
+            raise
+        if ACTIVE_CONTEXTS.get(account) is entry:
+            ACTIVE_CONTEXTS.pop(account, None)
+        return False
     return True
 
 
@@ -206,9 +215,20 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
         "locale": "ja-JP",
         "timezone_id": "Asia/Tokyo",
     }
-    if config.PROXY:
-        kwargs["proxy"] = config.browser_proxy()
-    context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+    from account_connections import browser_proxy
+    from proxy_bridge import prepare_browser_proxy
+    upstream_proxy = browser_proxy(account)
+    proxy, bridge = await prepare_browser_proxy(upstream_proxy)
+    if proxy:
+        kwargs["proxy"] = proxy
+    try:
+        context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+    except BaseException:
+        if bridge:
+            bridge.close()
+        raise
+    if bridge:
+        context.on('close', lambda *_, relay=bridge: relay.close())
     if use_extension:
         try:
             try:
@@ -218,11 +238,18 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
                 print(f"[{account}] Dola30 startup failed ({type(first_error).__name__}); reload and reopen once", flush=True)
                 await _reload_extension(context)
                 await context.close()
+                proxy, bridge = await prepare_browser_proxy(upstream_proxy)
+                if proxy:
+                    kwargs['proxy'] = proxy
                 context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+                if bridge:
+                    context.on('close', lambda *_, relay=bridge: relay.close())
                 worker = await _ready_extension(context)
                 await _attach_extension_before_navigation(context, worker)
         except Exception as exc:
             await context.close()
+            if bridge:
+                bridge.close()
             raise RuntimeError(f"Dola30 extension unavailable for {account}: {exc}") from exc
     ACTIVE_CONTEXTS[account] = (context, launch_headless)
 

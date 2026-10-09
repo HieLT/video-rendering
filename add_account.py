@@ -176,9 +176,11 @@ async def add_account_flow(account: str, email: str, password: str, secret: str)
         kwargs = {"headless": False, "channel": "chromium",
                   "args": account_launch_args(profile_dir),
                   "locale": "ja-JP", "timezone_id": "Asia/Tokyo"}
-        if config.PROXY:
-            kwargs["proxy"] = config.browser_proxy()
-        log(f"[{account}] launching Chromium proxy={'configured' if config.PROXY else 'disabled'}")
+        from account_connections import browser_proxy
+        proxy = browser_proxy(account)
+        if proxy:
+            kwargs["proxy"] = proxy
+        log(f"[{account}] launching Chromium proxy={'configured' if proxy else 'disabled'}")
         context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
         context.on("page", lambda opened: track_page(account, opened))
         context.on("close", lambda: log(f"[{account}] browser context closed"))

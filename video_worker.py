@@ -220,7 +220,8 @@ async def _download(url: str, account: str, name: str = "") -> Path:
     fname = dl_dir / f"{prefix}{account}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
     timeout = aiohttp.ClientTimeout(total=300)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url, proxy=config.PROXY or None, proxy_auth=config.proxy_auth()) as resp:
+        from account_connections import http_proxy
+        async with session.get(url, **http_proxy(account)) as resp:
             resp.raise_for_status()
             with open(fname, "wb") as f:
                 async for chunk in resp.content.iter_chunked(1 << 16):

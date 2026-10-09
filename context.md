@@ -337,3 +337,37 @@ This section supersedes earlier retry and browser spacing descriptions.
 - Local databases, SQLite backups, accounts, reference images and downloads are not uploaded to Git. A clone alone does not include runtime data.
 
 Terminal content refusal: ご希望のコンテンツを生成できません。他の内容をお試しください。
+
+### Authenticated proxy with the Dola30 extension (2026-10-09)
+
+Ghi chú bàn giao: đã sửa lỗi Open Web sau khi chuyển account từ mạng hiện tại sang proxy có username/password. Đổi kết nối trực tiếp bằng dropdown trong cột **Kết nối** (tự lưu), hoặc tick nhiều account rồi **Gán kết nối**. Đóng browser lỗi, restart backend bằng launcher trong workspace `F:\video-rendering`, Ctrl+F5 rồi mở lại Open Web để nạp bản sửa. Không cần xóa profile hay database. Cấu hình proxy và mapping account chỉ có trên máy local; khi clone code ở máy khác cần chuyển riêng `.connections.local.json` cùng dữ liệu runtime, không đưa file này lên Git.
+
+- Reproduced `ERR_INVALID_AUTH_CREDENTIALS` in a temporary Chromium profile only when the Dola30 debugger/Fetch interception was attached. The same upstream proxy credentials worked with ordinary Chromium and aiohttp.
+- Authenticated account browsers now connect through a per-context loopback relay (`proxy_bridge.py`). It forwards traffic only to the account's chosen upstream proxy and supplies upstream authentication independently of Chrome Fetch interception. The relay listens only on 127.0.0.1, closes with its browser and is recreated during extension startup recovery; no direct fallback is introduced. Proxy-free/unauthenticated routes do not need a relay. The extension itself remains unchanged.
+- Open Web closes/unregisters its browser after navigation failure; focusing a closed/empty context removes the stale entry and allows a fresh opening instead of a spurious 409.
+- Validation: 21 offline routing/relay/browser-lifecycle tests passed, along with both extension duration configuration suites. A temporary browser with the real purchased proxy and Dola30 enabled returned HTTP 200 from the IP check (egress 222.254.99.4) and the public Dola chat page. No existing account profile, Dola login or generation was used; the user's server was not restarted. Restart the backend to apply.
+
+### Per-account connections (2026-10-09)
+
+- Accounts supports manual selection followed by **Gán kết nối**. Available choices on this machine are **Mạng hiện tại (không proxy)** and **Proxy 30686**. Existing accounts default to the current machine network; this includes WARP if the machine uses it. No accounts were automatically assigned to the purchased proxy.
+- Each account also has a dropdown directly in the **Kết nối** column; selecting a different connection saves immediately without ticking the row or opening a dialog. Busy accounts have this selector disabled. Browser acceptance verifies individual switching, reload persistence and the disabled state for an active login job.
+- Add Account, Google bulk import and Retry have a connection selector. Bulk import applies the selected connection to each new account before login begins. The Accounts table shows each account's saved connection; choices persist across reload/restart.
+- Persistent browser launches (Google login, imported sessions, Verify, Open Web, generation and scheduled checks) and video HTTP downloads use the assigned account connection. Captcha image downloads use the browser context request client. These account paths use per-account routing instead of the global `DOLA_PROXY` value. Unrelated unaffiliated reference downloads keep their existing configuration.
+- PATCH `/api/admin/account-connections` is admin-authenticated and applies a whole batch after validating every account. Busy browsers, login jobs and unfinished video reservations block connection changes. Missing assigned proxy definitions or malformed local settings stop routing instead of falling back to direct access.
+- Proxy credentials and account assignments live only in ignored `.connections.local.json`; browser/API/UI responses expose connection IDs and labels, not proxy credentials. Keep this private file with runtime backups when moving machines. No SQLite migration is required.
+- Validation: 42 offline tests passed across connections, Google bulk limits/timing, account mode/UUIDs/chat, queue integration and recovery. Browser acceptance passed batch assignment, reload persistence, separate account routes and proxy selection in Google import; account-mode UI and the 40-scene Project workflow also passed. All use temporary stores/mocks; no real Google login or Dola generation was submitted. Restart the backend and Ctrl+F5 to apply.
+
+### Google bulk import timing update (2026-10-09)
+
+- Google nhanh / nhiều account now defaults to 10 concurrent imports and accepts 1–10 in UI/API. The worker also caps concurrency at 10.
+- Import starts are spaced at least 20 seconds apart: the first can start immediately, then the second after 20 seconds, and so on. Up to 10 unfinished imports may coexist; later accounts wait for capacity and the start interval. This supersedes earlier 5-session/0.5-second bulk-import notes.
+- Offline validation: all 6 `test_bulk_accounts` tests passed, covering the API limit, maximum 10 overlapping slow submissions, start spacing, smaller concurrency, and failure handling. No live Google login was performed. Restart backend and Ctrl+F5 to apply.
+
+### Environment setup on F: (2026-10-09)
+
+- Current workspace: `F:\video-rendering`; local virtual environment: `F:\video-rendering\.venv` using Python 3.11.0 (`py -3.11`). Earlier workspace paths above describe other machines.
+- Installed `requirements.txt`, `requirements-dev.txt` and Patchright Chromium (including headless shell and bundled FFmpeg). `pip check` passed.
+- Start manually from this workspace: `.\.venv\Scripts\python.exe run_server.py --host 127.0.0.1 --port 8000`; dashboard: `http://127.0.0.1:8000/`. No activation or global `python` command is required.
+- Browser fixture `test_project_workflow_ui.py` passed the complete 40-scene workflow with zero live Dola generations.
+- Offline backend selection ran 262 tests: 260 passed, two migration tests errored because their expectations predate schema v9 (`test_production_ux` expects v6; `test_asset_library` expects a project without `parent_project_id`). Their failed assertions also caused Windows temporary SQLite cleanup errors. Tests were not modified during environment setup.
+- This checkout had no `.env.local`, runtime databases or `accounts/`. Existing defaults apply; account login and any runtime data transfer are still needed to generate real videos. No production server was started and no live generation was submitted.

@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 from PIL import Image
 
 import config
+import account_connections
 from asset_api import register_asset_routes
 from scene_generation import task_reference_paths
 from project_generation import submit_project_generation
@@ -515,6 +516,7 @@ class AccountAdd(BaseModel):
     account_type: str = "unknown"
     display_name: str = ""
     cookie_text: str = Field(default="", max_length=1_000_000)
+    connection_id: str | None = None
 
 
 class KeyCreate(BaseModel):
@@ -545,6 +547,7 @@ async def admin_login(body: AdminLogin):
 
 @app.get("/api/admin/accounts")
 async def admin_accounts(x_admin_key: str | None = Header(default=None)):
+    import account_connections
     _admin_auth(x_admin_key)
     accounts = []
     for account in pool.list_accounts():
@@ -554,8 +557,37 @@ async def admin_accounts(x_admin_key: str | None = Header(default=None)):
             and JOBS.get(account["name"], {}).get("status") != "running"
         )
         public["active_requests"] = len(scheduler.reservation_ids(account['name']))
+        public['connection_id'] = account_connections.account_connection(account['name'])
         accounts.append(public)
-    return {"accounts": accounts, "dual_requests": scheduler.dual_requests}
+    return {"accounts": accounts, "dual_requests": scheduler.dual_requests,
+            "connections": account_connections.choices()}
+
+
+class AccountConnectionAssignment(BaseModel):
+    accounts: list[str] = Field(min_length=1, max_length=500)
+    connection_id: str
+
+
+@app.patch('/api/admin/account-connections')
+async def assign_account_connections(body: AccountConnectionAssignment,
+                                     x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    try:
+        account_connections.validate(body.connection_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    names = list(dict.fromkeys(pool.resolve_account(identifier) for identifier in body.accounts))
+    existing = set(pool.accounts)
+    for name in names:
+        if name not in existing:
+            raise HTTPException(404, 'Account not found')
+        lock = pool._locks.get(name)
+        if (name in WEB_SESSIONS or (lock and lock.locked())
+                or scheduler.reservation_ids(name)
+                or JOBS.get(name, {}).get('status') == 'running'):
+            raise HTTPException(409, 'Close the account browser and finish or stop its video tasks before changing connection')
+    account_connections.assign(names, body.connection_id)
+    return {'ok': True, 'count': len(names), 'connection_id': body.connection_id}
 
 
 class AccountRequestMode(BaseModel):
@@ -665,6 +697,7 @@ async def _run_open_web(name: str, conversation_id=None):
     session = WEB_SESSIONS[name]
     lock = pool._locks.setdefault(name, asyncio.Lock())
     acquired = False
+    context = None
     try:
         if lock.locked():
             raise RuntimeError("Account is busy")
@@ -689,6 +722,15 @@ async def _run_open_web(name: str, conversation_id=None):
         session["error"] = f"{type(exc).__name__}: {exc}"[:500]
         print(f"[open-web:{name}] {session['error']}", flush=True)
     finally:
+        if context is not None:
+            try:
+                await context.close()
+            except Exception:
+                pass
+            from browser import ACTIVE_CONTEXTS
+            entry = ACTIVE_CONTEXTS.get(name)
+            if entry and entry[0] is context:
+                ACTIVE_CONTEXTS.pop(name, None)
         if acquired:
             pool._activities.pop(name, None)
             lock.release()
@@ -806,6 +848,14 @@ async def retry_account(name: str, body: AccountAdd, x_admin_key: str | None = H
     duplicate = find_duplicate_login(name, effective_email, account_type)
     if duplicate:
         raise HTTPException(409, f"Login account already registered for {account_type}: {duplicate}")
+    if body.connection_id is not None:
+        try:
+            account_connections.validate(body.connection_id)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if scheduler.reservation_ids(name):
+            raise HTTPException(409, 'Account has unfinished video tasks')
+        account_connections.assign([name], body.connection_id)
     if body.email.strip():
         pool.set_email(name, body.email.strip())
     pool._conn.execute("UPDATE accounts_meta SET account_type=?, display_name=CASE WHEN ?<>'' THEN ? ELSE display_name END WHERE name=?",
@@ -819,6 +869,11 @@ async def retry_account(name: str, body: AccountAdd, x_admin_key: str | None = H
 @app.post("/api/admin/accounts", status_code=202)
 async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
+    connection_id = body.connection_id or 'direct'
+    try:
+        account_connections.validate(connection_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     body.name = str(uuid.uuid4())
     if body.method not in ("google", "facebook", "cookies"):
         raise HTTPException(400, "Unsupported login method")
@@ -852,6 +907,7 @@ async def admin_account_add(body: AccountAdd, x_admin_key: str | None = Header(d
                        (body.method,
                         body.display_name.strip(), body.email.strip(), cookie_identity(cookies or []), body.name))
     pool._conn.commit()
+    account_connections.assign([body.name], connection_id)
     JOBS[body.name] = {"kind": "add", "status": "running", "error": "", "started_at": time.time()}
     asyncio.create_task(_run_add_job(body.name, body.email, body.password, body.totp, body.method, cookies))
     return {"ok": True, "job": "running", "uuid": body.name, "name": body.name}
@@ -865,12 +921,17 @@ ACCOUNT_IMPORT_TASKS = set()
 
 class GoogleBulkAdd(BaseModel):
     text: str = Field(max_length=200_000, repr=False)
-    concurrency: int = Field(default=5, ge=1, le=5, strict=True)
+    concurrency: int = Field(default=10, ge=1, le=10, strict=True)
+    connection_id: str = 'direct'
 
 
 @app.post("/api/admin/accounts/google-bulk", status_code=202)
 async def google_bulk_add(body: GoogleBulkAdd, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
+    try:
+        account_connections.validate(body.connection_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     if any(p['status'] == 'running' for p in ACCOUNT_IMPORTS.values()):
         raise HTTPException(409, 'A Google import is already running')
     try:
@@ -883,7 +944,8 @@ async def google_bulk_add(body: GoogleBulkAdd, x_admin_key: str | None = Header(
     ACCOUNT_IMPORTS[identifier] = progress
 
     async def submit(email, password):
-        result = await admin_account_add(AccountAdd(email=email, password=password), x_admin_key)
+        result = await admin_account_add(AccountAdd(email=email, password=password,
+                                                   connection_id=body.connection_id), x_admin_key)
         return result['uuid']
 
     task = asyncio.create_task(run_import(accounts, body.concurrency, progress, submit,

@@ -3,41 +3,68 @@ import ast
 import unittest
 from pathlib import Path
 from pydantic import BaseModel, Field, ValidationError
+from unittest.mock import patch, Mock
 from bulk_accounts import parse_accounts, run_import
 
 
 class BulkTests(unittest.IsolatedAsyncioTestCase):
-    def test_api_defaults_to_five_and_rejects_more(self):
+    def setUp(self):
+        interval = patch('bulk_accounts.START_INTERVAL', .02)
+        interval.start()
+        self.addCleanup(interval.stop)
+
+    async def test_twenty_second_spacing_without_waiting_in_real_time(self):
+        clock = Mock()
+        now = 0
+        starts = []
+        clock.time.side_effect = lambda: now
+
+        async def sleep(delay):
+            nonlocal now
+            now += delay
+
+        async def submit(email, password):
+            starts.append(now)
+            return email
+
+        accounts = [(f'{i}@example.com', 'fixture') for i in range(3)]
+        progress = {'rows': [{'status': 'queued'} for _ in accounts]}
+        with patch('bulk_accounts.START_INTERVAL', 20), patch('bulk_accounts.asyncio.get_running_loop', return_value=clock), patch('bulk_accounts.asyncio.sleep', side_effect=sleep):
+            await run_import(accounts, 1, progress, submit, lambda _: 'success')
+        self.assertEqual(starts, [0, 20, 40])
+
+    def test_api_defaults_to_ten_and_rejects_more(self):
         tree = ast.parse(Path('server.py').read_text(encoding='utf-8'))
         model = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'GoogleBulkAdd')
         namespace = {'BaseModel': BaseModel, 'Field': Field}
         exec(compile(ast.Module(body=[model], type_ignores=[]), 'server.py', 'exec'), namespace)
         request = namespace['GoogleBulkAdd']
-        self.assertEqual(request(text='a@example.com|fixture').concurrency, 5)
-        for count in (0, 6, 20, True, 1.5):
+        self.assertEqual(request(text='a@example.com|fixture').concurrency, 10)
+        self.assertEqual(request(text='a@example.com|fixture', concurrency=10).concurrency, 10)
+        for count in (0, 11, 20, True, 1.5):
             with self.assertRaises(ValidationError):
                 request(text='a@example.com|fixture', concurrency=count)
 
-    async def test_slow_submit_does_not_serialize_workers_and_cap_is_five(self):
-        accounts = [(f'{i}@example.com', 'fixture') for i in range(7)]
+    async def test_slow_submit_does_not_serialize_workers_and_cap_is_ten(self):
+        accounts = [(f'{i}@example.com', 'fixture') for i in range(12)]
         progress = {'rows': [{'status': 'queued'} for _ in accounts]}
         started = []
         release = asyncio.Event()
         five_started = asyncio.Event()
         async def submit(email, password):
             started.append(email)
-            if len(started) == 5:
+            if len(started) == 10:
                 five_started.set()
             await release.wait()
             return email
         task = asyncio.create_task(run_import(accounts, 20, progress, submit, lambda _: 'success'))
         try:
             await asyncio.wait_for(five_started.wait(), 4)
-            self.assertEqual(len(started), 5)
+            self.assertEqual(len(started), 10)
             self.assertEqual(sum(r['status'] == 'queued' for r in progress['rows']), 2)
             release.set()
             await asyncio.wait_for(task, 4)
-            self.assertEqual(len(started), 7)
+            self.assertEqual(len(started), 12)
         finally:
             release.set()
             if not task.done():
@@ -62,7 +89,7 @@ class BulkTests(unittest.IsolatedAsyncioTestCase):
         try:
             await asyncio.wait_for(five_started.wait(), 4)
             self.assertEqual(len(states), 5)
-            self.assertTrue(all(b-a >= .49 for a,b in zip(starts, starts[1:])))
+            self.assertTrue(all(b-a >= .019 for a,b in zip(starts, starts[1:])))
             self.assertEqual(sum(r['status'] == 'running' for r in progress['rows']), 5)
             self.assertEqual(sum(r['status'] == 'queued' for r in progress['rows']), 5)
             for email in list(states):

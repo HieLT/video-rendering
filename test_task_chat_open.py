@@ -1,6 +1,6 @@
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 import browser
 
 class Page:
@@ -12,6 +12,46 @@ class Page:
     def is_closed(self): return False
 
 class ChatOpenTests(unittest.IsolatedAsyncioTestCase):
+    async def test_open_web_navigation_error_closes_and_unregisters_context(self):
+        import ast
+        from pathlib import Path
+        from types import SimpleNamespace
+        page=Page('about:blank')
+        page.goto.side_effect=RuntimeError('fixture navigation failed')
+        context=SimpleNamespace(pages=[page],close=AsyncMock())
+        pool=SimpleNamespace(_locks={},_activities={})
+        sessions={'account':{'status':'starting'}}
+        manager=AsyncMock()
+        namespace=dict(WEB_SESSIONS=sessions,pool=pool,asyncio=asyncio,
+                       config=SimpleNamespace(EXTENSION_ENABLED=True),
+                       async_playwright=Mock(return_value=manager),time=__import__('time'))
+        tree=ast.parse(Path('server.py').read_text(encoding='utf-8'))
+        node=next(n for n in tree.body if getattr(n,'name',None)=='_run_open_web')
+        exec(compile(ast.Module(body=[node],type_ignores=[]),'server.py','exec'),namespace)
+        with patch.dict(browser.ACTIVE_CONTEXTS,{'account':(context,False)},clear=True),patch('browser.launch_account_context',new=AsyncMock(return_value=context)):
+            await namespace['_run_open_web']('account')
+            context.close.assert_awaited_once()
+            self.assertNotIn('account',browser.ACTIVE_CONTEXTS)
+        self.assertFalse(pool._locks['account'].locked())
+        self.assertNotIn('account',sessions)
+        self.assertNotIn('account',pool._activities)
+
+    async def test_closed_context_is_discarded_when_focus_races_with_close(self):
+        page=Page('https://www.dola.com/chat/111')
+        page.bring_to_front.side_effect=RuntimeError('Target page, context or browser has been closed')
+        class Context:
+            pages=[page]
+        with patch.dict(browser.ACTIVE_CONTEXTS,{'account':(Context(),False)},clear=True):
+            self.assertFalse(await browser.focus_account_context('account'))
+            self.assertNotIn('account',browser.ACTIVE_CONTEXTS)
+
+    async def test_empty_closed_context_is_discarded(self):
+        class Context:
+            pages=[]
+        with patch.dict(browser.ACTIVE_CONTEXTS,{'account':(Context(),True)},clear=True):
+            self.assertFalse(await browser.focus_account_context('account'))
+            self.assertNotIn('account',browser.ACTIVE_CONTEXTS)
+
     async def test_two_tasks_same_account_open_exact_tabs(self):
         a=Page("https://www.dola.com/chat/111")
         b=Page("https://www.dola.com/chat/222?view=1")

@@ -128,7 +128,12 @@ def find_captcha_frame(page):
     return None
 
 
-async def _fetch_bytes(url: str) -> bytes:
+async def _fetch_bytes(url: str, context=None) -> bytes:
+    if context is not None:
+        response = await context.request.get(url)
+        if not response.ok:
+            raise RuntimeError('Could not fetch captcha image through account connection')
+        return await response.body()
     async with aiohttp.ClientSession() as s:
         async with s.get(url, proxy=config.PROXY or None, proxy_auth=config.proxy_auth()) as r:
             return await r.read()
@@ -414,8 +419,8 @@ async def solve_slider(page, frame, attempt: int) -> bool:
         _log("  Captcha background or puzzle image not found")
         return False
 
-    bg_bytes = await _fetch_bytes(bg["src"])
-    piece_bytes = await _fetch_bytes(piece["src"])
+    bg_bytes = await _fetch_bytes(bg["src"], page.context)
+    piece_bytes = await _fetch_bytes(piece["src"], page.context)
     Path("dbg_bg.jpg").write_bytes(bg_bytes)
     Path("dbg_piece.png").write_bytes(piece_bytes)
 

@@ -1,5 +1,7 @@
 # --- secrets / local config ---
 .env.local
+.connections.local.json
+.connections-*.tmp
 cookies.txt
 *.log
 *.rar

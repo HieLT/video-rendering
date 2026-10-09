@@ -309,6 +309,7 @@ td .prompt{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;
         <button class="btn btn-p" onclick="openAddAccount()">＋ Add Account</button>
       </div>
       <button id="deleteSelectedAccounts" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('accounts')">Delete selected (0)</button>
+      <button id="assignSelectedConnection" class="btn" hidden disabled onclick="openAccountConnections()">Gán kết nối</button>
       <p><label><input id="dualRequests" type="checkbox" onchange="setAccountRequestMode(this)"> Cho phép 2 request đồng thời / account</label></p>
       <p class="tiny">Áp dụng cho Video Tasks và Projects. Hai video chạy trong hai chat riêng; quota vẫn tối đa 2 video/account. Khi tắt, các request đang chạy tiếp tục, request mới chờ account trống.</p>
       <div class="account-groups" aria-label="Account email groups">
@@ -575,6 +576,11 @@ function updateDeleteSelection(kind){
   button.disabled=bulkDeleting[kind]||selected.size===0;
   button.textContent=bulkDeleting[kind]?'Deleting?':`Delete selected (${selected.size})`;
   const all=q('#selectAll'+kind);
+  if(kind==='accounts'){
+    const assign=q('#assignSelectedConnection');
+    assign.hidden=selected.size===0;assign.disabled=bulkDeleting.accounts||selected.size===0;
+    assign.textContent=`Gán kết nối (${selected.size})`;
+  }
   if(all){all.checked=visible.length>0&&selected.size===visible.length;all.indeterminate=selected.size>0&&selected.size<visible.length;all.disabled=bulkDeleting[kind]||!visible.length;}
   document.querySelectorAll(`[data-delete-kind="${kind}"]`).forEach(box=>{box.checked=selected.has(box.dataset.deleteId);box.disabled=bulkDeleting[kind]||!visible.includes(box.dataset.deleteId);});
 }
@@ -609,6 +615,38 @@ async function deleteSelectedRows(kind){
 /* ---- Accounts ---- */
 let accountDomain=null;
 let accountGroup='gmail', accountSnapshot=[], accountJobs={}, dispatchUpdating=false;
+let connectionChoices=[{id:'direct',label:'Mạng hiện tại (không proxy)'}];
+const connectionUpdates=new Set();
+function connectionOptions(selected='direct'){
+  return connectionChoices.map(c=>`<option value="${esc(c.id)}" ${c.id===selected?'selected':''}>${esc(c.label)}</option>`).join('');
+}
+async function changeAccountConnection(name,input){
+  const previous=accountSnapshot.find(a=>a.name===name)?.connection_id||'direct';
+  const connection_id=input.value;
+  if(connection_id===previous||connectionUpdates.has(name))return;
+  connectionUpdates.add(name);input.disabled=true;
+  try{
+    await api('/api/admin/account-connections',{method:'PATCH',body:{accounts:[name],connection_id}});
+    const account=accountSnapshot.find(a=>a.name===name);
+    if(account)account.connection_id=connection_id;
+  }catch(e){input.value=previous;alert(e.message);}
+  finally{connectionUpdates.delete(name);renderAccounts();}
+}
+function openAccountConnections(){
+  const ids=[...deleteSelection.accounts];
+  if(!ids.length)return;
+  const values=new Set(accountSnapshot.filter(a=>ids.includes(a.name)).map(a=>a.connection_id||'direct'));
+  showDlg(`<h2>Gán kết nối cho ${ids.length} account</h2><p>Account đang mở browser hoặc còn video chưa hoàn tất cần đóng/Stop trước khi đổi kết nối.</p><label>Kết nối</label><select id="f_assign_connection">${values.size>1?'<option value="" selected disabled>Chọn kết nối</option>':''}${connectionOptions(values.size===1?[...values][0]:'')}</select><div class="row"><button class="btn" onclick="hide('dlg')">Cancel</button><button class="btn btn-p" id="f_assign_save">Lưu</button></div>`);
+  q('#f_assign_save').onclick=async()=>{
+    const connection_id=q('#f_assign_connection').value;
+    if(!connection_id)return;
+    const button=q('#f_assign_save');button.disabled=true;
+    try{
+      await api('/api/admin/account-connections',{method:'PATCH',body:{accounts:ids,connection_id}});
+      hide('dlg');await loadAccounts();
+    }catch(e){alert(e.message);}finally{button.disabled=false;}
+  };
+}
 async function toggleGroupDispatch(group,domain=null){
   if(dispatchUpdating)return;
   const enabled=!accountSnapshot.some(x=>accountEmailGroup(x)===group&&(domain===null||accountEmailDomain(x)===domain)&&x.scheduling);
@@ -637,6 +675,7 @@ async function loadAccounts(){
   }).join('');
   if(bulkDeleting.accounts)return;
   accountSnapshot=a.accounts;accountJobs=j.jobs||{};
+  connectionChoices=a.connections||[{id:'direct',label:'Mạng hiện tại (không proxy)'}];
   renderAccounts();
 }
 async function setAccountRequestMode(input){
@@ -687,6 +726,7 @@ function renderAccounts(){
       index+1,
       accLabel(x)+warn,
       esc(({google:"Google",facebook:"Facebook",cookies:"Cookies imported",unknown:"Unknown"})[x.account_type]||"Unknown"),
+      `<select aria-label="Kết nối account ${esc(x.email||x.name)}" data-account-connection="${esc(x.name)}" style="min-width:155px;max-width:210px" ${x.busy||x.active_requests||jb?.status==='running'||connectionUpdates.has(x.name)?'disabled title="Đóng browser và hoàn tất hoặc Stop video trước khi đổi kết nối"':''} onchange="changeAccountConnection(this.dataset.accountConnection,this)">${connectionChoices.some(c=>c.id===(x.connection_id||'direct'))?'':`<option value="${esc(x.connection_id)}" selected disabled>Kết nối không khả dụng</option>`}${connectionOptions(x.connection_id||'direct')}</select>`,
       badge+(x.active_requests?`<div class="tiny">${Number(x.active_requests)} request đang chạy</div>`:''),
       `<label class="sw"><input type="checkbox" ${x.scheduling?'checked':''} onchange="setSched('${x.name}',this.checked)"><i></i></label>`,
       `<b>${x.used_today}</b> / ${x.limit}`,
@@ -695,7 +735,7 @@ function renderAccounts(){
       `<button class="btn" style="margin-right:6px" onclick="openWeb('${esc(x.name)}',this)">Open Web</button><button class="btn" style="margin-right:6px" onclick="verify('${esc(x.name)}',this)">Verify</button><button class="btn" onclick="resetQuota('${esc(x.name)}',this)">Reset</button><button class="btn" onclick="openAddAccount('${esc(x.name)}')">Retry</button><button class="btn btn-danger" onclick="delAccount('${esc(x.name)}')">Delete</button>`
     ];
   };
-  const headers=['STT','Name','Type','Status','Dispatch','Used Today','Last Used','Created At','Actions'];
+  const headers=['STT','Name','Type','Kết nối','Status','Dispatch','Used Today','Last Used','Created At','Actions'];
   if(accountGroup==='other'){
     const groups=domains.filter(domain=>accountDomain!==null&&domain===accountDomain);
     q('#accountsTable').innerHTML=(accountDomain===null?'<p>Ch\u1ecdn tab @domain \u0111\u1ec3 xem danh s\u00e1ch account.</p>':visible.length?`<p>${selectionHeader('accounts')} Select all deletable accounts in this domain</p>`:'')+groups.map(domain=>{
@@ -733,8 +773,9 @@ let accountRetryUuid=null;
 function openAddAccount(retryName=null){
   accountRetryUuid=retryName;
   showDlg(`<h2>${retryName?"Retry Account":"Add Account"}</h2>
+    <label>Kết nối</label><select id="f_connection">${connectionOptions(accountSnapshot.find(a=>a.name===retryName)?.connection_id||'direct')}</select>
     <label>Login method</label><select id="f_method" onchange="accountMethodChanged()"><option value="cookies">Import cookies</option><option value="google">Google</option>${retryName?'':'<option value="google_bulk">Google nhanh / nhiều account</option>'}<option value="facebook">Facebook</option></select>
-    <div id="f_google_bulk" hidden><label>Mỗi dòng: email|password</label><textarea id="f_bulk_text" rows="8" autocomplete="off" spellcheck="false" placeholder="email@example.com|password"></textarea><label>Số phiên song song (1–5)</label><input id="f_bulk_concurrency" type="number" min="1" max="5" value="5"><p class="tiny">Mỗi lượt bắt đầu cách nhau 0,5 giây. Bỏ qua dòng trống và gộp email trùng. Tiến trình tiếp tục khi đóng hộp thoại; dừng nếu tắt server. CAPTCHA/2FA cần hoàn tất trong trình duyệt.</p></div>
+    <div id="f_google_bulk" hidden><label>Mỗi dòng: email|password</label><textarea id="f_bulk_text" rows="8" autocomplete="off" spellcheck="false" placeholder="email@example.com|password"></textarea><label>Số phiên song song (1–10)</label><input id="f_bulk_concurrency" type="number" min="1" max="10" value="10"><p class="tiny">Tối đa 10 phiên song song; mỗi lượt bắt đầu cách nhau ít nhất 20 giây. Bỏ qua dòng trống và gộp email trùng. Tiến trình tiếp tục khi đóng hộp thoại; dừng nếu tắt server. CAPTCHA/2FA cần hoàn tất trong trình duyệt.</p></div>
     <div id="f_google" hidden><label>Google Email</label><input id="f_email" autocomplete="off"><label>Password</label><input id="f_pass" type="password" autocomplete="new-password"><label>TOTP Secret (optional)</label><input id="f_totp" type="password"></div>
     <div id="f_cookies"><label>Netscape cookie file (.txt)</label><input id="f_cookie_file" type="file" accept=".txt"><p class="tiny">Choose the original cookie export for one Dola account. The session will be checked before enabling the account.</p></div>
     <div id="f_facebook" hidden><label>Facebook email or phone number</label><input id="f_fb_account" autocomplete="off"><label>Facebook password</label><input id="f_fb_password" type="password" autocomplete="new-password"><p class="tiny">Login is submitted once. Complete any verification in the browser within 5 minutes.</p></div>
@@ -746,15 +787,15 @@ function accountMethodChanged(){
   q('#f_google_bulk').hidden=method!=='google_bulk';
 }
 async function submitAddAccount(){
-  const body={method:q('#f_method').value};
+  const body={method:q('#f_method').value,connection_id:q('#f_connection').value};
   const button=q('#f_submit');button.disabled=true;
   try{
     if(body.method==='google_bulk'){
       const text=q('#f_bulk_text').value;
       const concurrency=Number(q('#f_bulk_concurrency').value);
       if(!text.trim())throw new Error('Paste email|password, one account per line');
-      if(!Number.isInteger(concurrency)||concurrency<1||concurrency>5)throw new Error('Số phiên song song phải từ 1 đến 5');
-      await api('/api/admin/accounts/google-bulk',{method:'POST',body:{text,concurrency}});
+      if(!Number.isInteger(concurrency)||concurrency<1||concurrency>10)throw new Error('Số phiên song song phải từ 1 đến 10');
+      await api('/api/admin/accounts/google-bulk',{method:'POST',body:{text,concurrency,connection_id:body.connection_id}});
       q('#f_bulk_text').value='';hide('dlg');refresh();return;
     }
     if(body.method==='google'){
