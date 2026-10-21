@@ -52,6 +52,8 @@ class AccountSessionExpiredError(RuntimeError):
     """Dola explicitly requires a new login."""
 
 async def ensure_account_session(page, context):
+    from account_risk import check_risk
+    check_risk(context)
     import re
     login = page.get_by_text(re.compile(r"^(Log in|Log In|Sign in|Sign In|\u30ed\u30b0\u30a4\u30f3)$"))
     visible = any([await item.is_visible() for item in await login.all()])
@@ -122,9 +124,10 @@ async def _ready_extension(context):
     import asyncio
     for _ in range(40):
         for worker in context.service_workers:
-            if worker.url.startswith('chrome-extension://') and worker.url.endswith('/service-worker-v2.js'):
+            if worker.url.startswith('chrome-extension://') and worker.url.endswith('/service-worker-v3.js'):
                 if await worker.evaluate("""() => {
-                    if (typeof ensureAttached !== 'function' || typeof patchActionBarDuration !== 'function') return false;
+                    if (typeof ensureAttached !== 'function' || typeof patchActionBarDuration !== 'function'
+                        || typeof patchSeedance25Model !== 'function') return false;
                     const probe = {key:'video-duration', lower_bound:4, upper_bound:10, step_length:1};
                     return JSON.parse(patchActionBarDuration(JSON.stringify(probe))).upper_bound === 30;
                 }"""):
@@ -196,6 +199,8 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
         )
     launch_headless = config.HEADLESS if headless is None else headless
     args = account_launch_args(profile_dir)
+    if not config.PROXY_ENABLED:
+        args.append("--no-proxy-server")
     if use_extension:
         if not config.EXTENSION_ENABLED:
             raise RuntimeError("Dola extension is disabled (DOLA_EXTENSION_ENABLED=0)")
@@ -208,6 +213,9 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
             f"--disable-extensions-except={extension_dir}",
             f"--load-extension={extension_dir}",
         ])
+    if not launch_headless:
+        from windows_desktop import require_visible_desktop
+        require_visible_desktop()
     kwargs = {
         "headless": launch_headless,
         "channel": "chromium",
@@ -221,8 +229,14 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
     proxy, bridge = await prepare_browser_proxy(upstream_proxy)
     if proxy:
         kwargs["proxy"] = proxy
+    from session_tracking import trace_disk, track_session
+    async def launch_tracked():
+        run = trace_disk(account, profile_dir, 'before_launch')
+        launched = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+        await track_session(launched, account, profile_dir, run)
+        return launched
     try:
-        context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+        context = await launch_tracked()
     except BaseException:
         if bridge:
             bridge.close()
@@ -241,7 +255,7 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
                 proxy, bridge = await prepare_browser_proxy(upstream_proxy)
                 if proxy:
                     kwargs['proxy'] = proxy
-                context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+                context = await launch_tracked()
                 if bridge:
                     context.on('close', lambda *_, relay=bridge: relay.close())
                 worker = await _ready_extension(context)
@@ -251,6 +265,8 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
             if bridge:
                 bridge.close()
             raise RuntimeError(f"Dola30 extension unavailable for {account}: {exc}") from exc
+    from account_risk import install_risk_monitor
+    await install_risk_monitor(context, account)
     ACTIVE_CONTEXTS[account] = (context, launch_headless)
 
     def unregister(*_):

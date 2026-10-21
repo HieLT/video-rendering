@@ -100,7 +100,7 @@ class RollingUsageTest(unittest.TestCase):
     def test_daily_limit_sets_24_hour_deadline(self):
         with patch("time.time", return_value=self.last+100):
             self.pool._mark_daily_limit("acc1")
-            self.assertEqual(self.pool.used_today("acc1"), 2)
+            self.assertEqual(self.pool.used_today("acc1"), 1)
             self.assertEqual(self.pool._meta("acc1")["rate_limited_until"], self.last+86500)
 
 

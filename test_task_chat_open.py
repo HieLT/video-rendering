@@ -12,7 +12,7 @@ class Page:
     def is_closed(self): return False
 
 class ChatOpenTests(unittest.IsolatedAsyncioTestCase):
-    async def test_open_web_navigation_error_closes_and_unregisters_context(self):
+    async def test_open_web_navigation_error_keeps_window_until_user_closes(self):
         import ast
         from pathlib import Path
         from types import SimpleNamespace
@@ -22,14 +22,27 @@ class ChatOpenTests(unittest.IsolatedAsyncioTestCase):
         pool=SimpleNamespace(_locks={},_activities={})
         sessions={'account':{'status':'starting'}}
         manager=AsyncMock()
-        namespace=dict(WEB_SESSIONS=sessions,pool=pool,asyncio=asyncio,
+        async def user_closes_window(delay):
+            context.close.assert_not_awaited()
+            self.assertEqual(sessions['account']['status'],'open')
+            self.assertIn('fixture navigation failed',sessions['account']['error'])
+            self.assertTrue(pool._locks['account'].locked())
+            context.pages.clear()
+        sleep=AsyncMock(side_effect=user_closes_window)
+        namespace=dict(WEB_SESSIONS=sessions,pool=pool,
+                       asyncio=SimpleNamespace(Lock=asyncio.Lock,sleep=sleep),
                        config=SimpleNamespace(EXTENSION_ENABLED=True),
-                       async_playwright=Mock(return_value=manager),time=__import__('time'))
+                       manual_async_playwright=Mock(return_value=manager),
+                       async_playwright=Mock(side_effect=AssertionError('Open Web must bypass the browser queue')),
+                       time=__import__('time'))
         tree=ast.parse(Path('server.py').read_text(encoding='utf-8'))
         node=next(n for n in tree.body if getattr(n,'name',None)=='_run_open_web')
         exec(compile(ast.Module(body=[node],type_ignores=[]),'server.py','exec'),namespace)
         with patch.dict(browser.ACTIVE_CONTEXTS,{'account':(context,False)},clear=True),patch('browser.launch_account_context',new=AsyncMock(return_value=context)):
             await namespace['_run_open_web']('account')
+            namespace['manual_async_playwright'].assert_called_once_with()
+            namespace['async_playwright'].assert_not_called()
+            sleep.assert_awaited_once()
             context.close.assert_awaited_once()
             self.assertNotIn('account',browser.ACTIVE_CONTEXTS)
         self.assertFalse(pool._locks['account'].locked())

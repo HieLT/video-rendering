@@ -164,7 +164,7 @@ class DolaClient:
     def __init__(self, cookie: str, api_base: str = "https://www.dola.com", proxy: str = ""):
         self.cookie = cookie
         self.api_base = api_base
-        self.proxy = proxy or None
+        self.proxy = None  # Proxy routing is disabled project-wide.
         self.info = parse_cookie(cookie)
 
     @property
@@ -264,7 +264,7 @@ class DolaClient:
     async def chat(self, messages: list, deep_think: bool = False) -> str:
         """Chat completion, returns full text."""
         body = self._build_chat_body(messages, deep_think)
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             resp = await self._request_chat_completion(session, body)
             async with resp:
                 events = await self._read_sse_stream(resp)
@@ -280,7 +280,7 @@ class DolaClient:
     async def chat_stream(self, messages: list, deep_think: bool = False):
         """Streaming chat completion, yields text deltas."""
         body = self._build_chat_body(messages, deep_think)
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             resp = await self._request_chat_completion(session, body)
             async with resp:
                 buffer = ""
@@ -411,7 +411,7 @@ class DolaClient:
             "agw-js-conv": "str, str",
             "Referer": f"{self.api_base}/chat/",
         }
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             async with session.post(
                 prep_url, params=prep_params,
                 json={"tenant_id": "5", "scene_id": "4", "resource_type": 2},
@@ -434,7 +434,7 @@ class DolaClient:
             f"&ServiceId={service_id}&FileSize={len(image_buf)}&FileExtension=.png"
         )
         sig = aws4_sign("GET", apply_url, ak, sk, sts_token)
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             async with session.get(apply_url, headers=sig, timeout=aiohttp.ClientTimeout(total=15)) as p2:
                 p2_data = await p2.json(content_type=None)
         if p2_data.get("ResponseMetadata", {}).get("Error"):
@@ -454,7 +454,7 @@ class DolaClient:
             "x-storage-u": "7655722254806270981",
             "Content-Disposition": 'attachment; filename="image.png"',
         }
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             async with session.put(tos_url, data=image_buf, headers=tos_headers,
                                    timeout=aiohttp.ClientTimeout(total=30)) as p3:
                 p3_data = await p3.json(content_type=None)
@@ -466,7 +466,7 @@ class DolaClient:
     async def _fetch_image(self, image_input: str) -> bytes:
         """Downloads image: supports HTTP URL or base64."""
         if image_input.startswith("http"):
-            async with aiohttp.ClientSession(trust_env=True) as session:
+            async with aiohttp.ClientSession(trust_env=False) as session:
                 async with session.get(image_input, timeout=aiohttp.ClientTimeout(total=30)) as r:
                     return await r.read()
         # base64 (optional data: prefix)
@@ -480,7 +480,7 @@ class DolaClient:
         """Image recognition: upload + block_type:10052 + chat."""
         image_uri = await self.upload_image(image_input)
         body = self._build_vision_body(image_uri, prompt)
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             resp = await self._request_chat_completion(session, body, timeout=120)
             async with resp:
                 events = await self._read_sse_stream(resp)
@@ -605,7 +605,7 @@ class DolaClient:
     async def generate_image(self, prompt: str, ratio: str = "1:1", style: str = "auto") -> str:
         """Text-to-Image generation, returns image URL."""
         body = self._build_image_body(prompt, ratio, style)
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             resp = await self._request_chat_completion(session, body, timeout=60)
             async with resp:
                 events = await self._read_sse_stream(resp)
@@ -680,7 +680,7 @@ class DolaClient:
         """Polls /im/chain/single for image generation."""
         start = time.time()
         attempt = 0
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             while time.time() - start < timeout:
                 await asyncio.sleep(2)
                 attempt += 1
@@ -720,7 +720,7 @@ class DolaClient:
         """Video generation, returns video download URL."""
         print(f"[direct-api] submit model={model} ratio={ratio} duration={duration} prompt={prompt[:120]!r}", flush=True)
         body = self._build_video_body(prompt, ratio, duration, model)
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             resp = await self._request_chat_completion(session, body, timeout=120)
             async with resp:
                 status = resp.status
@@ -828,7 +828,7 @@ class DolaClient:
         """Polls /im/chain/single for video, checking quota limits."""
         start = time.time()
         attempt = 0
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             while time.time() - start < timeout:
                 await asyncio.sleep(5)
                 attempt += 1
@@ -1142,7 +1142,7 @@ class DoubaoCNClient:
         url = f"https://{CN_DOMAIN}/samantha/chat/completion"
         headers = {**self._build_headers(), "agw-js-conv": "str, str"}
         params = self._build_params({"msToken": _fake_ms_token(), "a_bogus": _fake_a_bogus()})
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             async with session.post(url, params=params, json=body, headers=headers,
                                      timeout=aiohttp.ClientTimeout(total=300)) as resp:
                 events = await self._read_sse(resp)
@@ -1181,7 +1181,7 @@ class DoubaoCNClient:
         url = f"https://{CN_DOMAIN}/alice/resource/prepare_upload"
         headers = {**self._build_headers(), "agw-js-conv": "str"}
         params = self._build_params({"msToken": _fake_ms_token(), "a_bogus": _fake_a_bogus()})
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             async with session.post(url, params=params,
                                      json={"tenant_id": "5", "scene_id": "5", "resource_type": 2},
                                      headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as p1:
@@ -1203,7 +1203,7 @@ class DoubaoCNClient:
             f"&FileSize={len(image_buf)}&FileExtension=.png"
         )
         sig = aws4_sign("GET", apply_url, ak, sk, sts)
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             async with session.get(apply_url, headers=sig, timeout=aiohttp.ClientTimeout(total=15)) as p2:
                 p2_data = await p2.json(content_type=None)
         store_info = p2_data["Result"]["UploadAddress"]["StoreInfos"][0]
@@ -1219,7 +1219,7 @@ class DoubaoCNClient:
             "content-crc32": crc,
             "Content-Disposition": 'attachment; filename="image.png"',
         }
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             async with session.put(tos_url, data=image_buf, headers=tos_headers,
                                    timeout=aiohttp.ClientTimeout(total=30)) as p3:
                 await p3.read()
@@ -1227,7 +1227,7 @@ class DoubaoCNClient:
 
     async def _fetch_image(self, image_input: str) -> bytes:
         if image_input.startswith("http"):
-            async with aiohttp.ClientSession(trust_env=True) as session:
+            async with aiohttp.ClientSession(trust_env=False) as session:
                 async with session.get(image_input, timeout=aiohttp.ClientTimeout(total=30)) as r:
                     return await r.read()
         import base64
@@ -1266,7 +1266,7 @@ class DoubaoCNClient:
         url = f"https://{CN_DOMAIN}/samantha/chat/completion"
         headers = {**self._build_headers(), "agw-js-conv": "str, str"}
         params = self._build_params({"msToken": _fake_ms_token(), "a_bogus": _fake_a_bogus()})
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             async with session.post(url, params=params, json=body, headers=headers,
                                      timeout=aiohttp.ClientTimeout(total=120)) as resp:
                 events = await self._read_sse(resp)
@@ -1301,7 +1301,7 @@ class DoubaoCNClient:
         params = self._build_params({"msToken": _fake_ms_token(), "a_bogus": _fake_a_bogus()})
         conv_id = ""
         image_url = ""
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             async with session.post(url, params=params, json=body, headers=headers,
                                      timeout=aiohttp.ClientTimeout(total=60)) as resp:
                 events = await self._read_sse(resp)

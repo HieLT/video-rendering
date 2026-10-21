@@ -1,0 +1,19 @@
+{
+  "window_title": "FC ONLINE",
+  "coordinate_space": "client_relative",
+  "regions": {
+    "player_name": {"left": 515, "top": 220, "width": 210, "height": 35},
+    "market_rows": {"left": 500, "top": 250, "width": 215, "height": 180},
+    "market_max_price": {"left": 975, "top": 312, "width": 75, "height": 38},
+    "market_price_input": {"left": 860, "top": 378, "width": 180, "height": 52},
+    "market_quantity": {"left": 960, "top": 438, "width": 85, "height": 55},
+    "list_buy_button": {"left": 805, "top": 650, "width": 150, "height": 45},
+    "market_buy_button": {"left": 760, "top": 575, "width": 145, "height": 45},
+    "buy_button": {"left": 760, "top": 575, "width": 145, "height": 45},
+    "cancel_button": {"left": 905, "top": 575, "width": 145, "height": 45},
+    "status_success": {"left": 700, "top": 535, "width": 340, "height": 80},
+    "status_failure": {"left": 700, "top": 535, "width": 340, "height": 80}
+  },
+  "pixel_checks": {"ready": {"left": 1005, "top": 330, "color": [255, 255, 255]}, "reset_marker": null},
+  "notes": "Calibrated from the current 1296x759 buy-dialog capture; verify after window resize."
+}

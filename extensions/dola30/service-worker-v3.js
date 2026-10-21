@@ -208,7 +208,9 @@ function continueRequest(tabId, requestId) {
 
 async function rewriteActionBarConfigResponse(tabId, event) {
   const response = await getPausedResponseBody(tabId, event.requestId);
-  const patchedBody = patchActionBarDuration(response.body);
+  const durationBody = patchActionBarDuration(response.body);
+  const patchedBody = (event.request?.url || '').includes('dola.com/')
+    ? patchSeedance25Model(durationBody) : durationBody;
 
   await sendCommand(tabId, "Fetch.fulfillRequest", {
     requestId: event.requestId,
@@ -614,6 +616,30 @@ function findDolaEncodedVideoUrls(json) {
     values.push(value);
   }
   return values;
+}
+
+function patchSeedance25Model(body) {
+  function visit(value) {
+    if (typeof value === 'string' && /^[\s]*[\[{]/.test(value)) {
+      try { return JSON.stringify(visit(JSON.parse(value))); } catch { return value; }
+    }
+    if (Array.isArray(value)) return value.map(visit);
+    if (!value || typeof value !== 'object') return value;
+    if (value.key === 'video-model' && Array.isArray(value.option_list)
+        && value.option_list.some(o => o?.option_key === 'seedance_v2.0')
+        && !value.option_list.some(o => o?.option_key === 'seedance_v2.5')) {
+      // Preserve server defaults and entitlement metadata. ID 7 is the observed
+      // 2.5 option ID; do not overwrite an unrelated server option using it.
+      if (!value.option_list.some(o => String(o?.id) === '7')) {
+        value.option_list.push({id: 7, display_text: 'Dreamina Seedance 2.5',
+          message_text: '', option_key: 'seedance_v2.5', selected_display_text: '2.5',
+          extra: {model: 'seedance_v2.5', subs_only_tag: 'enhanced'}});
+      }
+    }
+    for (const key of Object.keys(value)) value[key] = visit(value[key]);
+    return value;
+  }
+  try { return JSON.stringify(visit(JSON.parse(body))); } catch { return body; }
 }
 
 function patchActionBarDuration(body) {

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Film Studio — Thiết lập agent</title>
+<style>body{font:15px system-ui;background:#f2f5f4;color:#1f2a28;max-width:960px;margin:32px auto;padding:0 20px}section{background:white;padding:24px;border-radius:12px;margin:20px 0}label{display:block;margin:16px 0 6px}input[type=url],select{box-sizing:border-box;width:100%;padding:10px;border:1px solid #bbc9c4;border-radius:6px}button,a{cursor:pointer}button{padding:10px 18px}small{color:#53665e}#status{white-space:pre-wrap}a{color:#008e5d}.agent{margin:20px 0}.agent a{display:inline-block;margin-top:6px}</style>
+</head><body><a href="/">← Dashboard</a><h1>Film Studio</h1>
+<p>Quản lý Chrome profile và các cuộc chat agent của dự án đang làm.</p>
+<p><strong>Chưa kết nối tự động.</strong> Lưu liên kết không xác nhận chat thuộc Project hoặc agent đã sẵn sàng.</p>
+<p id="status" role="status" aria-live="polite">Đang tải…</p>
+<form id="setup"><fieldset id="fields" disabled style="border:0;padding:0"><section>
+<label for="browser">Trình duyệt chứa session</label><select id="browser"><option value="chrome">Chrome</option><option value="edge">Edge</option></select>
+<label for="account">Account List (Google/Dola)</label><select id="account"><option value="">Không dùng account mapping</option></select>
+<label for="profile">Profile đã đăng nhập</label><select id="profile"><option value="">Chưa chọn</option></select>
+<label for="project">Project ChatGPT</label><input id="project" type="url" placeholder="https://chatgpt.com/g/g-p-…/project"><a id="open-project" target="_blank" rel="noopener noreferrer" hidden>Mở Project</a>
+<label><input id="confirmed" type="checkbox"> Tôi đã dán và kiểm tra instruction trong Project</label>
+<small>Trạng thái này do bạn xác nhận; ứng dụng chưa đọc instruction từ ChatGPT.</small>
+</section><section><h2>Các agent</h2><p>Mỗi vai trò dùng một chat riêng. Có thể để trống khi chưa tạo.</p><div id="agents"></div></section>
+<button id="save" type="submit">Lưu thiết lập</button></fieldset></form>
+<section><h2>Dự án sản xuất</h2><p>Nhập kịch bản của bạn. Sau khi duyệt kịch bản và bộ ảnh, các clip đủ đầu vào sẽ được đưa vào Dola.</p>
+<form id="new-film"><label for="film-title">Tên phim</label><input id="film-title" required maxlength="120">
+<label for="screenplay">Kịch bản</label><textarea id="screenplay" required maxlength="500000" rows="10" style="width:100%"></textarea>
+<button type="submit">Lưu kịch bản và tạo workflow</button></form>
+<p id="flow-status" role="status" aria-live="polite"></p><button id="refresh-runs" type="button">Tải lại tiến độ</button><div id="runs"></div></section>
+<section id="run-detail" hidden></section>
+<section><h2>Nguồn skill</h2><p>Cần đủ ba nguồn thực tế trước khi nhận prompt sản xuất. Nội dung được lưu cùng phiên bản và mã kiểm tra.</p>
+<form id="skill-form"><label for="skill-name">Skill</label><select id="skill-name"><option>emily2040</option><option>sjinn-ai</option><option>sd25-pe</option></select>
+<label for="skill-version">Phiên bản</label><input id="skill-version" required maxlength="100">
+<label for="skill-source">Instruction/source</label><textarea id="skill-source" rows="5" required maxlength="100000" style="width:100%"></textarea>
+<button type="submit">Lưu nguồn skill</button></form><pre id="runtime-status" style="white-space:pre-wrap"></pre></section>
+<section><h2>Kết nối ChatGPT web</h2>
+<p>Kết nối tới Chrome đã bật điều khiển cục bộ. Ứng dụng kiểm tra đúng profile đã chọn trước khi chạy agent. Các chat còn thiếu sẽ được tạo trong Project khi có task.</p>
+<label for="browser-endpoint">Địa chỉ điều khiển Chrome</label><input id="browser-endpoint" type="url" value="http://127.0.0.1:9222">
+<button id="browser-connect" type="button">Kết nối CDP</button>
+<button id="browser-profile-connect" type="button">Mở profile đã chọn và chạy agent</button>
+<button id="browser-disconnect" type="button">Ngắt kết nối agent</button>
+<p id="browser-status" role="status"></p></section>
+<script src="/film-studio.js"></script><script src="/film-studio-workflow.js"></script></body></html>

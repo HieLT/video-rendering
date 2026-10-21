@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
-const source = fs.readFileSync('extensions/dola30/service-worker-v2.js', 'utf8');
+const source = fs.readFileSync('extensions/dola30/service-worker-v3.js', 'utf8');
 const context = vm.createContext({console});
 vm.runInContext(source.slice(source.indexOf('function patchActionBarDuration('), source.indexOf('function findImageOriRawUrls(')), context);
 const dropdown = {key:'video-duration', option_list:[{id:1,option_key:'5',display_text:'5s'},{id:2,option_key:'10',display_text:'10s'}]};

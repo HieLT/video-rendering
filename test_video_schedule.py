@@ -68,6 +68,50 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(db.execute('SELECT used FROM account_usage').fetchone()[0],1)
         finally:db.close()
 
+    def test_recovery_matches_exact_prompt_and_dispatch_time(self):
+        row={"prompt":"original prompt", "submitted_at":1000}
+        message={"user_type":1,"create_time":"1001","index_in_conv":3,
+                 "content":[{"content":{"text_block":{"text":"original prompt"}}}]}
+        self.assertEqual(schedule.match_interrupted_submission([message],row),3)
+        wrapped={**message,"content":[{"content":{"text_block":{"text":"\u751f\u6210\u3055\u308c\u305f\u52d5\u753b\uff1aoriginal prompt\u300116:9"}}}]}
+        self.assertEqual(schedule.match_interrupted_submission([wrapped],{**row,"ratio":"16:9"}),3)
+
+        self.assertIsNone(schedule.match_interrupted_submission([{**message,"create_time":"900"}],row))
+        self.assertIsNone(schedule.match_interrupted_submission([message,message],row))
+        self.assertIsNone(schedule.match_interrupted_submission([message,{**message,"index_in_conv":5,"create_time":"1300"}],row))
+        self.assertIsNone(schedule.match_interrupted_submission([message],{**row,"prompt":"different"}))
+
+    async def test_interrupted_job_recovers_before_inspection_without_submit(self):
+        self.store.update("job",account="fixture",account_uuid="uuid-fixture",status="processing",
+                          phase="dispatching",dispatch_uncertain=1,submitted_at=1000)
+        submit=AsyncMock()
+        checks=AsyncMock(return_value={"kind":"completed","poll":{"videos":["fixture"]}})
+        with patch.object(schedule,"recover_interrupted_conversation",AsyncMock(return_value=("123",3))), patch.object(self.scheduler,"complete",AsyncMock()):
+            await self.drive(submit,checks)
+        submit.assert_not_awaited()
+        self.assertEqual(self.store.get("job")["conversation_id"],"123")
+        self.assertEqual(checks.call_args.args[0]["after_index"],3)
+
+    async def test_uncertain_inspection_errors_wait_and_stop_without_resubmitting(self):
+        self.store.update("job",account="fixture",conversation_id="123",
+                          status="queued",phase="checking",dispatch_uncertain=1)
+        observed=[]
+        async def inspect(row):
+            observed.append((self.now,row["error"]))
+            raise RuntimeError("proxy connection failed")
+        submit=AsyncMock()
+        await self.drive(submit,AsyncMock(side_effect=inspect))
+        submit.assert_not_awaited()
+        self.assertEqual([stamp for stamp,error in observed],[1000,1300,1600,1900])
+        self.assertEqual(observed[1][1],"proxy connection failed")
+        row=self.store.get("job")
+        self.assertEqual(row["status"],"needs_recovery")
+        self.assertEqual(row["check_round"],3)
+        self.assertEqual(row["dispatch_uncertain"],1)
+        self.assertEqual(row["conversation_id"],"123")
+        self.assertIsNone(row["next_check_at"])
+        self.assertIn("proxy connection failed",row["error"])
+
     def test_eta(self):
         samples=[
             ("**Dreamina Seedance** 25\u5206\u5f8c",1500),
@@ -77,6 +121,7 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
             ("**Dreamina Seedance** 3\u6642\u9593\u5206\u5f8c",10800),
             ("**Dreamina Seedance** \u9884\u8ba1 25\u5206\u949f",1500),
             ("**Dreamina Seedance** ready in 1 hour 30 minutes",5400),
+            ("動画は**Seedance 2.0 モデル**を使って生成されます。2 ポイントを消費して、5 分後に完成します。",300),
             ("**Dreamina Seedance**",1800)]
         for text,expected in samples:
             self.assertEqual(parse_eta([text])[0],expected,text)
@@ -293,18 +338,18 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(PendingTaskLimitExceeded):
             self.store.create("second","seedance-2.5","prompt","16:9",30,max_pending=1)
     async def test_local_references_survive_restart(self):
-        source=Path(self.tmp.name)/"image.png";source.write_bytes(b"fixture")
-        # Use the temp directory as cwd; task copies stay outside the workspace.
-        import os
-        previous=os.getcwd()
-        try:
-            os.chdir(self.tmp.name)
+        from image_library import ImageLibrary
+        from test_image_library import png
+        source=Path(self.tmp.name)/"image.png";source.write_bytes(png())
+        library=ImageLibrary(Path(self.tmp.name)/"library")
+        with patch("video_schedule.ImageLibrary",return_value=library):
             self.store.update("job",reference_images=json.dumps(["local://"+str(source)]))
             first=await self.scheduler.references(self.store.get("job"),{})
+            source.unlink()
             second=await VideoScheduler(self.store,self.pool).references(self.store.get("job"),{})
             self.assertEqual(first,second)
-            self.assertEqual(Path(second[0]).read_bytes(),b"fixture")
-        finally:os.chdir(previous)
+            self.assertEqual(Path(second[0]).read_bytes(),png())
+            self.assertEqual(Path(second[0]).parent,library.root)
 
 class QueueTests(unittest.IsolatedAsyncioTestCase):
     async def test_video_spacing_and_shared_capacity(self):

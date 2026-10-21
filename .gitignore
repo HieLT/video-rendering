@@ -33,6 +33,9 @@ dl_now.py
 # --- python ---
 __pycache__/
 .venv/
+.fc-proxy-venv/
+/fc-tls-session.keys
+/fc-market*.pcapng
 *.pyc
 
 # Local diagnostic browser sessions
@@ -63,3 +66,5 @@ downloads_unique/
 # SQLite snapshots also contain private account/task data
 *.sqlite3
 *.sqlite3-*
+.image_library/
+session_tracking.jsonl

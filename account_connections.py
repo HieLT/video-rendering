@@ -1,4 +1,5 @@
 """Local account routing. Credentials and assignments stay outside Git."""
+import config
 import json
 import os
 from pathlib import Path
@@ -28,6 +29,8 @@ def choices():
 
 
 def routing_snapshot():
+    if not config.PROXY_ENABLED:
+        return {'accounts': {}, 'connections': [DIRECT.copy()]}
     data = _read()
     # Read once for the account list, regardless of how many accounts/proxies exist.
     return {'accounts': dict(data['accounts']), 'connections':
@@ -36,12 +39,16 @@ def routing_snapshot():
 
 
 def validate(identifier):
+    if not config.PROXY_ENABLED and identifier != 'direct':
+        raise ValueError('Proxy routing is disabled; use direct connection')
     if identifier != 'direct' and identifier not in _read()['connections']:
         raise ValueError('Unknown or unavailable connection')
     return identifier
 
 
 def account_connection(account):
+    if not config.PROXY_ENABLED:
+        return 'direct'
     return _read()['accounts'].get(account, 'direct')
 
 
@@ -66,6 +73,8 @@ def _write(data):
 
 
 def import_proxies(text):
+    if not config.PROXY_ENABLED:
+        raise ValueError("Proxy routing is disabled project-wide")
     """Validate a whole paste before saving; errors never quote credentials."""
     if not isinstance(text, str) or len(text) > 200_000:
         raise ValueError('Nội dung proxy quá dài (tối đa 200.000 ký tự)')
@@ -147,6 +156,8 @@ def remove_proxy(identifier, existing_accounts):
 
 
 def distribute_proxies(accounts, busy, preview=False):
+    if not config.PROXY_ENABLED:
+        raise ValueError("Proxy routing is disabled project-wide")
     data = _read()
     identifiers = [key for key, entry in data['connections'].items()
                    if key != 'direct' and entry.get('server')]
@@ -195,6 +206,8 @@ def distribute_proxies(accounts, busy, preview=False):
 
 
 def browser_proxy(account):
+    if not config.PROXY_ENABLED:
+        return None
     data = _read()
     identifier = data['accounts'].get(account, 'direct')
     if identifier == 'direct':

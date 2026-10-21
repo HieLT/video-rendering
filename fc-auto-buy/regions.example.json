@@ -1,0 +1,22 @@
+{
+  "window_title": "FC ONLINE",
+  "coordinate_space": "client_relative",
+  "regions": {
+    "market_player_row": null,
+    "market_buy_button": null,
+    "player_name": null,
+    "market_rows": null,
+    "market_max_price": null,
+    "market_price_input": null,
+    "market_quantity": null,
+    "buy_button": null,
+    "cancel_button": null,
+    "status_success": null,
+    "status_failure": null
+  },
+  "pixel_checks": {
+    "ready": null,
+    "reset_marker": null
+  },
+  "notes": "Fill after calibration on the exact resolution and UI scale."
+}

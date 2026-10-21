@@ -26,16 +26,19 @@ async def run():
             page = await browser.new_page()
             await page.route("https://fixture.test/**", lambda route: route.fulfill(body="<html></html>", content_type="text/html"))
             await page.goto("https://fixture.test/")
-            async def classify(messages, after=0):
-                return await page.evaluate("""async ({source, messages, after}) => {
+            async def classify(messages, after=0, confirmed=False):
+                return await page.evaluate("""async ({source, messages, after, confirmed}) => {
                     const previous = globalThis.fetch;
                     globalThis.fetch = async () => ({ok:true, status:200, json:async () => ({downlink_body:{pull_singe_chain_downlink_body:{messages}}})});
-                    try { return await (eval('(' + source + ')'))({conversationId:'fixture', afterIndex:after}); }
+                    try { return await (eval('(' + source + ')'))({conversationId:'fixture', afterIndex:after, confirmedSubmission:confirmed}); }
                     finally { globalThis.fetch = previous; }
-                }""", {'source': POLL_JS, 'messages': messages, 'after': after})
+                }""", {'source': POLL_JS, 'messages': messages, 'after': after, 'confirmed':confirmed})
             cases = [
                 ('English confirmation', [user(), reply(EN)], True, False),
                 ('Japanese confirmation', [user(), reply(JA)], True, False),
+                ('Seedance without Dreamina', [user(), reply(JA.replace('Dreamina ', ''))], True, False),
+                ('Seedance 2.0 Japanese confirmation', [user(), reply('動画は**Seedance 2.0 モデル**を使って生成されます。2 ポイントを消費して、5 分後に完成します。完成次第お知らせします。本日はまだ 0 動画クレジットが残っています。')], True, False),
+                ('unbolded Seedance', [user(), reply('Seedance 2.0 failed')], False, True),
                 ('unbolded model', [user(), reply('Dreamina Seedance 2.5 failed')], False, True),
                 ('generic error', [user(), reply('An error occurred. Please try again.')], False, True),
                 ('still streaming despite finished block', [user(), reply('Error', done=False)], False, False),
@@ -52,6 +55,9 @@ async def run():
                 assert result['accepted'] == accepted, (name, result)
                 assert bool(result['rejection']) == retry, (name, result)
                 print('PASS', name, flush=True)
+            recovered = await classify([user(), reply(JA.replace('Dreamina ', '')), user(3), reply('Daily limit reached', index=4)], after=1, confirmed=True)
+            assert recovered['accepted'] and not recovered['rejection']
+            print('PASS confirmed recovery survives accidental duplicate requests')
             blocked = reply('Translated text is irrelevant', index=7,
                             ext={'is_finish':'1', 'ai_creation_res_code':'710082022'})
             result = await classify([user(), reply(EN), blocked])

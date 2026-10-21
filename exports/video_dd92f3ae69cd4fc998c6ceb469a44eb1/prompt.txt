@@ -1,0 +1,85 @@
+=== REF ===
+
+@Image5 = This is a reference image for the video summary; use it to generate a text prompt for the video, but do not use this specific color style for the video itself.
+
+Keep the same character designs, battlefield, factions, and visual continuity.
+
+@Image2 wear red armor and are @Image4’s enemies.
+
+@Image3 wear blue / teal armor and are @Image4’s allies.
+
+
+=== TECHNICAL ===
+
+Realistic movement and grounded sword combat.
+
+No subtitles.
+No background music.
+
+No Wind Cut.
+
+The wind effect should feel realistic and physical, not magical or anime.
+
+The wind should come directly from @Image4’s sword swing as one strong forward-moving stream of pale blue-gray wind.
+
+
+=== PREVIOUS VIDEO ===
+
+The previous video ends with @Image4 leaving the Ionian mountain training courtyard alone.
+
+He disappears down the forest road.
+
+This video begins later, after the battle has already started.
+
+
+=== VIDEO SUMMARY ===
+
+Here is the environment: @Image1
+
+@Image5 is the visual summary of this video. This is a reference image for the video summary; use it to generate a text prompt for the video, but do not use this specific color style for the video itself.
+
+The purpose of this video is to show @Image4 entering an ongoing battle and protecting @Image3 from a volley of arrows.
+
+@Image4 creates a single stream of wind from his sword swing.
+
+That wind neutralizes the incoming arrows.
+
+After stopping the arrows, @Image4 signals @Image3 to charge, and both armies rush into close combat.
+
+
+=== SCENES ===
+
+Shot 1
+
+Wide view of the battlefield.
+
+@Image3 stand on the left side of the field.
+
+@Image2 stand on the right side of the field.
+
+Both armies face each other across the battlefield.
+
+@Image2 raise their bows and release a large volley of arrows toward @Image3.
+
+
+Shot 2
+
+@Image4 appears at the front of @Image3.
+
+He swings his sword and creates one strong forward-moving stream of pale blue-gray wind.
+
+The wind travels from @Image4’s sword toward the incoming arrows and neutralizes them in midair.
+
+Do not show a fake solid wall.
+
+It should look like a powerful flowing wind force created by the sword swing.
+
+After the arrows are stopped, @Image4 shouts and signals @Image3 to charge forward.
+
+@Image3 rush forward from the left.
+
+@Image2 rush forward from the right.
+
+Both armies collide in close combat.
+
+End immediately.

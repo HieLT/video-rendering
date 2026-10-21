@@ -37,6 +37,32 @@ class RequestModeTests(unittest.IsolatedAsyncioTestCase):
     async def assign(self, task):
         return await self.scheduler.account(self.store.get(task))
 
+    async def test_usage_only_after_received_video_and_once_on_retry(self):
+        await self.assign('first')
+        async def dispatched(*args, **kwargs):
+            kwargs['on_submit']()
+            return {'kind': 'accepted', 'poll': {}}
+        with patch('video_schedule.worker.generate_video', side_effect=dispatched):
+            await self.scheduler.submit(self.store.get('first'), [])
+        self.assertEqual(self.pool.used_today('fixture'), 0)
+        self.store.update('first', result_url='https://fixture/video.mp4')
+        with patch('video_schedule._download', side_effect=TimeoutError('download failed')):
+            with self.assertRaises(TimeoutError):
+                await self.scheduler.download(self.store.get('first'))
+        self.assertEqual(self.pool.used_today('fixture'), 0)
+        self.assertNotEqual(self.store.get('first')['status'], 'completed')
+        local = Path(self.tmp.name) / 'received.mp4'
+        async def received(*args):
+            local.write_bytes(b'video fixture')
+            return local
+        with patch('video_schedule._download', side_effect=received):
+            await self.scheduler.download(self.store.get('first'))
+            self.assertEqual(self.store.get('first')['status'], 'completed')
+            self.assertEqual(self.pool.used_today('fixture'), 1)
+            # A repeated completion after recovery cannot count the same task twice.
+            await self.scheduler.download(self.store.get('first'))
+        self.assertEqual(self.pool.used_today('fixture'), 1)
+
     async def test_prefer_unused_account_and_preserve_assigned_account(self):
         name = 'zz_unused'
         (self.pool.accounts_dir / name).mkdir()
@@ -172,9 +198,9 @@ class RequestModeTests(unittest.IsolatedAsyncioTestCase):
         self.scheduler.claim_once(self.store.get('second'))
         self.assertEqual(self.pool.used_today('fixture'), 2)
         self.store.update('third', account='fixture')
-        with self.assertRaises(AccountLimitedError):
-            self.scheduler.claim_once(self.store.get('third'))
-        self.assertEqual(self.pool.used_today('fixture'), 2)
+        # A video already received must be counted even if the admission quota is full.
+        self.scheduler.claim_once(self.store.get('third'))
+        self.assertEqual(self.pool.used_today('fixture'), 3)
 
     async def test_existing_usage_leaves_only_one_quota_slot(self):
         self.assertTrue(await self.assign('first'))
@@ -228,7 +254,7 @@ class RequestModeTests(unittest.IsolatedAsyncioTestCase):
             if key != 'fixture-admin':
                 raise HTTPException(401, 'Unauthorized')
         namespace = dict(app=FastAPI(), BaseModel=BaseModel, Field=Field, Header=Header,
-                         _admin_auth=auth, scheduler=self.scheduler, pool=self.pool, JOBS={})
+                         _admin_auth=auth, scheduler=self.scheduler, pool=self.pool, JOBS={}, DOMAIN_WEB_QUEUE=None)
         exec(compile(ast.Module(body=selected, type_ignores=[]), 'server.py', 'exec'), namespace)
         return TestClient(namespace['app'])
 

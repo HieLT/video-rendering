@@ -1,0 +1,210 @@
+{
+  "run_id": "film_c58b98aca1cd44848b89014a97e150b4",
+  "title": "B?c Tranh Th? T?",
+  "references": [
+    {
+      "reference_id": "JHIN_TRAVELER",
+      "artifact_id": "artifact_4c72ad4945174faab97cb21ab02b40ad",
+      "image_id": "a594ad76692fcf6dc17b8f6bb8b9003728c29ee31b92f6982dd658f995666fc5",
+      "file": "JHIN_TRAVELER.png"
+    },
+    {
+      "reference_id": "MIRA",
+      "artifact_id": "artifact_148eb625a96c4c60babbdccd350e7764",
+      "image_id": "f110d3f9dc531ded58c18196b1046cf81943248995dec45c669e39ab4f1cc944",
+      "file": "MIRA.png"
+    },
+    {
+      "reference_id": "MASTER_VEY",
+      "artifact_id": "artifact_bc69ecd0e3594f228fbcbfb3dffa0c34",
+      "image_id": "6111728970facb30a4a7793283fc1f560cd58007286a0692fc37ed36ff329b0a",
+      "file": "MASTER_VEY.png"
+    },
+    {
+      "reference_id": "MASTER_NAMI",
+      "artifact_id": "artifact_ab80b6a4f53445b2b968260514040cfb",
+      "image_id": "e65efc07e749c569728dbdc7c847346c177d364b0ad5c2f4a0ab89332a14f7d6",
+      "file": "MASTER_NAMI.png"
+    },
+    {
+      "reference_id": "MASTER_TOVAN",
+      "artifact_id": "artifact_d239fe78a95d4895b8ddd867d76448fc",
+      "image_id": "8b4414cf1193d89d80c092368f7b374c13d7a075e4e72d577d5d2134f400cf64",
+      "file": "MASTER_TOVAN.png"
+    },
+    {
+      "reference_id": "THEATER_ASSISTANTS",
+      "artifact_id": "artifact_3992f99d16474d22b47f769470731c40",
+      "image_id": "70e1314215b474f6d3d5da0ad80bc64d9e8c574a11dec3d9b738f68cef110c86",
+      "file": "THEATER_ASSISTANTS.png"
+    },
+    {
+      "reference_id": "KOYEHN_PAST",
+      "artifact_id": "artifact_26f70fff25114ce29482cdd0c2744c0e",
+      "image_id": "5f330c2fc4c38780427210ffd0c7bd6642caf39efbe7fdb46d71dc882fd24daa",
+      "file": "KOYEHN_PAST.png"
+    },
+    {
+      "reference_id": "KOYEHN_RUINS",
+      "artifact_id": "artifact_c6999773514543bd9c291a4eb2a23af2",
+      "image_id": "af6e4d45b8395ac40c530e033776c504847eb5e3a16a66278b23fe365d2c3b8f",
+      "file": "KOYEHN_RUINS.png"
+    },
+    {
+      "reference_id": "TEMPLE_RITUAL_ROOM",
+      "artifact_id": "artifact_3dcddcc52c9747a89909efd501fd0801",
+      "image_id": "9cee808ad9a49890dc1c6bd58e9086792768f04e23085eecae7aa69f41b126d7",
+      "file": "TEMPLE_RITUAL_ROOM.png"
+    },
+    {
+      "reference_id": "TEMPLE_FIRE_DAMAGE",
+      "artifact_id": "artifact_998d78feca8e476e9aad3a8a28e2996d",
+      "image_id": "70b96ab6b9e3b003b0d8126d5db7460928171b23279e0d2073188ed718d48a89",
+      "file": "TEMPLE_FIRE_DAMAGE.png"
+    },
+    {
+      "reference_id": "LOTUS_PETAL",
+      "artifact_id": "artifact_ad7798fa2bea4de1b63fb82890c23938",
+      "image_id": "0cb8af24c7c87ee626733a3b8d46522d69609c2781d6f01b7517c9f10eef94ed",
+      "file": "LOTUS_PETAL.png"
+    },
+    {
+      "reference_id": "HWEI_BURNT_PALETTE",
+      "artifact_id": "artifact_7d99509cfede4e54a0fefb6303690b47",
+      "image_id": "a5bc51e1a189f8c1b6c59aaa0a7ad76340bb80bab4c3492384106c081b8f035f",
+      "file": "HWEI_BURNT_PALETTE.png"
+    },
+    {
+      "reference_id": "RED_PIGMENT_CRATE",
+      "artifact_id": "artifact_acf1297ca7944edebd221f7009451ea8",
+      "image_id": "df7ff97815dc88fb6aaeaf9b24ceaf6a05c1fd8da3612acd0eb96331e2417ab2",
+      "file": "RED_PIGMENT_CRATE.png"
+    },
+    {
+      "reference_id": "THEATER_FRAMES_ACTIVE",
+      "artifact_id": "artifact_666f7f14ebeb4793832b1c90f6b0a03a",
+      "image_id": "45e4ab2e08df55c9276630df154156568f7f307f2ccbe718c2c00e51fcad5432",
+      "file": "THEATER_FRAMES_ACTIVE.png"
+    },
+    {
+      "reference_id": "THEATER_FRAMES_COLLAPSE",
+      "artifact_id": "artifact_1d0a9b8304494789a52e3b90e3e38fea",
+      "image_id": "b1d5471052dd8fb7f5c1c5d0634b54e8b11892c65e69d71c5521551615350acb",
+      "file": "THEATER_FRAMES_COLLAPSE.png"
+    },
+    {
+      "reference_id": "THEATER_BASEMENT",
+      "artifact_id": "artifact_de6c54feacee49e8b6f75f68773cd326",
+      "image_id": "5e7583d5d7e9cec1d267df9d6e1c8508ff4e818c7aa9b8454ac813fb6b8a91ea",
+      "file": "THEATER_BASEMENT.png"
+    },
+    {
+      "reference_id": "HWEI_MAGIC",
+      "artifact_id": "artifact_3079bdb3ab194b3e9b0d3b79e86a0f72",
+      "image_id": "5005309acea0ca5a053e5ace483e8ebbaacb6341c9256183b5e7a485ed958541",
+      "file": "HWEI_MAGIC.png"
+    },
+    {
+      "reference_id": "KOYEHN_FUTURE_PAINTING",
+      "artifact_id": "artifact_888e87d155ae4ebaa93685eeb2d51a94",
+      "image_id": "56e1b31f9742bf7c6dd274e2abaab4229234cc39a590e1060b6ba164cefb7b39",
+      "file": "KOYEHN_FUTURE_PAINTING.png"
+    },
+    {
+      "reference_id": "HWEI_PAST",
+      "artifact_id": "artifact_25d811fe081e47389e049d638e39b18b",
+      "image_id": "cf23b61b82e46fd3de58ff5f75adfbbeaa911427a60c5a73d15bb14418c1f000",
+      "file": "HWEI_PAST.png"
+    },
+    {
+      "reference_id": "HWEI_PRESENT",
+      "artifact_id": "artifact_d89f601a350e4274a9b881f745a33fd5",
+      "image_id": "c1bb2e8c7ae7f191ff1d70b5a4904f305f008fd22d9b0e0874338346ed9a708c",
+      "file": "HWEI_PRESENT.png"
+    },
+    {
+      "reference_id": "JHIN_MASK_BROKEN",
+      "artifact_id": "artifact_f56054ff4bca4f8eac25a8edeebe6b63",
+      "image_id": "e7fb63f0d77792f79919707fab88a89f4a6f944cae0c1a0b850d2bc2e218b04e",
+      "file": "JHIN_MASK_BROKEN.png"
+    },
+    {
+      "reference_id": "JHIN_THEATER",
+      "artifact_id": "artifact_0d210d1f5e614cd598bbdfc804a304b8",
+      "image_id": "df64ea5e09d44af1767d45c5fa97c36e6ddb97a604c9e0c14e030e01d472ad1f",
+      "file": "JHIN_THEATER.png"
+    },
+    {
+      "reference_id": "TEMPLE_FOUR_PAINTINGS",
+      "artifact_id": "artifact_b6510289043c47a6820b19d1531122e1",
+      "image_id": "203db08c9e4f5aaa87d304ec0449c0aab57609255f39f1e887943b29010a39da",
+      "file": "TEMPLE_FOUR_PAINTINGS.png"
+    },
+    {
+      "reference_id": "MILL_TOWN",
+      "artifact_id": "artifact_1f63e66a3a0d4c998c20e4ab030e64b2",
+      "image_id": "e883dbd6a2329baf298a7248c0cc3ba5ff7490f59fe5ef07db299b78499cd14b",
+      "file": "MILL_TOWN.png"
+    },
+    {
+      "reference_id": "JHIN_BULLETS",
+      "artifact_id": "artifact_fa3acb5b63984ea3a7f2e15b05b34d71",
+      "image_id": "c9759af034b7dc2c0d05bd5d66138f7dbc60c427bfa164405943bc18dcb15cad",
+      "file": "JHIN_BULLETS.png"
+    },
+    {
+      "reference_id": "THEATER_HOSTAGES",
+      "artifact_id": "artifact_35d69078949c4e42be88f4d179689a89",
+      "image_id": "9a78707bac07c8b739f6d4a4e8f5e60dd5968553572378ed5de5931da41941b2",
+      "file": "THEATER_HOSTAGES.png"
+    },
+    {
+      "reference_id": "STYLE_FILM",
+      "artifact_id": "artifact_30209e9efc0445bf9748c8bdb76ad02a",
+      "image_id": "44b07653365dd2c4e31949a36349421bb62f17fba38c1e9b3bd6486920ab327d",
+      "file": "STYLE_FILM.png"
+    },
+    {
+      "reference_id": "THEATER_BALCONY",
+      "artifact_id": "artifact_96f5397a29c8405db93c127fa08d03b3",
+      "image_id": "fe9a53b22601b34e2d227f03aa15b24d21bcdd21322dbf9a78dcdb08408d4159",
+      "file": "THEATER_BALCONY.png"
+    },
+    {
+      "reference_id": "THEATER_LAYOUT",
+      "artifact_id": "artifact_45b652abf6494a02baf4d1c2c09c092c",
+      "image_id": "d32f9c975d618585ae66d0c3557c13f655b8f409381743ae9ebd69597ca88c9d",
+      "file": "THEATER_LAYOUT.png"
+    },
+    {
+      "reference_id": "THEATER_FRAMES_DARK",
+      "artifact_id": "artifact_eb7038d32e014cbf9233842b3a5725ac",
+      "image_id": "fa81e341dc9b90018c1279306d8e8dabc07a965255f78d77534c66623eb1e676",
+      "file": "THEATER_FRAMES_DARK.png"
+    },
+    {
+      "reference_id": "MASTER_SORA",
+      "artifact_id": "artifact_3691e91786284de1b49c40c8d125e754",
+      "image_id": "2becfc7efbb52db463a513e4c10aec0cbaf0d7d642c08dee046e67a4e8283b32",
+      "file": "MASTER_SORA.png"
+    },
+    {
+      "reference_id": "TEMPLE_ART_STUDIO",
+      "artifact_id": "artifact_7ffe8f1d6272445e8103ec01c90b091c",
+      "image_id": "439b7ed39be63bcb81f5dad1eda233b3a85350bdbe0d49870917ec104aea1aec",
+      "file": "TEMPLE_ART_STUDIO.png"
+    },
+    {
+      "reference_id": "TEMPLE_TRAP_STATE",
+      "artifact_id": "artifact_cadaf299671b4e0eaba87fc615c65db8",
+      "image_id": "65909b4ae33dfe5c5adf44144a1b3a6b065a1c2ee2482d6cb85f3a2cf16cdf30",
+      "file": "TEMPLE_TRAP_STATE.png"
+    },
+    {
+      "reference_id": "THEATER_EXTERIOR",
+      "artifact_id": "artifact_fb31faac4318445b8d5f91c720061e71",
+      "image_id": "4333c56d8c651354e8c344e7be2b029a57db9367d73f62896e3cd260e6130e23",
+      "file": "THEATER_EXTERIOR.png"
+    }
+  ]
+}

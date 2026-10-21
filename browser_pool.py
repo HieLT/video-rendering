@@ -1,3 +1,4 @@
+from account_risk import AccountRiskBlockedError
 """Browser Account Pool: Manages accounts/ profiles with concurrency control and daily limits."""
 import asyncio
 from collections import deque
@@ -236,6 +237,20 @@ class BrowserPool:
         last = self._meta(account)["last_used_at"] or row["last_used_at"]
         return row["used"] if last and time.time() < last + 86400 else 0
 
+    def reset_renewed_account_usage(self, account: str):
+        """Reset local quota only after renewal has produced a verified active session."""
+        meta = self._meta(account)
+        if not meta or meta["auth_state"] != "active" or meta["login_ok"] != 1:
+            raise RuntimeError("Renewed account must be verified before resetting usage")
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO account_usage(uuid, used, last_used_at) VALUES (?, 0, 0) "
+                "ON CONFLICT(uuid) DO UPDATE SET used=0, last_used_at=0", (meta["uuid"],))
+            self._conn.execute(
+                "UPDATE accounts_meta SET rate_limited_until=0, limit_reason='', "
+                "quota_blocked_until=0, quota_reason='', cooldown_until=0, "
+                "credit_balance=NULL, credit_checked_at=0 WHERE name=?", (account,))
+
     def _claim(self, account: str):
         used = self.used_today(account)
         now = time.time()
@@ -271,7 +286,7 @@ class BrowserPool:
         used = self.used_today(account)
         now = time.time()
         with self._conn:
-            self._conn.execute("UPDATE account_usage SET used=?, last_used_at=? WHERE uuid=?", (max(used, DAILY_LIMIT), now, self.account_uuid(account)))
+            self._conn.execute("UPDATE account_usage SET used=?, last_used_at=? WHERE uuid=?", (used, now, self.account_uuid(account)))
             self._conn.execute(
                 "UPDATE accounts_meta SET last_used_at=?, rate_limited_until=?, limit_reason=? WHERE name=?",
                 (now, now + 86400, reason[:300], account),
@@ -604,6 +619,8 @@ class BrowserPool:
                             (time.time(), account))
                         self._conn.commit()
                         return result
+                    except AccountRiskBlockedError:
+                        raise  # Never rotate accounts or retry a risk-blocked submission.
                     except CreditInsufficientError as e:
                         _log(f"[pool] {account} insufficient points before generation, skipping: {e}")
                         self._mark_quota_blocked(account, str(e))
@@ -616,7 +633,7 @@ class BrowserPool:
                         continue
                     except CreditError as e:
                         _log(f"[pool] {account} out of quota, rotating: {e}")
-                        self._claim(account)
+                        self._mark_quota_blocked(account, str(e))
                         last_err = e
                         continue
                     except RiskControlError as e:
@@ -627,15 +644,8 @@ class BrowserPool:
                         self._conn.commit()
                         last_err = e
                         continue
-                    except TimeoutError as e:
-                        # Setup failures consume no generation. After an Enter
-                        # attempt, conservatively count it and never auto-resubmit.
-                        if submit_attempted:
-                            self._claim(account)
-                            self._conn.execute(
-                                "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
-                                (time.time(), account))
-                            self._conn.commit()
+                    except TimeoutError:
+                        # No received video: do not increment usage or resubmit here.
                         raise
                     except FileNotFoundError as e:
                         _log(f"[pool] {account} profile missing, skipping: {e}")

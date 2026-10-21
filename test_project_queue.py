@@ -384,7 +384,7 @@ class ProjectTests(unittest.TestCase):
         request=self.ns['VideoGenRequest'](prompt='forest',reference_images=['uploaded://fixture'])
         response=asyncio.run(self.ns['_submit_video'](request,self.client_policy))
         task=self.store.get(response.id);self.store.update(response.id,status='stopped')
-        copies=[Path(value[8:]) for value in json.loads(task['reference_images'])]
+        copies=[self.ns['image_library'].path(value[10:]) for value in json.loads(task['reference_images'])]
         self.assertTrue(copies)
         with self.assertRaises(asyncio.CancelledError):
             asyncio.run(self.runner(task['id'],task['model'],task['prompt'],task['ratio'],task['duration'],json.loads(task['reference_images']),self.client_policy))

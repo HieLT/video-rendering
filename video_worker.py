@@ -1,3 +1,4 @@
+from account_risk import check_risk
 """Video worker: in-page fetch submission and /im/chain/single polling."""
 import asyncio
 import base64
@@ -24,7 +25,7 @@ class GenerationRejectedError(RuntimeError):
 
 # Poll /im/chain/single for video status
 POLL_JS = r"""
-async ({conversationId, msToken, fp, afterIndex = 0}) => {
+async ({conversationId, msToken, fp, afterIndex = 0, confirmedSubmission = false}) => {
   // Current protocol: uplink_body.pull_singe_chain_uplink_body
   const params = new URLSearchParams({
     version_code: "20800", language: "ja", device_platform: "web",
@@ -71,7 +72,8 @@ async ({conversationId, msToken, fp, afterIndex = 0}) => {
   const latestUserIndex = Math.max(0, ...allMessages
     .filter(m => Number(m.user_type) === 1).map(m => Number(m.index_in_conv) || 0));
   // Ignore previous submissions, including while the new message is in flight.
-  const boundary = Math.max(afterIndex, latestUserIndex);
+  // Recovery can pin a confirmed submission before accidental duplicate requests.
+  const boundary = confirmedSubmission ? afterIndex : Math.max(afterIndex, latestUserIndex);
   const messages = allMessages.filter(m => !boundary || Number(m.index_in_conv) > boundary);
   const parseBlocks = msg => {
     let blocks = msg.content;
@@ -100,7 +102,7 @@ async ({conversationId, msToken, fp, afterIndex = 0}) => {
     for (const text of messageTexts) {
       // English/Japanese confirmation: the model name is inside bold markup.
       const bold = [...text.matchAll(/\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi)];
-      if (bold.some(m => /Dreamina\s+Seedance\b/i.test(m[1] || m[2] || m[3] || ""))) accepted = true;
+      if (bold.some(m => /\b(?:Dreamina\s+)?Seedance\b/i.test(m[1] || m[2] || m[3] || ""))) accepted = true;
     }
     // Some delayed copyright refusals contain only text, without tool error metadata.
     // Match a complete refusal sentence, not keywords in the echoed user prompt.
@@ -258,11 +260,13 @@ async def generate_video(account: str, prompt: str, ratio: str = "9:16",
                 {"prompt": prompt, "ratio": ratio, "duration": duration,
                  "msToken": ms_token, "fp": fp},
             ), timeout=180)
+            check_risk(context)
             conv_id = _check_submit(result)
             print(f"[{account}] Accepted conversation_id={conv_id}, polling for video...", flush=True)
 
             start = time.time()
             while time.time() - start < timeout:
+                check_risk(context)
                 await asyncio.sleep(5)
                 try:
                     poll = await asyncio.wait_for(page.evaluate(

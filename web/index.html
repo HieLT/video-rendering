@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Video Rendering Admin Dashboard</title>
+<link rel="stylesheet" href="/image-studio.css?v=20261012-multiple-1">
 <style>
 :root{--bg:#f2f5f4;--card:#fff;--line:#e5e9e8;--text:#1f2a28;--sub:#7a8a86;--accent:#00a870;--accent-d:#008e5d;--red:#e5484d;--orange:#f59e0b;--blue:#3b82f6;--gray:#9aa8a4}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -18,10 +19,12 @@ nav{display:flex;gap:4px;padding:12px 20px 0;border-bottom:1px solid var(--line)
 nav button{border:none;background:none;padding:10px 16px;font-size:14px;color:var(--sub);cursor:pointer;border-bottom:2px solid transparent}
 nav button.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
 main{padding:20px;max-width:1180px;margin:0 auto}
+main:has(#tab-tasks:not([style*="display:none"]):not([style*="display: none"])){max-width:none}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
 .card h3{font-size:14px;margin-bottom:14px;font-weight:600}
-.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:16px}
 .stat{padding:16px;border-radius:12px;color:#fff;display:flex;flex-direction:column;gap:6px}
+.s5{background:linear-gradient(135deg,#0891b2,#0e7490)}.s6{background:linear-gradient(135deg,#8b5cf6,#6d28d9)}
 .stat .v{font-size:28px;font-weight:700}
 .stat .l{font-size:13px;opacity:.85}
 .s1{background:linear-gradient(135deg,#00b875,#00945f)}.s2{background:linear-gradient(135deg,#e5484d,#b93237)}
@@ -145,22 +148,22 @@ main.accounts-view{max-width:1440px}
 #tasksTable tbody.batch-collapsed .task-row{display:none}
 #tasksTable tbody.batch-collapsed .batch-heading td{border-bottom:2px solid #81b9a7}
 #tasksTable tbody.batch-gap td{height:16px;padding:0;border:0;background:var(--bg,#f5f8f7)}
-#tasksTable table{table-layout:fixed;min-width:900px;width:100%}
+#tasksTable table{table-layout:fixed;min-width:1480px}
 #tasksTable th,#tasksTable td{padding:12px 6px;overflow-wrap:normal}
 #tasksTable th{background:#f8faf9;font-size:11px;letter-spacing:.2px}
 #tasksTable tbody tr:hover{background:#fafcfb}
-#tasksTable .task-row>td{background:#fff}
-#tasksTable .task-row.row-gray>td{background:#f1f3f4}
-#tasksTable .task-row:hover>td{background:#e8efec}
-#tasksTable th:first-child{width:30px}
-#tasksTable th:nth-child(2){width:120px}
-#tasksTable th:nth-child(3){width:auto}
-#tasksTable th:nth-child(4){width:65px}
-#tasksTable th:nth-child(5){width:65px}
-#tasksTable th:nth-child(6){width:105px}
-#tasksTable th:nth-child(7){width:100px}
-#tasksTable th:nth-child(8){width:110px}
-#tasksTable th:last-child{width:170px}
+#tasksTable th:first-child{width:62px}
+#tasksTable th:nth-child(2){width:150px}
+#tasksTable th:nth-child(3){width:240px}
+#tasksTable th:nth-child(4){width:240px}
+#tasksTable td:nth-child(4){overflow-wrap:anywhere}
+#tasksTable th:nth-child(5){width:110px}
+#tasksTable td:nth-child(5){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tasksTable th:nth-child(6){width:65px}
+#tasksTable th:nth-child(7){width:170px}
+#tasksTable th:nth-child(8){width:130px}
+#tasksTable th:nth-child(9){width:125px}
+#tasksTable th:last-child{width:190px}
 .task-id{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:0;background:transparent;padding:4px 0;color:#52615d;font:12px ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;text-align:left}
 .task-id:hover{color:var(--accent)}
 #tasksTable .video-wrap{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -277,6 +280,36 @@ main.accounts-view{max-width:1440px}
 /* Task search */
 .task-list-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
 .task-list-heading h3{margin:0}
+.task-pagination{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:0 0 16px;padding:14px 0;border-bottom:1px solid var(--line)}
+.task-pagination label{display:flex;align-items:center;gap:8px}
+.task-pagination select{width:auto;min-height:36px;padding:6px 28px 6px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);font:inherit}
+.task-page-controls,.task-batch-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.task-page-controls>label{margin-right:12px}
+.task-pagination .btn{min-height:36px;padding:7px 12px}
+.task-pagination .btn:disabled{opacity:.4;cursor:default}
+.task-pagination :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+#taskPageInfo{min-width:90px;text-align:center;font-variant-numeric:tabular-nums;color:var(--text)}
+.task-page-jump{display:flex;align-items:center;gap:6px;margin:0}
+#taskPageInput{width:70px;min-height:36px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);font:inherit;text-align:center;font-variant-numeric:tabular-nums}
+.task-batch-controls{padding:4px;background:#f1f5f3;border:1px solid var(--line);border-radius:10px;gap:4px}
+.task-batch-controls .btn{border:0;background:transparent;box-shadow:none}
+.task-batch-controls .btn:hover{background:#fff}
+.task-list-heading p{margin:6px 0 0;color:var(--sub);font-size:12px;line-height:1.5}
+.task-list-heading h3{font-size:18px;letter-spacing:-.3px}
+#taskSearchSummary{padding-top:12px;border-top:1px solid var(--line);font-weight:500;color:var(--text)}
+.task-search-panel input[type=datetime-local]{min-height:36px;padding:8px 10px;border:1px solid #d8e2de;border-radius:8px;background:#fff;color:var(--text);font:inherit;max-width:100%;min-width:0}
+#tasksTable{border:1px solid var(--line);border-radius:12px}
+#tasksTable tbody.batch-group td:first-child{border-left:0}
+#tasksTable tbody.batch-group td:last-child{border-right:0}
+#tasksTable tbody.batch-group tr:last-child td{border-bottom:1px solid #d8e7df}
+#tasksTable tbody.batch-group .batch-heading td{border-top:1px solid #d8e7df;background:#f0f7f3;padding:14px 16px}
+#tasksTable tbody.batch-collapsed .batch-heading td{border-bottom:1px solid #d8e7df}
+#tasksTable .batch-heading-content{display:flex;align-items:center;gap:16px}
+#tasksTable .batch-toggle{flex:1;min-width:0;width:auto}
+#tasksTable .batch-toggle>span{font-size:12px;color:var(--sub);padding-left:22px}
+#tasksTable .batch-arrow{display:inline-block;width:18px;color:var(--accent);font-size:11px}
+#tasksTable .batch-heading-content>.btn{flex-shrink:0;background:#fff}
+@media(max-width:700px){.task-pagination{align-items:stretch;gap:12px}.task-page-controls{width:100%;justify-content:space-between;gap:6px}.task-page-controls>label{width:100%;margin:0 0 4px;justify-content:space-between}.task-batch-controls{width:100%}.task-batch-controls .btn{flex:1}.task-list-heading{align-items:flex-start}}
 .task-search-panel{padding:16px;margin-bottom:16px;border:1px solid var(--line);border-radius:12px;background:#f8faf9}
 .task-search-main{display:flex;gap:10px;margin-bottom:12px}
 .task-search-input{display:flex;align-items:center;gap:10px;flex:1;min-width:0;padding:0 12px;background:#fff;border:1px solid #d8e2de;border-radius:9px;color:var(--sub)}
@@ -323,7 +356,110 @@ main.accounts-view{max-width:1440px}
 .project-scene .project-scene-summary{font-size:15px;line-height:1.5;white-space:pre-wrap;margin:8px 0;color:var(--text)}
 .project-scene-summary.collapsed{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .project-summary-empty{opacity:.65;font-size:12px}
-</style>
+#tasksTable .task-selection{display:flex;align-items:center;gap:8px}
+#tasksTable .favorite-toggle,#tasksTable .favorite-placeholder{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:24px;height:24px;flex:0 0 24px}
+#tasksTable .favorite-toggle{padding:0;border:1px solid var(--border);border-radius:4px;background:var(--surface,#fff);color:var(--muted,#64748b);font-size:17px;line-height:1;cursor:pointer}
+#tasksTable .favorite-toggle:disabled{opacity:.5;cursor:wait}
+#tasksTable .favorite-toggle.is-favorite{color:#805500;background:#fff3c4;border-color:#e7be52}
+
+/* Shared styling for dashboard, image library and account reassignment. */
+.cards{grid-template-columns:repeat(3,minmax(0,1fr))}
+.stat{position:relative;background:#fff;color:var(--text);border:1px solid var(--line);border-top:3px solid var(--stat-color);padding:20px;gap:8px;box-shadow:0 3px 12px #193c2805}
+.stat.s1{--stat-color:#00945f}.stat.s2{--stat-color:#d34750}.stat.s3{--stat-color:#3678da}.stat.s4{--stat-color:#b97b16}.stat.s5{--stat-color:#078da3}.stat.s6{--stat-color:#8255c7}
+.stat .v{font-size:30px;letter-spacing:-1px;font-variant-numeric:tabular-nums;color:var(--stat-color)}
+.stat .l{font-size:12px;font-weight:600;color:#586b64;opacity:1}
+.stat .stat-note{font-size:12px;color:var(--sub);line-height:1.5}
+.image-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+.image-actions .btn,.image-actions .frame-pick{margin:0;min-height:38px;flex:1;padding:9px 12px;border-radius:9px}
+.library-open{background:#edf7f2;border:1px solid #c9e5d8;color:#177650;font-weight:600}
+.reference-drop>.library-open{align-self:stretch;min-height:100px;min-width:130px;border-style:dashed}
+#librarySaveStatus{margin-bottom:12px;padding:9px 12px;background:#eff7f3;border-radius:8px;color:#356c54;line-height:1.5}
+#librarySaveStatus:empty{display:none}
+.dialog .box.library-dialog{width:820px;padding:26px;box-shadow:0 24px 90px #10291d33}
+.dialog .box.switch-dialog{width:520px;padding:26px}
+.dialog .dialog-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+.dialog .dialog-heading h2{font-size:20px;margin-bottom:6px}
+.dialog-description{color:#6a7c74;font-size:13px;line-height:1.6}
+.dialog-close{font-size:22px;line-height:1;padding:6px 10px}
+.library-toolbar{background:#f6f9f7;padding:12px;border:1px solid var(--line);border-radius:10px;margin-bottom:14px}
+.library-toolbar input{background:white;min-height:40px}
+.library-toolbar .tiny{margin-top:8px;line-height:1.5}
+.library-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;max-height:48vh;overflow:auto;padding:3px;min-height:140px}
+.library-card{min-width:0;border:1px solid var(--line);border-radius:12px;background:white;overflow:hidden}
+.library-card:has([aria-pressed=true]){border-color:#169968;box-shadow:0 0 0 2px #16996822}
+.library-choice{position:relative;display:block;width:100%;padding:8px;border:0;border-radius:0;text-align:left;white-space:normal}
+.library-choice img{width:100%;height:125px;object-fit:contain;background:#f1f4f2;border-radius:7px;display:block}
+.library-choice .library-name{margin-top:9px;font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.library-choice[aria-pressed=true]{background:#edf8f2;color:#176a4a}
+.library-order{position:absolute;right:14px;top:14px;background:#118957;color:white;width:24px;height:24px;display:none;align-items:center;justify-content:center;border-radius:50%;font-size:12px;font-weight:700;box-shadow:0 2px 6px #0002}
+.library-choice[aria-pressed=true] .library-order{display:flex}
+.library-delete{width:100%;border:0;border-top:1px solid #eef1ef;border-radius:0;color:#9b5252;font-size:12px;padding:8px}
+#libraryError:not(:empty){padding:12px;margin:0 0 14px;border:1px solid #efc7c7;border-radius:8px;background:#fff3f3;color:#a13232;line-height:1.5}
+.library-delete:hover{background:#fff3f3;color:#bf3030}
+.library-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;padding-top:16px;border-top:1px solid var(--line);flex-wrap:wrap}
+.library-pagination{display:flex;gap:6px;align-items:center}
+#libraryInfo{margin-top:12px}
+#libraryError:empty,#switchAccountError:empty{display:none}
+#libraryError,#switchAccountError{color:#b5353d;background:#fff2f2;border-radius:8px;padding:10px 12px;margin-top:12px;font-size:13px;line-height:1.5}
+.switch-summary{padding:14px;background:#f1f8f4;border:1px solid #d9eade;border-radius:10px;line-height:1.7;margin-bottom:12px}
+.switch-dialog .hint{color:#867044;font-size:12px;line-height:1.6;margin:12px 0}
+.switch-dialog select{width:100%;padding:12px;border:1px solid #d4dfd9;border-radius:9px;background:#fff;font:inherit;margin-top:4px}
+.btn-switch{background:#ecf7f1;border-color:#c9e5d8;color:#16764f;font-weight:600}
+.library-dialog button:focus-visible,.switch-dialog button:focus-visible,.library-dialog input:focus-visible,.switch-dialog select:focus-visible{outline:3px solid #00a87055;outline-offset:2px}
+@media(max-width:600px){.cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.stat{padding:14px}.stat .v{font-size:25px}.dialog .box.library-dialog,.dialog .box.switch-dialog{padding:18px}.library-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.library-choice img{height:110px}.library-footer{align-items:stretch}.library-footer>.btn-p{width:100%}}
+
+
+/* Project production workspace */
+#tab-projects{--project-border:#dfe8e4}
+#tab-projects [hidden]{display:none!important}
+#tab-projects>.card:first-child:has(#projectHome[hidden]):not(:has(#projectMessage:not(:empty),#projectError:not(:empty))){display:none}
+#projectMissing:empty{display:none}#projectChapters>.toolbar{flex-wrap:wrap}#projectChapters h4{margin:0}
+#projectChapters .project-navigation{display:grid;gap:7px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--project-border)}
+#projectDetail{display:grid;grid-template-columns:210px minmax(0,1fr);gap:20px;align-items:start;background:#f5f8f6}
+#projectDetail>.toolbar,#projectDetail>#projectProgress,#projectDetail>#projectSummary,#projectDetail>.project-actions,#projectDetail>.project-key,#projectDetail>#projectMissing,#projectDetail>.project-browser,#projectDetail>#projectScenes{grid-column:2;min-width:0;margin:0}
+#projectDetail>#projectChapters{grid-column:1;grid-row:1 / span 9;position:sticky;top:20px;margin:0;padding:16px;background:#fff;max-height:80vh;overflow:auto}
+#projectChapters .project-actions{display:grid;gap:8px}#projectChapters .btn{text-align:left;white-space:normal}
+#projectChapters p{font-size:12px;color:var(--sub);line-height:1.6}
+#projectTitle{font-size:24px;letter-spacing:-.6px;margin:0}
+#projectProgress{font-size:14px;color:var(--sub)}
+#projectProgress progress{display:block;width:100%;height:7px;margin-top:10px;accent-color:var(--accent)}
+#projectSummary{gap:8px}#projectSummary button{border:1px solid var(--project-border);border-radius:20px;background:white;padding:8px 12px;cursor:pointer;color:var(--text)}
+#projectSummary button[aria-pressed=true]{background:#e1f5ec;border-color:var(--accent);color:#08774f}
+.project-browser{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.project-browser input{flex:1;min-width:160px;padding:11px 14px;border:1px solid var(--project-border);border-radius:9px;font:inherit}.project-browser button[aria-pressed=true]{background:#e1f5ec;border-color:var(--accent)}
+#projectScenes{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,270px),1fr));gap:18px}
+#projectScenes .project-scene{display:flex;flex-direction:column;gap:0;padding:0;border:1px solid var(--project-border);border-radius:14px;overflow:hidden;background:white;min-width:0}
+#projectScenes .project-scene[data-selected=true]{border-color:#79bda1}
+.project-preview{aspect-ratio:16/9;background:#e8eeeb;display:grid;place-items:center;overflow:hidden;color:#64796f;position:relative}
+.project-preview video{width:100%;height:100%;object-fit:contain;background:#17251f}
+.project-preview-empty{text-align:center;padding:24px;font-size:13px}.project-preview-empty span{display:block;font-size:30px;margin-bottom:12px}
+#projectScenes .project-scene>div:not(.project-preview){padding:16px}#projectScenes .project-scene>.project-actions{margin-top:auto;border-top:1px solid #edf1ee;padding:12px 16px;gap:7px}
+#projectScenes .project-scene h4{line-height:1.5;font-size:15px}#projectScenes .project-scene p{font-size:12px;line-height:1.6}
+#projectScenes details{margin-top:12px;font-size:12px}#projectScenes details summary{cursor:pointer;color:var(--sub)}
+#projectScenes .project-scene-summary{font-size:13px}.project-meta{font-size:11px;color:var(--sub);margin-bottom:10px}
+#projectScenes[data-view=scenes]{grid-template-columns:1fr}#projectScenes[data-view=scenes] .project-scene{display:grid;grid-template-columns:220px minmax(0,1fr)}#projectScenes[data-view=scenes] .project-actions{grid-column:1 / -1}#projectScenes[data-view=scenes] .project-preview{align-self:start;margin:16px;border-radius:8px}
+#projectVersionList,.project-output-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,290px),1fr));gap:18px}
+#projectVersionList .project-version,.project-output-grid .project-output{margin:0;padding:16px;border:1px solid var(--project-border);border-radius:14px;min-width:0;background:white}
+#projectVersionList video,.project-output-grid video{width:100%;aspect-ratio:16/9;object-fit:contain;background:#17251f;border-radius:9px}
+#projectVersions{border:2px solid #b1d8c6;scroll-margin-top:20px}.project-home-card{border-radius:14px;background:linear-gradient(145deg,#fff,#eff8f3);padding:24px;max-width:none}
+#projectList{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}.project-empty{grid-column:1 / -1;padding:40px;text-align:center;color:var(--sub)}
+@media(min-width:1700px){#projectScenes{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:900px){#projectDetail{grid-template-columns:1fr}#projectDetail>#projectChapters{grid-column:1;grid-row:auto;position:static;max-height:none}#projectDetail>*{grid-column:1!important}#projectChapters .project-actions{display:flex}#projectScenes[data-view=scenes] .project-scene{display:flex}}
+
+
+/* Progressive disclosure for the production workspace. */
+#projectSummary{display:none!important}
+#projectDetail>.project-primary{grid-row:2}#projectDetail>.project-sections{border-bottom:1px solid #dfe8e4;padding-bottom:12px}
+.project-sections [aria-current]{color:#00885b;border-color:#00885b;background:#edf8f2}
+.project-menu{position:relative;display:inline-block;margin:0!important}.project-menu>summary{list-style:none;cursor:pointer;font-size:18px!important;padding:3px 12px}.project-menu>summary::-webkit-details-marker{display:none}
+.project-menu-body{display:grid;gap:8px;min-width:200px;max-width:280px;padding:12px;background:white;border:1px solid #dfe8e4;border-radius:10px;box-shadow:0 8px 24px #173a2420;margin-top:8px}.project-menu-body .btn{text-align:left;white-space:normal}
+.project-primary>.project-menu .project-menu-body{position:absolute;right:0;z-index:5}
+#projectScenes .project-actions{align-items:start}#projectScenes .project-menu-body{min-width:0;max-width:100%;box-shadow:none}
+.project-input-help{max-width:740px;background:#f2f8f4;border:1px solid #dfe8e4;padding:18px;border-radius:12px;margin:0 0 20px;line-height:1.6}.project-input-help details{margin-top:12px}.project-input-help pre{overflow:auto;font-size:12px;padding:12px;background:white;border-radius:8px}.project-input-help summary{cursor:pointer;font-weight:600}
+#projectStatusFilter{padding:10px;border:1px solid #dfe8e4;background:white;border-radius:8px;max-width:100%}
+#projectDetail.project-is-empty .project-primary>[data-action=import]{display:none}.project-empty h3{color:var(--text)}.project-empty p{max-width:480px;margin:12px auto 20px;line-height:1.7}
+#projectScenes .project-scene>.project-actions{align-self:stretch}
+#projectBreadcrumb{display:block;background:transparent;border:0;padding:0;margin:0 0 16px;overflow:visible}#projectBreadcrumb ol{display:flex;flex-wrap:wrap;align-items:center;gap:8px;list-style:none;padding:0;margin:0}#projectBreadcrumb li{display:flex;align-items:center;gap:8px;min-width:0;font-size:13px}#projectBreadcrumb button{border:0;background:transparent;color:#00865b;padding:6px;border-radius:6px;cursor:pointer;font:inherit;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#projectBreadcrumb button:hover{background:#e2f3ea}#projectBreadcrumb [aria-current]{font-weight:600;overflow-wrap:anywhere}#projectBreadcrumb button:focus-visible{outline:2px solid #00865b;outline-offset:2px}@media(max-width:600px){#projectBreadcrumb button{max-width:170px}}
++</style>
 </head>
 <body>
 <div id="loginMask" class="mask" style="display:none">
@@ -349,11 +485,16 @@ main.accounts-view{max-width:1440px}
   <button class="on" data-tab="dash" onclick="switchTab('dash')">Dashboard</button>
   <button data-tab="accounts" onclick="switchTab('accounts')">Accounts</button>
   <button data-tab="tasks" onclick="switchTab('tasks')">Video Tasks</button>
+  <button data-tab="images" onclick="switchTab('images')">Tạo ảnh</button>
+  <button data-tab="gallery" onclick="switchTab('gallery')">Kho ảnh</button>
   <button data-tab="projects" onclick="switchTab('projects')">Projects</button>
   <button data-tab="keys" onclick="switchTab('keys')">API Keys</button>
+  <button onclick="location.href='/film-studio.html'">Film Studio</button>
 </nav>
 
 <main>
+  <section id="tab-images" style="display:none" aria-label="Image Studio"></section>
+  <section id="tab-gallery" style="display:none" aria-label="Kho ảnh đã tạo"></section>
   <section id="tab-dash">
     <div class="cards" id="statCards"></div>
     <div class="card"><h3>7-Day Video Generation Trend</h3><div class="chart" id="chart"></div></div>
@@ -383,6 +524,7 @@ main.accounts-view{max-width:1440px}
       <div id="accountDomains" class="account-groups" hidden></div>
       <div id="accountProxyStats" aria-label="Thống kê account theo proxy"></div>
       <div id="domainWebProgress" class="tiny" aria-live="polite"></div>
+      <div class="field" style="margin:14px 0"><label for="accountSearch">Search email</label><input id="accountSearch" type="search" placeholder="Enter email in selected group/domain..." oninput="deleteSelection.accounts.clear();renderAccounts()"></div>
       <div id="accountsTable"></div>
       <div id="googleImportProgress" class="tiny" aria-live="polite"></div>
     </div>
@@ -392,13 +534,14 @@ main.accounts-view{max-width:1440px}
     <div class="card">
       <div class="toolbar"><h3 style="margin:0">Generate Video</h3><span class="hint">Create a task and track it below</span></div>
       <div class="generate-form studio">
+        <div class="field"><label for="videoBatch">Batch (optional)</label><select id="videoBatch"><option value="">Create new batch</option></select></div>
         <div class="field prompt-field"><label for="videoName">Name (optional)</label><input id="videoName" maxlength="200" placeholder="e.g. scene 2"></div>
         <div class="field prompt-field">
           <label for="videoPrompt">YOUR PROMPT</label>
           <textarea id="videoPrompt" placeholder="Describe your scene, characters and motion&#8230; Type @ to reference an image." aria-autocomplete="list" aria-controls="refSuggestions" aria-expanded="false"></textarea>
           <div id="refSuggestions" class="ref-suggestions" role="listbox" aria-label="Image references" hidden></div>
         </div>
-        <div class="image-workspace">
+        <div class="image-workspace"><p id="librarySaveStatus" class="tiny" role="status"></p>
           <div class="mode-bar"><div class="mode-tabs" role="group" aria-label="Image mode">
             <button type="button" data-mode="reference" aria-pressed="true" onclick="setImageMode('reference')">Reference images</button>
             <button type="button" data-mode="start_end" aria-pressed="false" onclick="setImageMode('start_end')">Start / End</button>
@@ -409,24 +552,33 @@ main.accounts-view{max-width:1440px}
             <input id="referencePicker" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onchange="addReferenceFiles(this.files);this.value=''">
             <div class="reference-drop" id="referenceDrop">
               <div id="imagePreview" class="image-preview"></div>
-              <button type="button" class="add-image" onclick="q('#referencePicker').click()"><span class="plus">+</span><strong>Add images</strong><span>or drop here</span></button>
+              <button type="button" class="add-image" onclick="q('#referencePicker').click()"><span class="plus">+</span><strong>Upload ảnh</strong><span>hoặc kéo thả vào đây</span></button><button type="button" class="btn library-open" onclick="openImageLibrary('referenceImages')">Chọn ảnh</button>
             </div>
             <p class="form-note">JPG, PNG, WEBP &middot; Drag to reorder &middot; Edit a name, then mention it with @</p>
           </div>
           <div id="frameFields" style="display:none">
             <div class="frame-grid">
-              <div class="frame-slot"><span class="frame-label">01 <strong>Start frame</strong></span><input id="startImage" type="file" accept="image/jpeg,image/png,image/webp" hidden onchange="previewReferenceImages('startImage','startPreview')"><div id="startPreview" class="image-preview"></div><button type="button" class="frame-pick" onclick="q('#startImage').click()">+ Choose opening image</button></div>
+              <div class="frame-slot"><span class="frame-label">01 <strong>Start frame</strong></span><input id="startImage" type="file" accept="image/jpeg,image/png,image/webp" hidden onchange="previewReferenceImages('startImage','startPreview')"><div id="startPreview" class="image-preview"></div><div class="image-actions"><button type="button" class="frame-pick" onclick="q('#startImage').click()">Upload ảnh</button><button type="button" class="btn library-open" onclick="openImageLibrary('startImage')">Chọn ảnh</button></div></div>
               <span class="frame-arrow" aria-hidden="true">&rarr;</span>
-              <div class="frame-slot"><span class="frame-label">02 <strong>End frame</strong></span><input id="endImage" type="file" accept="image/jpeg,image/png,image/webp" hidden onchange="previewReferenceImages('endImage','endPreview')"><div id="endPreview" class="image-preview"></div><button type="button" class="frame-pick" onclick="q('#endImage').click()">+ Choose ending image</button></div>
+              <div class="frame-slot"><span class="frame-label">02 <strong>End frame (optional)</strong></span><input id="endImage" type="file" accept="image/jpeg,image/png,image/webp" hidden onchange="previewReferenceImages('endImage','endPreview')"><div id="endPreview" class="image-preview"></div><div class="image-actions"><button type="button" class="frame-pick" onclick="q('#endImage').click()">Upload ảnh</button><button type="button" class="btn library-open" onclick="openImageLibrary('endImage')">Chọn ảnh</button></div></div>
             </div>
-            <p class="form-note">Add both images to guide the transition. Exact opening and ending frames may vary.</p>
+            <div class="field"><label for="environmentImages">Environment / extra references (optional)</label>
+              <input id="environmentImages" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
+              <input id="environmentPicker" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onchange="addEnvironmentFiles(this.files);this.value=''">
+              <div class="reference-drop" id="environmentDrop">
+                <div id="environmentPreview" class="image-preview"></div>
+                <button type="button" class="add-image" onclick="q('#environmentPicker').click()"><span class="plus">+</span><strong>Upload ?nh</strong><span>ho?c k?o th? v?o ??y</span></button><button type="button" class="btn library-open" onclick="openImageLibrary('environmentImages')">Ch?n ?nh</button>
+              </div>
+              <p class="form-note">JPG, PNG, WEBP &middot; Drag to reorder &middot; Edit a name, then mention it with @. These images guide the environment, lighting and scene details. Start comes first, followed by End if selected, then environment images.</p>
+            </div>
+            <p class="form-note">Start is required; End is optional. Without End, motion continues naturally from Start. Exact opening and ending frames may vary.</p>
           </div>
         </div>
         <div class="studio-footer">
           <div class="field"><label for="videoModel">Model</label><select id="videoModel"><option value="seedance-2.0">Seedance 2.0</option><option value="seedance-2.5">Seedance 2.5</option></select></div>
           <div class="field"><label for="videoRatio">Ratio</label><select id="videoRatio"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="3:4">3:4</option></select></div>
           <div class="field"><label for="videoDuration">Duration</label><select id="videoDuration"><option value="10">10s</option><option value="15">15s</option><option value="30">30s</option></select></div>
-          <div class="field"><label for="videoCount">Videos</label><select id="videoCount" onchange="updateVideoCount()"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
+          <div class="field"><label for="videoCount">Videos</label><select id="videoCount" onchange="updateVideoCount()"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option></select></div>
           <button class="btn btn-p" id="generateBtn" onclick="submitVideoTask()">Generate Video &rarr;</button>
         </div>
         <p id="videoCountHint" class="form-note" style="padding:8px 22px" aria-live="polite">Create 1 video - uses quota for 1 generation</p>
@@ -434,7 +586,7 @@ main.accounts-view{max-width:1440px}
       </div>
     </div>
     <div class="card">
-      <div class="task-list-heading"><h3>All Video Tasks</h3><span class="tiny">All matching tasks</span></div>
+      <div class="task-list-heading"><div><h3>All Video Tasks</h3><p>Theo dõi video, tìm kiếm và quản lý các batch của bạn.</p></div></div>
       <div class="task-search-panel" role="search" aria-label="Search video tasks">
         <div class="task-search-main">
           <div class="task-search-input"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input id="taskSearch" name="video-task-filter" type="search" readonly onfocus="this.removeAttribute('readonly')" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" aria-label="Search tasks" placeholder="Search Task ID, prompt, client, batch or error..." autocomplete="off" oninput="searchTasks()"></div>
@@ -450,16 +602,28 @@ main.accounts-view{max-width:1440px}
         <div id="taskSearchSummary" class="tiny" role="status" aria-live="polite">Search across your task history</div>
         <div class="tiny">⭐ Chọn để edit: copy video vào thư mục tag/. Bỏ chọn chỉ xóa bản copy, giữ file gốc.</div>
       </div>
-      <button id="deleteSelectedTasks" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('tasks')">Delete selected (0)</button><div id="tasksTable"></div><nav class="task-pagination" aria-label="Video task pagination">
-        <label class="tiny">Tasks per page <select id="taskPageSize" onchange="searchTasks()" aria-label="Tasks per page"><option value="-1" selected>All</option><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label>
+      <nav class="task-pagination" aria-label="Video task pagination">
+        <div class="task-page-controls">
+        <span class="tiny" title="Video không thuộc batch được tính là một nhóm riêng">10 batch / trang</span>
         <button type="button" class="btn" id="taskPrevPage" disabled onclick="changeTaskPage(-1)">Previous</button>
         <span id="taskPageInfo" class="tiny" aria-live="polite">Page 1 of 1</span>
         <button type="button" class="btn" id="taskNextPage" disabled onclick="changeTaskPage(1)">Next</button>
+        <form class="task-page-jump" onsubmit="event.preventDefault();jumpToTaskPage()">
+          <input id="taskPageInput" type="number" min="1" max="1" step="1" value="1" required aria-label="Số trang" title="Nhập số trang rồi nhấn Enter hoặc Đi">
+          <button type="submit" class="btn">Đi</button>
+        </form>
+        </div>
+        <div class="task-batch-controls" role="group" aria-label="Điều khiển tất cả batch">
+          <button type="button" class="btn" onclick="setAllTaskBatchesCollapsed(true)" title="Thu gọn batch trên tất cả các trang"><span aria-hidden="true">⊟</span> Thu gọn tất cả batch</button>
+          <button type="button" class="btn" onclick="setAllTaskBatchesCollapsed(false)" title="Mở rộng batch trên tất cả các trang"><span aria-hidden="true">⊞</span> Mở rộng tất cả batch</button>
+        </div>
       </nav>
+      <button id="deleteSelectedTasks" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('tasks')">Delete selected (0)</button><div id="tasksTable"></div>
     </div>
   </section>
 
   <section id="tab-projects" style="display:none">
+    <nav id="projectBreadcrumb" aria-label="Đường dẫn Projects"></nav>
     <div class="card">
       <div id="projectHome"><div class="toolbar"><h3>Projects</h3><div class="project-actions"><button class="btn btn-p" data-action="create">+ Create Project</button><button class="btn" id="projectRefresh">Refresh projects</button></div></div>
       <div id="projectList" class="project-list" aria-label="Projects"></div></div>
@@ -471,9 +635,15 @@ main.accounts-view{max-width:1440px}
       <div id="projectChapters" class="card"></div>
       <div id="projectProgress" class="project-progress" aria-live="polite"></div>
       <div id="projectSummary" class="project-summary"></div>
-      <div class="project-actions"><button class="btn" data-action="import">Import Scenes</button><button class="btn" data-action="import-info">Import Scene Info</button><button class="btn" data-action="library">Reference Library</button><button class="btn" data-action="project-accounts">Run Accounts (optional)</button><button class="btn" data-action="outputs">View Selected Outputs</button><button class="btn" data-action="rename">Rename</button><button class="btn" data-action="refresh">Refresh project</button><label>Candidates per Scene <select id="projectCandidateCount"><option value="1">x1</option><option value="2">x2</option><option value="3">x3</option><option value="4">x4</option><option value="5">x5</option></select></label><button class="btn btn-p" id="projectGenerateAll">Generate All Ready</button><button class="btn" id="projectSelectLatest" data-loading="Selecting...">Select latest completed for unselected scenes</button></div>
-      <details class="project-key"><summary>Gateway API Key (optional)</summary><label for="projectGatewayKey">Only if generation API authentication is enabled</label><br><input id="projectGatewayKey" type="password" autocomplete="off"></details>
-      <div id="projectMissing"></div><div id="projectScenes"></div>
+      <div class="project-actions project-primary">
+        <button class="btn" data-action="import">+ Nhập cảnh</button><button class="btn btn-p" id="projectGenerateAll">Tạo video</button>
+        <details class="project-menu"><summary class="btn" aria-label="Thao tác project">⋯</summary><div class="project-menu-body">
+          <button class="btn" data-action="import-info">Nhập mô tả cảnh</button><button class="btn" data-action="rename">Đổi tên</button><button class="btn" data-action="refresh">Làm mới</button><button class="btn" data-action="project-accounts">Tài khoản chạy</button><button class="btn" id="projectSelectLatest" data-loading="Đang chọn...">Chọn bản hoàn thành mới nhất cho các cảnh chưa chọn</button>
+          <details class="project-key"><summary>API key (tuỳ chọn)</summary><label for="projectGatewayKey">Chỉ nhập khi gateway yêu cầu xác thực</label><input id="projectGatewayKey" type="password" autocomplete="off"></details>
+        </div></details>
+      </div>
+      <div class="project-actions project-sections"><button class="btn" aria-current="page">Cảnh & video</button><button class="btn" data-action="library">Ảnh tham chiếu</button><button class="btn" data-action="outputs">Đầu ra đã chọn</button></div>
+      <div id="projectMissing"></div><div class="project-browser"><input id="projectSceneSearch" type="search" placeholder="Tìm tên, số cảnh hoặc mô tả…" aria-label="Search scenes"><select id="projectStatusFilter" aria-label="Lọc trạng thái"></select><button class="btn" data-action="workspace-view" data-view="videos" aria-pressed="true">Lưới</button><button class="btn" data-action="workspace-view" data-view="scenes" aria-pressed="false">Danh sách</button><span id="projectVisibleCount" class="tiny" aria-live="polite"></span></div><div id="projectScenes"></div>
     </div>
     <div class="card" id="projectPanel" hidden aria-label="Project workflow panel"><div class="toolbar"><h3 id="projectPanelTitle"></h3><button class="btn" id="projectPanelBack" data-action="close-panel">Back to project</button></div><div id="projectPanelBody"></div><p id="projectPanelError" class="project-error" role="alert"></p></div>
     <div class="card" id="projectVersions" hidden aria-label="Scene versions">
@@ -495,6 +665,14 @@ main.accounts-view{max-width:1440px}
 </main>
 
 <div id="dlg" class="dialog" style="display:none"><div class="box" id="dlgBox"></div></div>
+<div id="taskReferencesModal" class="dialog" style="display:none" role="dialog" aria-modal="true" aria-labelledby="taskReferencesTitle">
+  <div class="box" style="width:900px;max-width:95vw;max-height:90vh;overflow:auto">
+    <h2 id="taskReferencesTitle">Input images</h2>
+    <p id="taskReferencesId" class="tiny"></p>
+    <div id="taskReferencesGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px"></div>
+    <div class="row"><button class="btn" onclick="closeTaskReferences()">Close</button></div>
+  </div>
+</div>
 <div id="videoModal" class="dialog" style="display:none">
   <div class="box" style="width:640px">
     <h2>Video Preview</h2>
@@ -537,9 +715,10 @@ function logout(){adminKey='';localStorage.removeItem(LS_KEY);showLogin();}
 function switchTab(t){
   curTab=t;
   document.querySelector('main').classList.toggle('accounts-view',t==='accounts');
+  document.querySelector('main').classList.toggle('images-view',t==='images'||t==='gallery');
   closeAccountActions();
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
-  ['dash','accounts','tasks','keys','projects'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
+  ['dash','accounts','tasks','keys','projects','images','gallery'].forEach(x=>{q('#tab-'+x).style.display=x===t?'block':'none';});
   if(t==='projects')ProjectReview.invalidate();
   refresh();
 }
@@ -553,6 +732,8 @@ async function refresh(force=false){
     else if(curTab==='tasks')await loadTasks();
     else if(curTab==='keys')await loadKeys();
     else if(curTab==='projects')await ProjectReview.refresh(force);
+    else if(curTab==='images')await ImageStudioUI.refresh(force);
+    else if(curTab==='gallery')await ImageGallery.refresh(force);
   }catch(e){if(e.message!=='unauthorized'){/* silent */}}
 }
 
@@ -564,6 +745,8 @@ async function loadDash(){
     <div class="stat s1"><div class="v">${st.today_completed}</div><div class="l">Completed Today</div></div>
     <div class="stat s2"><div class="v">${st.today_failed}</div><div class="l">Failed Today</div></div>
     <div class="stat s3"><div class="v">${sr}</div><div class="l">Success Rate</div></div>
+    <div class="stat s5" title="Jobs waiting for Dola results, including result checks"><div class="v">${st.process ?? 0}</div><div class="l">Process</div><div class="stat-note">Waiting for results</div></div>
+    <div class="stat s6" title="Jobs preparing or submitting a generation retry after an error"><div class="v">${st.retrying ?? 0}</div><div class="l">Retrying</div><div class="stat-note">Retrying generation</div></div>
   <div class="stat s4"><div class="v">${st.available_accounts}/${st.total_accounts}</div><div class="l">Available · ${st.total_remaining} Left</div></div>`;
   const max=Math.max(1,...st.per_day.map(d=>d.completed+d.failed));
   q('#chart').innerHTML=st.per_day.map(d=>`
@@ -589,9 +772,15 @@ async function loadDash(){
 }
 
 function accLabel(x){return `<div>${esc(x.display_name||x.email||'?')}</div>`;}
-function statusBadge(a){
+function statusBadge(a,job){
+  if(job?.kind==='delete_dola'&&job.status==='running'){
+    return '<span class="badge b-blue" title="'+esc(job.message||job.stage||'')+'">Deleting Dola / re-login</span>';
+  }
+  if(a.auth_state==='expired'&&(/^Dola recovery stopped at /.test(a.auth_error||'')||a.auth_error==='Dola deletion / Google re-login in progress')){
+    return '<span class="badge b-orange" title="'+esc(a.auth_error||'')+'">Renewal interrupted</span>';
+  }
   if(a.busy){
-    const labels={verifying:'Verifying',browser_open:'Browser open',generating:'Generating',adding:'Adding'};
+    const labels={verifying:'Verifying',browser_starting:'Opening browser…',browser_open:'Browser open',generating:'Generating',adding:'Adding'};
     return '<span class="badge b-blue">'+(labels[a.activity]||'Busy')+'</span>';
   }
   const auth={adding:'Adding',failed:'Add failed',duplicate:'Duplicate',check_error:'Check unavailable',expired:'Expired'};
@@ -705,6 +894,12 @@ function openAccountActions(name,button){
   closeAccountActions();accountMenuTrigger=button;button.setAttribute('aria-expanded','true');
   menu.dataset.account=name;
   menu.innerHTML=`<button role="menuitem" onclick="closeAccountActions();verify('${esc(name)}',this)">Verify</button><button role="menuitem" onclick="closeAccountActions();resetQuota('${esc(name)}',this)">Reset quota</button><button role="menuitem" onclick="closeAccountActions();openAddAccount('${esc(name)}')">Retry login</button><button role="menuitem" class="btn-danger" onclick="closeAccountActions();delAccount('${esc(name)}')">Delete account</button>`;
+  const account=accountSnapshot.find(x=>x.name===name);
+  if(account?.account_type==='google'){
+    const resume=['deleted','submitting'].includes(account.dola_delete_phase);
+    const busy=account.busy||account.active_requests||accountJobs[name]?.status==='running';
+    menu.innerHTML+=`<button role="menuitem" class="btn-danger" ${busy?'disabled':''} onclick="closeAccountActions();deleteDolaAcc('${esc(name)}',${resume})">${resume?'Resume Google login':'Delete Dola & re-login'}</button>`;
+  }
   menu.hidden=false;
   const rect=button.getBoundingClientRect(),height=menu.offsetHeight;
   menu.style.left=Math.max(8,Math.min(rect.right-menu.offsetWidth,window.innerWidth-menu.offsetWidth-8))+'px';
@@ -870,7 +1065,8 @@ function renderAccounts(){
     const ready=members.filter(x=>x.ready_to_generate&&jobs[x.name]?.status!=='running').length;
     return `<div class="card" style="margin:0;padding:10px"><button class="btn ${accountDomain===domain?'btn-p':''}" aria-pressed="${accountDomain===domain}" data-domain-action="filter" data-domain="${esc(domain)}">${esc(domain?'@'+domain:'Unknown domain')} (${members.length})</button><p class="tiny">${ready} ready</p><button class="btn" data-domain-action="dispatch" data-domain="${esc(domain)}" ${dispatchUpdating?'disabled':''}>${enabled?'T\u1eaft':'B\u1eadt'} Dispatch (${enabled}/${members.length})</button></div>`;
   }).join('');
-  const visible=accountSnapshot.filter(x=>accountEmailGroup(x)===accountGroup&&(accountGroup!=='other'||accountDomain!==null&&accountEmailDomain(x)===accountDomain))
+  const emailQuery=q('#accountSearch').value.trim().toLowerCase();
+  const visible=accountSnapshot.filter(x=>(x.email||'').toLowerCase().includes(emailQuery)).filter(x=>accountEmailGroup(x)===accountGroup&&(accountGroup!=='other'||accountDomain!==null&&accountEmailDomain(x)===accountDomain))
     .sort((a,b)=>(Number(b.created_at)||0)-(Number(a.created_at)||0)||String(a.name).localeCompare(String(b.name)));
 
   deleteVisible.accounts=visible.filter(x=>!x.busy&&jobs[x.name]?.status!=='running').map(x=>x.name);
@@ -879,14 +1075,14 @@ function renderAccounts(){
     const addFailed=jb&&jb.kind==='add'&&jb.status==='failed'&&x.login_ok!==1;
     const badge=(jb&&jb.kind==='add'&&jb.status==='running')?'<span class="badge b-blue">Adding</span>'
       :addFailed?'<span class="badge b-red">Add Failed</span>'
-      :statusBadge(x);
+      :statusBadge(x,jb);
     const warn=(jb&&jb.status==='failed'&&(jb.kind!=='add'||addFailed))?' <span class="tiny" title="'+esc(jb.error)+'">⚠</span>':'';
     return [
       selectionBox('accounts',x.name,deleteVisible.accounts.includes(x.name)),
       index+1,
       `<span class="account-name" title="${esc(x.email||x.display_name||x.name)}">${esc(x.display_name||x.email||x.name)}${warn}</span><span class="account-secondary">${esc(({google:'Google',facebook:'Facebook',cookies:'Cookies',unknown:'Unknown'})[x.account_type]||'Unknown')}</span>`,
       `<select class="account-connection-select" aria-label="Kết nối account ${esc(x.email||x.name)}" data-account-connection="${esc(x.name)}" title="${esc(connectionChoices.find(c=>c.id===(x.connection_id||'direct'))?.label||'Kết nối không khả dụng')}" ${x.busy||x.active_requests||jb?.status==='running'||connectionUpdates.has(x.name)?'disabled':''} onchange="changeAccountConnection(this.dataset.accountConnection,this)">${connectionChoices.some(c=>c.id===(x.connection_id||'direct'))?'':`<option value="${esc(x.connection_id)}" selected disabled>Kết nối không khả dụng</option>`}${connectionOptions(x.connection_id||'direct')}</select>`,
-      badge+(x.active_requests?`<div class="tiny">${Number(x.active_requests)} request đang chạy</div>`:''),
+      badge+(jb?.kind==='delete_dola'&&jb.status==='running'?`<div class="tiny">${esc(jb.message||jb.stage)}</div>`:['deleted','submitting'].includes(x.dola_delete_phase)?'<div class="tiny">Deletion interrupted: resume Google login from Actions.</div>':'')+(x.active_requests?`<div class="tiny">${Number(x.active_requests)} request đang chạy</div>`:''),
       `<label class="sw"><input type="checkbox" ${x.scheduling?'checked':''} onchange="setSched('${x.name}',this.checked)"><i></i></label>`,
       `<b>${x.used_today}</b> / ${x.limit}<span class="account-secondary" title="Last used: ${esc(fmt(x.last_used_at))}">${x.last_used_at?'Last '+esc(fmtHM(x.last_used_at)):'Chưa dùng'}</span>`,
       accountTime(x.created_at),
@@ -908,6 +1104,13 @@ function renderAccounts(){
     q('#accountsTable').innerHTML=domainWebButton('gmail.com')+accountTable(visible,true);
   }
   updateDeleteSelection('accounts');
+}
+
+async function deleteDolaAcc(name,resume=false){
+  if(!resume&&!confirm('Renew this Dola account? This permanently deletes its Dola data, signs in again with the saved Google profile, and resets local usage to 0/2 only after login is verified.'))return;
+  try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/delete-dola'+(resume?'?resume=true':''),{method:'POST'});}
+  catch(e){alert(e.message);}
+  refresh();
 }
 
 async function resetQuota(name,btn){
@@ -976,6 +1179,97 @@ async function submitAddAccount(){
   }catch(e){alert(e.message);}finally{button.disabled=false;}
 }
 
+
+/* Persistent image library. Keep File objects so ordering and aliases stay intact. */
+const savedLibraryFiles=new WeakSet();
+const libraryFileIds=new WeakMap();
+const librarySaves=new WeakMap();
+let libraryTarget='referenceImages', libraryOffset=0, librarySearch='', libraryTotal=0;
+let librarySelection=new Map(), libraryUrls=[], libraryVersion=0;
+function saveFileToLibrary(file){
+  if(libraryFileIds.has(file))return Promise.resolve(libraryFileIds.get(file));
+  if(librarySaves.has(file))return librarySaves.get(file);
+  const form=new FormData();form.append('files',file);
+  const pending=fetch('/api/admin/image-library',{method:'POST',headers:{'X-Admin-Key':adminKey},body:form})
+    .then(async response=>{if(!response.ok){const data=await response.json();throw new Error(data.detail||'Upload ảnh thất bại');}const identity=(await response.json()).images[0].id;libraryFileIds.set(file,identity);savedLibraryFiles.add(file);return identity;})
+    .catch(error=>{librarySaves.delete(file);throw error;});
+  librarySaves.set(file,pending);return pending;
+}
+async function persistSelectedImages(files){
+  const status=q('#librarySaveStatus');
+  status.textContent='Đang lưu ảnh vào thư viện...';
+  try{await Promise.all([...files].map(saveFileToLibrary));status.textContent='Ảnh đã lưu trong mục Chọn ảnh.';}
+  catch(error){status.textContent='Chưa lưu được ảnh: '+error.message;}
+}
+function clearLibraryUrls(){libraryUrls.forEach(URL.revokeObjectURL);libraryUrls=[];}
+async function openImageLibrary(target){
+  libraryTarget=target;libraryOffset=0;librarySearch='';librarySelection=new Map();
+  showDlg(`<div class="dialog-heading"><div><h2>Chọn ảnh</h2><p class="dialog-description">Image library</p></div><button class="btn dialog-close" aria-label="Close" onclick="hide('dlg');clearLibraryUrls()">&times;</button></div><div class="library-toolbar"><input id="librarySearch" placeholder="Tìm theo tên ảnh"><p class="tiny">Chọn theo thứ tự muốn sử dụng. Ảnh upload được lưu để dùng lại. Chỉ xóa được ảnh không còn job sử dụng.</p></div><p id="libraryError" role="alert"></p><div id="libraryGrid" class="library-grid"></div><p id="libraryInfo" class="tiny"></p><div class="library-footer"><div class="library-pagination"><button class="btn" id="libraryPrev" onclick="loadImageLibrary(-60)">Trước</button><button class="btn" id="libraryNext" onclick="loadImageLibrary(60)">Sau</button><button class="btn" onclick="hide('dlg');clearLibraryUrls()">Đóng</button></div><button class="btn btn-p" id="libraryApply" onclick="applyLibraryImages()" disabled>Dùng ảnh đã chọn</button></div>`,'library-dialog');
+  let searchTimer;
+  q('#librarySearch').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{librarySearch=q('#librarySearch').value;libraryOffset=0;loadImageLibrary();},250);};
+  await loadImageLibrary();
+}
+async function loadImageLibrary(delta=0){
+  const version=++libraryVersion;
+  libraryOffset=Math.max(0,libraryOffset+delta);clearLibraryUrls();
+  q('#libraryGrid').textContent='Đang tải...';q('#libraryError').textContent='';
+  try{
+    const data=await api('/api/admin/image-library?offset='+libraryOffset+'&search='+encodeURIComponent(librarySearch));
+    if(version!==libraryVersion||!q('#libraryGrid'))return;
+    libraryTotal=data.total;
+    q('#libraryGrid').innerHTML='';
+    q('#libraryInfo').textContent=libraryTotal?libraryTotal+' ảnh trong thư viện':'Chưa có ảnh. Hãy Upload ảnh trước.';
+    q('#libraryPrev').disabled=libraryOffset===0;q('#libraryNext').disabled=libraryOffset+60>=libraryTotal;
+    for(const item of data.images){
+      const button=document.createElement('button');button.type='button';button.className='btn library-choice';button.dataset.imageId=item.id;
+      const img=document.createElement('img');img.alt=item.name;
+      const name=document.createElement('div');name.textContent=item.name;name.className='library-name';name.title=item.name;
+      const order=document.createElement('span');order.className='library-order';order.textContent=[...librarySelection.keys()].indexOf(item.id)+1;button.append(img,name,order);button.setAttribute('aria-pressed',String(librarySelection.has(item.id)));
+      button.style.borderColor=librarySelection.has(item.id)?'#167c65':'';
+      button.onclick=()=>{
+        if(librarySelection.has(item.id))librarySelection.delete(item.id);
+        else{if(['startImage','endImage'].includes(libraryTarget))librarySelection.clear();librarySelection.set(item.id,item);}
+        q('#libraryGrid').querySelectorAll('button[data-image-id]').forEach(b=>{const selected=librarySelection.has(b.dataset.imageId);b.setAttribute('aria-pressed',String(selected));b.style.borderColor=selected?'#167c65':'';b.querySelector('.library-order').textContent=[...librarySelection.keys()].indexOf(b.dataset.imageId)+1;});
+        q('#libraryApply').disabled=!librarySelection.size;q('#libraryApply').textContent='Dùng '+librarySelection.size+' ảnh đã chọn';
+      };
+      const card=document.createElement('div');card.className='library-card';card.append(button);
+      const remove=document.createElement('button');remove.type='button';remove.className='btn library-delete';remove.textContent='Xóa ảnh';
+      remove.onclick=async()=>{
+        if(!confirm('Xóa ảnh "'+item.name+'" khỏi thư viện?'))return;
+        remove.disabled=true;
+        try{
+          await api('/api/admin/image-library/'+item.id,{method:'DELETE'});
+          librarySelection.delete(item.id);
+          q('#libraryApply').disabled=!librarySelection.size;
+          q('#libraryApply').textContent='Dùng '+librarySelection.size+' ảnh đã chọn';
+          if(data.images.length===1&&libraryOffset>0)libraryOffset=Math.max(0,libraryOffset-60);
+          await loadImageLibrary();
+        }catch(error){const notice=q('#libraryError');if(notice){notice.textContent=error.message;notice.scrollIntoView({block:'nearest'});}remove.disabled=false;}
+      };
+      card.append(remove);q('#libraryGrid').append(card);
+      fetch('/api/admin/image-library/'+item.id,{headers:{'X-Admin-Key':adminKey}}).then(async r=>{
+        if(!r.ok)return;const blob=await r.blob();if(version!==libraryVersion||!img.isConnected)return;
+        const url=URL.createObjectURL(blob);libraryUrls.push(url);img.src=url;
+      }).catch(()=>{});
+    }
+  }catch(error){if(q('#libraryError'))q('#libraryError').textContent=error.message;}
+}
+async function applyLibraryImages(){
+  const button=q('#libraryApply');button.disabled=true;
+  try{
+    const files=[];
+    for(const item of librarySelection.values()){
+      const response=await fetch('/api/admin/image-library/'+item.id,{headers:{'X-Admin-Key':adminKey}});
+      if(!response.ok)throw new Error('Không tải được ảnh '+item.name);
+      const blob=await response.blob();const file=new File([blob],item.name,{type:blob.type});savedLibraryFiles.add(file);libraryFileIds.set(file,item.id);files.push(file);
+    }
+    if(libraryTarget==='referenceImages')addReferenceFiles(files);
+    else if(libraryTarget==='environmentImages')addEnvironmentFiles(files);
+    else{const transfer=new DataTransfer();files.forEach(f=>transfer.items.add(f));q('#'+libraryTarget).files=transfer.files;previewReferenceImages(libraryTarget,libraryTarget==='startImage'?'startPreview':'endPreview');}
+    hide('dlg');clearLibraryUrls();
+  }catch(error){q('#libraryError').textContent=error.message;button.disabled=false;}
+}
+
 /* ---- Task Queue ---- */
 function updateVideoCount(){
   const count=Number(q('#videoCount').value);
@@ -987,31 +1281,26 @@ async function submitVideoTask(){
   const prompt=q('#videoPrompt').value.trim();
   if(!prompt)return alert('Please enter a video prompt');
   const startEnd=q('#imageMode').value==='start_end';
-  if(startEnd&&(!q('#startImage').files.length||!q('#endImage').files.length))return alert('Please choose both Start and End images');
-  const files=startEnd?[q('#startImage').files[0],q('#endImage').files[0]]:[...q('#referenceImages').files];
+  if(startEnd&&!q('#startImage').files.length)return alert('Please choose a Start image');
+  const files=startEnd?[...q('#startImage').files,...q('#endImage').files,...q('#environmentImages').files]:[...q('#referenceImages').files];
   const apiKey=q('#videoApiKey').value.trim();
   const headers=apiKey?{Authorization:'Bearer '+apiKey}:{};
   const btn=q('#generateBtn');
-  const settings={model:q('#videoModel').value,ratio:q('#videoRatio').value,duration:Number(q('#videoDuration').value),count:Number(q('#videoCount').value),reference_aliases:startEnd?[]:files.map((_,index)=>referenceAliases[index]||'')};
+  const settings={model:q('#videoModel').value,ratio:q('#videoRatio').value,duration:Number(q('#videoDuration').value),count:Number(q('#videoCount').value),reference_aliases:startEnd?startEndReferenceAliases():files.map((_,index)=>referenceAliases[index]||'')};
   btn.disabled=true;btn.textContent='Submitting...';
   try{
     let referenceImages=[];
     if(files.length){
-      const form=new FormData();
-      for(const file of files)form.append('files',file);
-      const uploadResponse=await fetch('/api/admin/reference-images',{
-        method:'POST',headers:{'X-Admin-Key':adminKey},body:form
-      });
-      const uploadText=await uploadResponse.text();
-      let uploadData={};try{uploadData=uploadText?JSON.parse(uploadText):{};}catch(e){}
-      if(!uploadResponse.ok)throw new Error(uploadData.detail||'Reference image upload failed');
-      referenceImages=uploadData.reference_images||[];
+      const identities=await Promise.all(files.map(saveFileToLibrary));
+      referenceImages=identities.map(identity=>'library://'+identity);
     }
     const body={
       ...settings,
       name:q("#videoName").value.trim(),
+      batch_id:q("#videoBatch").value||null,
       prompt,
       reference_images:referenceImages,
+      has_end_frame:startEnd&&q('#endImage').files.length>0,
       start_end:startEnd
     };
     const task=await api('/v1/videos/generations',{method:'POST',headers,body});
@@ -1019,9 +1308,10 @@ async function submitVideoTask(){
     q('#videoPrompt').value='';
     q('#referenceImages').value='';
     referenceAliases=[];
+    environmentAliases=[];
     q('#imagePreview').innerHTML='';
-    for(const id of ['startImage','endImage'])q('#'+id).value='';
-    for(const id of ['startPreview','endPreview'])q('#'+id).innerHTML='';
+    for(const id of ['startImage','endImage','environmentImages'])q('#'+id).value='';
+    for(const id of ['startPreview','endPreview','environmentPreview'])q('#'+id).innerHTML='';
     updateImageCount();
     alert(task.tasks?`${task.tasks.length} tasks created: \n${task.tasks.map(item=>item.id).join('\n')}`:'Task created: '+task.id);
     await loadTasks();
@@ -1042,10 +1332,21 @@ function addReferenceFiles(files){
   [...q('#referenceImages').files,...incoming].forEach(file=>transfer.items.add(file));
   q('#referenceImages').files=transfer.files;previewReferenceImages();
 }
-const dropZone=q('#referenceDrop');
-dropZone.addEventListener('dragover',event=>{if([...event.dataTransfer.types].includes('Files')){event.preventDefault();dropZone.classList.add('file-hover');}});
-dropZone.addEventListener('dragleave',event=>{if(!dropZone.contains(event.relatedTarget))dropZone.classList.remove('file-hover');});
-dropZone.addEventListener('drop',event=>{dropZone.classList.remove('file-hover');if(event.dataTransfer.files.length){event.preventDefault();addReferenceFiles(event.dataTransfer.files);}});
+function addEnvironmentFiles(files){
+  const incoming=[...files];
+  if(incoming.some(file=>!['image/jpeg','image/png','image/webp'].includes(file.type))){alert('Choose JPG, PNG or WEBP images.');return;}
+  const transfer=new DataTransfer();
+  [...q('#environmentImages').files,...incoming].forEach(file=>transfer.items.add(file));
+  q('#environmentImages').files=transfer.files;previewReferenceImages('environmentImages','environmentPreview');
+}
+function bindReferenceDropZone(selector,addFiles){
+  const dropZone=q(selector);
+  dropZone.addEventListener('dragover',event=>{if([...event.dataTransfer.types].includes('Files')){event.preventDefault();dropZone.classList.add('file-hover');}});
+  dropZone.addEventListener('dragleave',event=>{if(!dropZone.contains(event.relatedTarget))dropZone.classList.remove('file-hover');});
+  dropZone.addEventListener('drop',event=>{dropZone.classList.remove('file-hover');if(event.dataTransfer.files.length){event.preventDefault();addFiles(event.dataTransfer.files);}});
+}
+bindReferenceDropZone('#referenceDrop',addReferenceFiles);
+bindReferenceDropZone('#environmentDrop',addEnvironmentFiles);
 q('#referenceImages').addEventListener('change',()=>{referenceAliases=[];previewReferenceImages();});
 function toggleImageMode(){
   const frames=q('#imageMode').value==='start_end';
@@ -1055,23 +1356,46 @@ function toggleImageMode(){
   updateImageCount();
 }
 let referenceAliases=[];
+let environmentAliases=[];
+function environmentReferenceOptions(){
+  return [...q('#environmentImages').files].map((file,i)=>({file,index:i,name:environmentAliases[i]||('Image'+(i+1))}));
+}
+function startEndReferenceAliases(){
+  const names=environmentReferenceOptions().map(item=>item.name);
+  const used=new Set(names.map(name=>name.toLowerCase()));
+  // Frame aliases must not shadow the display names of extra references.
+  const frames=[...q('#startImage').files,...q('#endImage').files].map((_,index)=>{
+    let name='Frame'+(index+1);
+    while(used.has(name.toLowerCase()))name+='_' ;
+    used.add(name.toLowerCase());
+    return name;
+  });
+  return [...frames,...names];
+}
 let draggedReferenceIndex=null;
-function reorderReferenceImages(from,to){
-  const input=q('#referenceImages');
+let draggedReferenceInput=null;
+function reorderReferenceImages(from,to,inputId='referenceImages',previewId='imagePreview'){
+  const input=q('#'+inputId);
   const files=[...input.files];
   if(!Number.isInteger(from)||!Number.isInteger(to)||from<0||to<0||from>=files.length||to>=files.length||from===to)return;
-  referenceAliases=files.map((_,index)=>referenceAliases[index]||'');
-  referenceAliases.splice(to,0,referenceAliases.splice(from,1)[0]);
+  const environment=inputId==='environmentImages';
+  const currentAliases=environment?environmentAliases:referenceAliases;
+  const aliases=files.map((_,index)=>currentAliases[index]||'');
+  aliases.splice(to,0,aliases.splice(from,1)[0]);
+  if(environment)environmentAliases=aliases;else referenceAliases=aliases;
   files.splice(to,0,files.splice(from,1)[0]);
   const transfer=new DataTransfer();
   files.forEach(file=>transfer.items.add(file));
   input.files=transfer.files;
-  previewReferenceImages();
-  q('#imagePreview').children[to]?.focus();
+  previewReferenceImages(inputId,previewId);
+  q('#'+previewId).children[to]?.focus();
 }
 function previewReferenceImages(inputId='referenceImages',previewId='imagePreview'){
   const preview=q('#'+previewId);
+  const aliases=inputId==='environmentImages'?environmentAliases:inputId==='referenceImages'?referenceAliases:[];
+  const defaultName=index=>'Image'+(index+1);
   closeRefSuggestions();
+  if(q('#'+inputId).files.length)persistSelectedImages(q('#'+inputId).files);
   preview.innerHTML='';
   updateImageCount();
   [...q('#'+inputId).files].forEach((file,index)=>{
@@ -1084,19 +1408,20 @@ function previewReferenceImages(inputId='referenceImages',previewId='imagePrevie
     image.draggable=false;
     image.alt=file.name;
     figure.title=file.name;
-    caption.textContent=inputId==='referenceImages'?String(index+1):file.name;
-    if(inputId==='referenceImages'){
+    caption.textContent=(inputId==='referenceImages'||inputId==='environmentImages')?String(index+1):file.name;
+    if(inputId==='referenceImages'||inputId==='environmentImages'){
       figure.draggable=true;
       figure.tabIndex=0;
       figure.setAttribute('aria-label','Image '+(index+1)+': '+file.name+'. Use arrow keys to reorder.');
       figure.ondragstart=event=>{
         draggedReferenceIndex=index;
+        draggedReferenceInput=inputId;
         event.dataTransfer.effectAllowed='move';
         event.dataTransfer.setData('text/plain',String(index));
         figure.classList.add('dragging');
       };
       figure.ondragover=event=>{
-        if(draggedReferenceIndex===null)return;
+        if(draggedReferenceIndex===null||draggedReferenceInput!==inputId)return;
         event.preventDefault();
         event.dataTransfer.dropEffect='move';
         figure.classList.add('drop-target');
@@ -1105,21 +1430,23 @@ function previewReferenceImages(inputId='referenceImages',previewId='imagePrevie
         if(!figure.contains(event.relatedTarget))figure.classList.remove('drop-target');
       };
       figure.ondrop=event=>{
-        if(draggedReferenceIndex===null)return;
+        if(draggedReferenceIndex===null||draggedReferenceInput!==inputId)return;
         event.preventDefault();
         const from=draggedReferenceIndex;
         draggedReferenceIndex=null;
+        draggedReferenceInput=null;
         figure.classList.remove('drop-target');
-        reorderReferenceImages(from,index);
+        reorderReferenceImages(from,index,inputId,previewId);
       };
       figure.ondragend=()=>{
         draggedReferenceIndex=null;
+        draggedReferenceInput=null;
         preview.querySelectorAll('figure').forEach(item=>item.classList.remove('dragging','drop-target'));
       };
       figure.onkeydown=event=>{
         if(event.target!==figure)return;
         const direction={ArrowLeft:-1,ArrowUp:-1,ArrowRight:1,ArrowDown:1}[event.key];
-        if(direction){event.preventDefault();reorderReferenceImages(index,index+direction);}
+        if(direction){event.preventDefault();reorderReferenceImages(index,index+direction,inputId,previewId);}
       };
     }
     remove.type='button';
@@ -1128,26 +1455,26 @@ function previewReferenceImages(inputId='referenceImages',previewId='imagePrevie
     remove.textContent='×';
     remove.onclick=()=>removeReferenceImage(index,inputId,previewId);
     figure.append(image,caption,remove);
-    if(inputId==='referenceImages'){
+    if(inputId==='referenceImages'||inputId==='environmentImages'){
       const alias=document.createElement('input');
-      alias.type='text';alias.placeholder='Image'+(index+1);
+      alias.type='text';alias.placeholder=defaultName(index);
       alias.autocomplete='off';
       alias.setAttribute('data-1p-ignore','true');
       alias.setAttribute('data-lpignore','true');
-      alias.value=referenceAliases[index]||('Image'+(index+1));
+      alias.value=aliases[index]||defaultName(index);
       alias.setAttribute('aria-label','Reference name for '+file.name);
       alias.title='Edit reference name';
       let committedName=alias.value.trim().replace(/^@/,'');
       const commitName=()=>{
-        const next=alias.value.trim().replace(/^@/,'')||('Image'+(index+1));
-        const duplicate=[...q('#referenceImages').files].some((_,i)=>i!==index&&(referenceAliases[i]||('Image'+(i+1))).replace(/^@/,'').toLowerCase()===next.toLowerCase());
+        const next=alias.value.trim().replace(/^@/,'')||defaultName(index);
+        const duplicate=[...q('#'+inputId).files].some((_,i)=>i!==index&&(aliases[i]||defaultName(i)).replace(/^@/,'').toLowerCase()===next.toLowerCase());
         if(duplicate){alias.value=committedName;return;}
         const prompt=q('#videoPrompt');
-        const names=[...q('#referenceImages').files].map((_,i)=>(referenceAliases[i]||('Image'+(i+1))).replace(/^@/,''));
+        const names=[...q('#'+inputId).files].map((_,i)=>(aliases[i]||defaultName(i)).replace(/^@/,''));
         const escaped=names.sort((a,b)=>b.length-a.length).map(name=>name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
         const mentions=new RegExp('(^|[^\\p{L}\\p{N}_@])@('+escaped.join('|')+')(?![\\p{L}\\p{N}_-])','giu');
         prompt.value=prompt.value.replace(mentions,(match,prefix,name)=>name.toLowerCase()===committedName.toLowerCase()?prefix+'@'+next:match);
-        referenceAliases[index]=next.toLowerCase()===('image'+(index+1))?'':next;
+        aliases[index]=next.toLowerCase()===defaultName(index).toLowerCase()?'':next;
         committedName=next;alias.value=next;
         closeRefSuggestions();
       };
@@ -1169,6 +1496,10 @@ function removeReferenceImage(index,inputId='referenceImages',previewId='imagePr
   if(inputId==='referenceImages'){
     referenceAliases=[...input.files].map((_,i)=>referenceAliases[i]||'');
     referenceAliases.splice(index,1);
+  }
+  if(inputId==='environmentImages'){
+    environmentAliases=[...input.files].map((_,i)=>environmentAliases[i]||'');
+    environmentAliases.splice(index,1);
   }
   const transfer=new DataTransfer();
   [...input.files].forEach((file,fileIndex)=>{if(fileIndex!==index)transfer.items.add(file);});
@@ -1201,12 +1532,12 @@ function highlightRefSuggestion(){
 }
 function updateRefSuggestions(){
   closeRefSuggestions();
-  if(q('#imageMode').value==='start_end'||refPrompt.selectionStart!==refPrompt.selectionEnd)return;
+  if(refPrompt.selectionStart!==refPrompt.selectionEnd)return;
   const end=refPrompt.selectionStart;
   const match=refPrompt.value.slice(0,end).match(/(^|[^\p{L}\p{N}_@])@([^@\n]*)$/u);
   if(!match)return;
   const query=match[2].toLowerCase();
-  refOptions=[...q('#referenceImages').files].map((file,i)=>({file,index:i,name:(referenceAliases[i]||('Image'+(i+1))).trim().replace(/^@/,'')}))
+  refOptions=(q('#imageMode').value==='start_end'?environmentReferenceOptions():[...q('#referenceImages').files].map((file,i)=>({file,index:i,name:(referenceAliases[i]||('Image'+(i+1))).trim().replace(/^@/,'')})))
     .filter(item=>item.name.toLowerCase().startsWith(query));
   if(!refOptions.length)return;
   refMatch={start:end-match[2].length-1,end};refSelected=0;
@@ -1261,6 +1592,43 @@ function taskRetryHistory(t){
   if(!history.length)return '';
   return '<details class="tiny"><summary>Retry history ('+history.length+')</summary>'+history.map((h,i)=>'<div style="white-space:pre-wrap;overflow-wrap:anywhere">#'+(i+1)+' '+esc(h.status||'')+' '+esc(h.error||'')+'</div>').join('')+'</details>';
 }
+
+
+async function openSwitchAccount(id){
+  try{
+    const result=await api('/api/admin/tasks/'+encodeURIComponent(id)+'/switch-account');
+    showDlg(`<h2>Chuyển account</h2>
+      <p class="switch-summary">Giữ nguyên prompt, ảnh và cấu hình. Account mới sẽ tạo lại video; Dispatch của account cũ sẽ tắt.</p>
+      <p class="hint">Lượt render trên Dola ở account cũ không bị hủy.</p>
+      <label for="switchAccountSelect">Account đang rảnh</label>
+      <select id="switchAccountSelect"></select>
+      <p id="switchAccountError" role="alert"></p>
+      <div class="row"><button class="btn" onclick="hide('dlg')">Hủy</button>
+      <button class="btn btn-p" id="switchAccountSubmit">Chuyển và chạy lại</button></div>`, 'switch-dialog');
+    const select=q('#switchAccountSelect'),button=q('#switchAccountSubmit');
+    for(const account of result.accounts){
+      select.add(new Option('Account '+account.number+(account.email?' - '+account.email:'')+' (còn '+account.remaining+' lượt)',account.uuid));
+    }
+    button.disabled=!result.accounts.length;
+    select.disabled=!result.accounts.length;
+    if(!result.accounts.length)q('#switchAccountError').textContent='Chưa có account khác đang rảnh và đủ điều kiện chạy.';
+    button.onclick=async()=>{
+      button.disabled=true;
+      select.disabled=true;
+      try{
+        await api('/api/admin/tasks/'+encodeURIComponent(id)+'/switch-account',{method:'POST',body:{account_uuid:select.value}});
+      }catch(e){
+        q('#switchAccountError').textContent=e.message;
+        button.disabled=false;
+        select.disabled=false;
+        return;
+      }
+      hide('dlg');
+      await loadTasks();
+    };
+  }catch(e){alert(e.message);}
+}
+
 async function deleteTask(id){
   if(!confirm('Delete this record from Video Generated? The video file will be kept.'))return;
   try{await api('/api/admin/tasks/'+encodeURIComponent(id),{method:'DELETE'});await loadTasks();}
@@ -1282,8 +1650,12 @@ function taskScheduleInfo(t){
 }
 function taskControls(t){
   const controls=[];
+  controls.push('<button class="btn" data-task-id="'+esc(t.id)+'" onclick="openTaskReferences(this.dataset.taskId)">Input images</button>');
   if(t.status==='completed'||t.edit_selected){
     controls.push('<button class="btn'+(t.edit_selected?' btn-p':'')+'" aria-pressed="'+Boolean(t.edit_selected)+'" title="'+esc(t.edit_selected?'Bỏ chọn và xóa bản copy trong tag/':'Copy vào tag/ để dựng video')+'" data-task-id="'+esc(t.id)+'" onclick="setEditSelection(this.dataset.taskId,'+(!t.edit_selected)+',this)">'+(t.edit_selected?'⭐ Đã chọn để edit':'☆ Chọn để edit')+'</button>');
+  }
+  if(['needs_recovery','stopped'].includes(t.status)){
+    controls.push('<button class="btn btn-switch" data-task-id="'+esc(t.id)+'" onclick="openSwitchAccount(this.dataset.taskId)">Chuyển account</button>');
   }
   if(t.video_url){
     controls.push('<button class="btn video-preview" onclick="playVideo(&quot;'+esc(t.video_url)+'&quot;)">Preview</button>');
@@ -1292,7 +1664,7 @@ function taskControls(t){
   if(t.account&&!t.conversation_id&&t.status!=='completed'){
     controls.push('<button class="btn" disabled title="This task has no saved conversation yet">No chat yet</button>');
   }
-  if(t.account&&t.conversation_id&&t.status!=='completed'){
+  if(t.account&&t.conversation_id){
     controls.push('<button class="btn" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;open&quot;)">Open chat</button>');
   }
   if(t.account&&(t.conversation_id||t.result_url)&&t.status!=='completed'){
@@ -1329,17 +1701,39 @@ async function copyTaskPrompt(button,id){
   }catch(e){alert('Could not copy prompt: '+e.message);}
 }
 let taskSearchTimer, taskLoadVersion=0, taskPage=1, taskPages=1;
+function jumpToTaskPage(){
+  const input=q('#taskPageInput');
+  if(!input.reportValidity())return;
+  const page=Number(input.value);
+  if(!Number.isInteger(page)||page<1||page>taskPages)return;
+  changeTaskPage(page-taskPage);
+}
 function changeTaskPage(delta){
   clearTimeout(taskSearchTimer);
   taskPage=Math.min(Math.max(1,taskPage+delta),taskPages);
   loadTasks().catch(e=>alert(e.message));
 }
 
-const collapsedTaskBatches=new Set();
+let taskBatchesCollapsedByDefault=false;
+const taskBatchCollapseOverrides=new Map();
+function isTaskBatchCollapsed(id){
+  return taskBatchCollapseOverrides.get(id)??taskBatchesCollapsedByDefault;
+}
+function setAllTaskBatchesCollapsed(collapsed){
+  taskBatchesCollapsedByDefault=collapsed;
+  taskBatchCollapseOverrides.clear();
+  document.querySelectorAll('#tasksTable .batch-toggle').forEach(button=>{
+    updateTaskBatchCollapse(button,collapsed);
+  });
+}
 function toggleTaskBatch(button){
-  const group=button.closest('tbody'),id=group.dataset.batchId;
-  if(collapsedTaskBatches.has(id))collapsedTaskBatches.delete(id);else collapsedTaskBatches.add(id);
-  const collapsed=collapsedTaskBatches.has(id);
+  const id=button.closest('tbody').dataset.batchId;
+  const collapsed=!isTaskBatchCollapsed(id);
+  taskBatchCollapseOverrides.set(id,collapsed);
+  updateTaskBatchCollapse(button,collapsed);
+}
+function updateTaskBatchCollapse(button,collapsed){
+  const group=button.closest('tbody');
   group.classList.toggle('batch-collapsed',collapsed);
   button.setAttribute('aria-expanded',String(!collapsed));
   button.querySelector('.batch-arrow').textContent=collapsed?'▶':'▼';
@@ -1352,20 +1746,21 @@ function groupedTaskTable(tasks,rows,heads){
     if(!groups.has(key))groups.set(key,[]);
     groups.get(key).push({task,row:rows[index]});
   });
-  const ordered=[...groups.values()].sort((a,b)=>Math.max(...b.map(x=>Number(x.task.created_at)||0))-Math.max(...a.map(x=>Number(x.task.created_at)||0)));
+  // Preserve server batch pagination order, including Film Studio video numbering.
+  const ordered=[...groups.values()];
   let taskRowIndex=0;
   const bodies=ordered.map(members=>{
     const batch=members[0].task.batch_id;
     if(batch)members.sort((a,b)=>(a.task.batch_index||0)-(b.task.batch_index||0));
-    const rowHtml=members.map(x=>'<tr class="task-row'+(taskRowIndex++%2?' row-gray':'')+'">'+x.row.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('');
+    const rowHtml=members.map(x=>'<tr class="task-row'+(taskRowIndex++%2?' row-gray':'')+'"'+(x.task.studio_selected?' title="Film Studio: bản đạt QA được chọn" style="outline:2px solid #00a870;outline-offset:-2px"':'')+'>'+x.row.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('');
     if(!batch)return '<tbody>'+rowHtml+'</tbody>';
-    const first=members[0].task,collapsed=collapsedTaskBatches.has(batch);
+    const first=members[0].task,collapsed=isTaskBatchCollapsed(batch);
     const total=Math.max(members.length,...members.map(x=>Number(x.task.batch_count)||0));
     const counts={};members.forEach(x=>counts[x.task.status]=(counts[x.task.status]||0)+1);
     const labels={completed:'hoàn thành',processing:'đang tạo',queued:'đang chờ',failed:'lỗi',stopped:'đã dừng',needs_recovery:'cần khôi phục'};
-    const summary=Object.entries(counts).map(([state,count])=>count+' '+(labels[state]||state)).join(' · ');
-    const name=(first.name||'Batch video').replace(/\s*\(\d+\/\d+\)\s*$/,'');
-    return '<tbody class="batch-group'+(collapsed?' batch-collapsed':'')+'" data-batch-id="'+esc(batch)+'"><tr class="batch-heading"><td colspan="'+heads.length+'"><button class="batch-toggle" aria-expanded="'+!collapsed+'" onclick="toggleTaskBatch(this)"><strong><span class="batch-arrow">'+(collapsed?'▶':'▼')+'</span> '+esc(name)+' · Batch '+esc(batch.slice(-6))+'</strong><span>'+members.length+'/'+total+' video hiển thị · '+esc(summary)+' · '+fmt(first.created_at)+'</span></button></td></tr>'+rowHtml+'</tbody>';
+    const summary=Object.entries(counts).map(([state,count])=>count+' '+(labels[state]||state)).join(' · ')+(first.studio_status?' · Studio: '+first.studio_status+(first.studio_selected_task_id?' · Đã chọn '+first.studio_selected_task_id:''):'');
+    const name=first.batch_name||(first.name||'Batch video').replace(/\s*\(\d+\/\d+\)\s*$/,'');
+    return '<tbody class="batch-group'+(collapsed?' batch-collapsed':'')+'" data-batch-id="'+esc(batch)+'"><tr class="batch-heading"><td colspan="'+heads.length+'"><div class="batch-heading-content"><button class="batch-toggle" aria-expanded="'+!collapsed+'" onclick="toggleTaskBatch(this)"><strong><span class="batch-arrow">'+(collapsed?'▶':'▼')+'</span> '+esc(name)+' · Batch '+esc(batch.slice(-6))+'</strong><span>'+members.length+'/'+total+' video hiển thị · '+esc(summary)+' · '+fmt(first.created_at)+'</span></button><button class="btn" data-batch-id="'+esc(batch)+'" data-batch-name="'+esc(first.batch_name||'')+'" onclick="renameTaskBatch(this)">Rename batch</button></div></td></tr>'+rowHtml+'</tbody>';
   });
   return '<table><thead><tr>'+heads.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead>'+bodies.map((body,index)=>(index&&(ordered[index][0].task.batch_id||ordered[index-1][0].task.batch_id)?'<tbody class="batch-gap" aria-hidden="true"><tr><td colspan="'+heads.length+'"></td></tr></tbody>':'')+body).join('')+'</table>';
 }
@@ -1383,11 +1778,32 @@ function searchTasks(){
   taskLoadVersion++;
   taskSearchTimer=setTimeout(()=>loadTasks().catch(e=>alert(e.message)),250);
 }
+async function loadBatchOptions(){
+  const result=await api('/api/admin/batches');
+  const select=q('#videoBatch'), selected=select.value;
+  select.title='';
+  select.replaceChildren(new Option('Create new batch',''));
+  result.batches.filter(batch=>!batch.project_batch).forEach(batch=>select.add(new Option((batch.name||'Batch '+batch.batch_id.slice(-6))+' ('+batch.task_count+' videos)',batch.batch_id)));
+  if([...select.options].some(option=>option.value===selected))select.value=selected;
+}
+async function renameTaskBatch(button){
+  const name=prompt('Batch name',button.dataset.batchName);
+  if(name===null)return;
+  if(!name.trim()||name.trim().length>200)return alert('Enter a batch name from 1 to 200 characters');
+  try{
+    await api('/api/admin/batches/'+encodeURIComponent(button.dataset.batchId),{method:'PATCH',body:{name:name.trim()}});
+    await loadTasks();
+  }catch(e){alert(e.message);}
+}
 async function loadTasks(){
   if(bulkDeleting.tasks)return;
+  void loadBatchOptions().catch(error=>{
+    q('#videoBatch').title='Cannot load batches: '+error.message;
+    console.warn('Batch options could not be loaded',error);
+  });
   const version=++taskLoadVersion;
   const search=q('#taskSearch').value.trim();
-  const params=new URLSearchParams({limit:q('#taskPageSize').value,page:String(taskPage),video_filter:q('#taskVideoFilter').value,query:search,search_in:q('#taskSearchIn').value,status:q('#taskStatus').value,account:q('#taskAccount').value,duration:q('#taskDuration').value||'0'});
+  const params=new URLSearchParams({limit:'10',group_by_batch:'true',page:String(taskPage),video_filter:q('#taskVideoFilter').value,query:search,search_in:q('#taskSearchIn').value,status:q('#taskStatus').value,account:q('#taskAccount').value,duration:q('#taskDuration').value||'0'});
   const fromInput=q('#taskCreatedFrom'),toInput=q('#taskCreatedTo');
   const from=fromInput.value?Date.parse(fromInput.value+'+07:00')/1000:null;
   const to=toInput.value?Date.parse(toInput.value+'+07:00')/1000:null;
@@ -1405,10 +1821,12 @@ async function loadTasks(){
   if(version!==taskLoadVersion)return;
   taskPage=r.page||1;taskPages=r.pages||1;
   q('#taskPageInfo').textContent='Page '+taskPage+' of '+taskPages;
+  q('#taskPageInput').max=String(taskPages);
+  if(document.activeElement!==q('#taskPageInput'))q('#taskPageInput').value=String(taskPage);
   q('#taskPrevPage').disabled=taskPage<=1;
   q('#taskNextPage').disabled=taskPage>=taskPages;
 
-  const accountNumbers=new Map(a.accounts.map((account,index)=>[account.uuid,index+1]));
+  const accountEmails=new Map(a.accounts.map(account=>[account.uuid,account.email]));
   const accountSelect=q('#taskAccount'),selectedAccount=accountSelect.value;
   accountSelect.replaceChildren(new Option('All accounts',''));
   a.accounts.forEach((account,index)=>accountSelect.add(new Option('Account '+(index+1)+(account.email?' - '+account.email:''),account.uuid)));
@@ -1421,9 +1839,10 @@ async function loadTasks(){
   taskPromptCopies.clear();
   const rows=r.tasks.map(t=>[
     selectionBox('tasks',t.id,deleteVisible.tasks.includes(t.id)),
-    '<span style="overflow-wrap:anywhere">'+esc(t.name||'?')+'</span>',
+    '<button class="task-id" title="Copy '+esc(t.id)+'.mp4" aria-label="Copy filename '+esc(t.id)+'.mp4" data-filename="'+esc(t.id)+'.mp4" onclick="copy(this.dataset.filename)">'+esc(t.id)+'.mp4</button>',
     taskPromptCell(t),
-    accountNumbers.get(t.account)||'?',
+    esc(accountEmails.get(t.account)||(t.account?'Email unavailable':'?')),
+    t.api_key_name||'—',
     (t.duration||10)+'s',
     (({needs_recovery:'<span class="badge b-red">Needs recovery</span>',stopped:'<span class="badge b-gray">Stopped</span>'})[t.status]||sb[t.status]||'<span class="badge b-gray">'+esc(t.status)+'</span>')+taskScheduleInfo(t)+taskRetryHistory(t),
     fmt(t.created_at),
@@ -1432,10 +1851,44 @@ async function loadTasks(){
       :(['failed','needs_recovery','stopped'].includes(t.status)?'<details><summary class="tiny" style="cursor:pointer">View error details</summary><div style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto">'+esc(t.error||'')+'</div></details>':'—')
     ,taskControls(t)
   ]);
-  q('#tasksTable').innerHTML=groupedTaskTable(r.tasks,rows,[selectionHeader('tasks'),'Name','Prompt','Account','Duration','Status','Created At','Video','Actions']);
+  q('#tasksTable').innerHTML=groupedTaskTable(r.tasks,rows,[selectionHeader('tasks'),'Name','Prompt','Account','API Key','Duration','Status','Created At','Video','Actions']);
   updateDeleteSelection('tasks');
 }
 
+let taskReferenceVersion=0, taskReferenceUrls=[];
+function closeTaskReferences(){
+  taskReferenceVersion++;
+  taskReferenceUrls.forEach(url=>URL.revokeObjectURL(url));taskReferenceUrls=[];
+  q('#taskReferencesGrid').replaceChildren();hide('taskReferencesModal');
+}
+async function openTaskReferences(id){
+  closeTaskReferences();const version=taskReferenceVersion;
+  q('#taskReferencesId').textContent=id;
+  const grid=q('#taskReferencesGrid');grid.textContent='Loading...';show('taskReferencesModal');
+  try{
+    const data=await api('/api/admin/tasks/'+encodeURIComponent(id)+'/references');
+    if(version!==taskReferenceVersion)return;
+    grid.replaceChildren();
+    if(!data.images.length){grid.textContent='This job has no input images.';return;}
+    await Promise.all(data.images.map(async item=>{
+      const card=document.createElement('div'),label=document.createElement('strong'),body=document.createElement('div');
+      label.textContent='Image'+item.index;card.append(label,body);grid.append(card);
+      body.textContent=item.available?'Loading...':'Saved image is unavailable.';
+      if(!item.available)return;
+      try{
+        const response=await fetch(item.url,{headers:{'X-Admin-Key':adminKey}});
+        if(!response.ok)throw new Error('Could not load image ('+response.status+').');
+        const blob=await response.blob();if(version!==taskReferenceVersion)return;
+        const url=URL.createObjectURL(blob);taskReferenceUrls.push(url);
+        const link=document.createElement('a'),img=document.createElement('img');
+        link.href=url;link.target='_blank';link.rel='noopener';link.title='Open full image';
+        img.src=url;img.alt='Input images Image'+item.index;img.style.cssText='width:100%;height:220px;object-fit:contain';
+        link.append(img);body.replaceChildren(link);
+      }catch(error){if(version===taskReferenceVersion)body.textContent=error.message;}
+    }));
+  }catch(error){if(version===taskReferenceVersion)grid.textContent=error.message;}
+}
+document.addEventListener('keydown',event=>{if(event.key==='Escape')closeTaskReferences();});
 function playVideo(url){q('#videoEl').src=url;show('videoModal');}
 function closeVideo(){q('#videoEl').pause();q('#videoEl').src='';hide('videoModal');}
 
@@ -1514,7 +1967,7 @@ async function copy(text){
   }
 }
 
-function showDlg(html){q('#dlgBox').innerHTML=html;show('dlg');}
+function showDlg(html,variant=''){q('#dlgBox').className='box '+variant;q('#dlgBox').innerHTML=html;show('dlg');}
 
 /* Init: auth check */
 (async function boot(){
@@ -1528,16 +1981,39 @@ timer=setInterval(()=>{if(autoRefresh)refresh();},10000);
 /* Project review shares the dashboard auth/API helper and ten-second polling timer. */
 window.ProjectReview = (() => {
   const state = {projects:null, project:null, data:null, scene:null, dirty:true,
-    loading:false, request:0, versionsRequest:0, signature:null, home:{}, panel:null, panelRequest:0, blobs:[], busy:false, validated:null, assets:[], staging:[], sceneCounts:{}, replaceFile:null};
+    loading:false, request:0, versionsRequest:0, signature:null, home:{}, panel:null, panelRequest:0, blobs:[], busy:false, validated:null, assets:[], staging:[], sceneCounts:{}, replaceFile:null, filter:"all", view:"videos"};
   const root = document.getElementById('tab-projects');
   const el = id => document.getElementById(id);
   const path = id => encodeURIComponent(id);
   const label = value => String(value || '').replaceAll('_',' ');
+  const navigationDrafts=new Map();
+  let workspaceScroll=0;
+  function renderBreadcrumb(){
+    const project=state.projects?.find(p=>p.id===state.project);
+    const parent=project && state.projects?.find(p=>p.id===project.parent_project_id);
+    const parts=[{name:'Projects',id:''}];
+    if(parent)parts.push({name:parent.name,id:parent.id});
+    if(project)parts.push({name:project.name,id:project.id});
+    if(state.scene){const scene=state.data?.scenes.find(s=>s.id===state.scene);parts.push({name:`Cảnh ${scene?.scene_number || ''} · Phiên bản`,review:true});}
+    if(state.panel){
+      if(['upload','bulk','replace','remove'].includes(state.panel))parts.push({name:'Ảnh tham chiếu',library:true});
+      parts.push({name:el('projectPanelTitle').textContent});
+    }
+    el('projectBreadcrumb').innerHTML=`<ol>${parts.map((part,index)=>`<li>${index ? '<span aria-hidden="true">/</span>' : ''}${index===parts.length-1 ? `<span aria-current="page">${esc(part.name)}</span>` : `<button type="button" data-action="breadcrumb" ${part.library ? 'data-destination="library"' : part.review ? 'data-destination="review"' : `data-project-id="${esc(part.id)}"`}>${esc(part.name)}</button>`}</li>`).join('')}</ol>`;
+  }
+  async function navigateProject(id){
+    closePanel();closeVersions();
+    if(state.project!==id){state.filter='all';el('projectSceneSearch').value='';state.project=id;state.data=null;state.request++;}
+    el('projectDetail').hidden=!id;message('');state.dirty=true;
+    await refresh(true);renderBreadcrumb();
+    if(id)window.scrollTo({top:workspaceScroll,behavior:'instant'});
+  }
   const badge = status => {
     const color = status === 'SELECTED' || status === 'completed' ? 'green' :
       ['QUEUED','PROCESSING','NEEDS_REVIEW','queued','processing'].includes(status) ? 'blue' :
       ['MISSING_REFERENCES','INVALID_CONFIGURATION','failed'].includes(status) ? 'orange' : 'gray';
-    return `<span class="badge b-${color}">${esc(label(status).toUpperCase())}</span>`;
+    const names={SELECTED:'Đã chọn',READY:'Sẵn sàng',NEEDS_REVIEW:'Cần duyệt',QUEUED:'Đang chờ',PROCESSING:'Đang chạy',MISSING_REFERENCES:'Thiếu ảnh',INVALID_CONFIGURATION:'Cần sửa cấu hình',completed:'Hoàn thành',failed:'Lỗi',queued:'Đang chờ',processing:'Đang chạy'};
+    return `<span class="badge b-${color}">${esc(names[status] || label(status).toUpperCase())}</span>`;
   };
   function videoURL(value) {
     if(!value || !String(value).trim())return '';
@@ -1553,6 +2029,7 @@ window.ProjectReview = (() => {
     return key ? {Authorization:'Bearer '+key} : {};
   }
   function renderProjects() {
+    renderBreadcrumb();
     el('projectHome').hidden=!!state.project || !!state.panel;
     el('projectList').innerHTML=state.projects.length ? state.projects.filter(p=>!p.parent_project_id).map(p=>{
       const data=state.home[p.id];const sum=data && data.summary;
@@ -1571,6 +2048,7 @@ window.ProjectReview = (() => {
   }
   const expandedSummaries=new Set();
   function renderScenes() {
+    renderBreadcrumb();
     const data=state.data;
     const project=state.projects.find(p=>p.id===state.project);
     el('projectDetail').hidden=!!state.panel;
@@ -1580,40 +2058,80 @@ window.ProjectReview = (() => {
     const chapters=state.projects.filter(p=>p.parent_project_id===(parent ? parent.id : state.project));
     el('projectChapters').innerHTML=parent
       ? `<p>Chapter: <strong>${esc(project.name)}</strong> &middot; References shared from <strong>${esc(parent.name)}</strong>.</p><p>Import, Generate All and selected outputs below apply to this chapter only.</p><div class="project-actions">${chapters.map(c=>`<button class="btn ${c.id===state.project ? 'btn-p' : ''}" data-action="open" data-project-id="${esc(c.id)}">${esc(c.name)}</button>`).join('')}</div>`
-      : `<div class="toolbar"><h4>Chapters</h4><button class="btn btn-p" data-action="create-chapter">+ Create Chapter</button></div><p>All chapters share this project's Reference Library. Open a chapter to import and generate its scenes.</p><div class="project-actions">${chapters.map(c=>`<button class="btn" data-action="open" data-project-id="${esc(c.id)}">${esc(c.name)}</button>`).join('') || '<span>No chapters yet.</span>'}</div>${chapters.length ? '<p>Scenes and Generate All below belong directly to this project; they do not include chapter scenes.</p>' : ''}`;
+      : `<div class="toolbar"><h4>Chapters</h4><button class="btn btn-p" data-action="create-chapter">+ Create Chapter</button></div><p>Chọn chapter để làm việc. Ảnh tham chiếu dùng chung trong project.</p><div class="project-actions">${chapters.map(c=>`<button class="btn" data-action="open" data-project-id="${esc(c.id)}">${esc(c.name)}</button>`).join('') || '<span>No chapters yet.</span>'}</div>${chapters.length ? '<p>Đang xem cảnh trực tiếp của project.</p>' : ''}`;
 
-    el('projectProgress').textContent=`${data.summary.selected} / ${data.summary.total_scenes} SELECTED${data.production_complete ? ' - Production complete' : ''}`;
-    el('projectSummary').innerHTML=`<span class="badge b-gray">Scenes: ${data.summary.total_scenes}</span>`+Object.entries(data.summary).filter(([key])=>key!=='total_scenes')
-      .map(([key,count])=>`<span class="badge b-gray">${esc(label(key))}: ${count}</span>`).join('');
+    el('projectChapters').insertAdjacentHTML('afterbegin',`<div class="project-navigation"><strong>Projects</strong>${state.projects.filter(p=>!p.parent_project_id).map(p=>`<button class="btn ${p.id===(parent?.id || state.project) ? 'btn-p' : ''}" data-action="open" data-project-id="${esc(p.id)}">${esc(p.name)}</button>`).join('')}</div>`);
+    el('projectProgress').textContent=`Đã chọn ${data.summary.selected}/${data.summary.total_scenes} cảnh${data.production_complete ? ' · Hoàn thành' : ''}`;
+    el('projectProgress').innerHTML+=`<progress max="${Math.max(1,data.summary.total_scenes)}" value="${data.summary.selected}" aria-label="Scenes with selected output"></progress>`;
+    const filters=[['all','All scenes',data.scenes.length],['missing','Missing references',data.scenes.filter(s=>s.missing_references?.length).length],['ready','Ready',data.scenes.filter(s=>!s.skip_reason).length],['active','Running',data.scenes.filter(s=>s.active_task).length],['review','Needs review',data.scenes.filter(s=>!s.selected_task&&s.completed_attempt_count>0).length],['selected','Selected',data.summary.selected],['failed','Failed',data.scenes.filter(s=>s.latest_task?.status==='failed').length]];
+    const filterNames={all:'Tất cả',missing:'Thiếu ảnh',ready:'Sẵn sàng',active:'Đang chạy',review:'Cần duyệt',selected:'Đã chọn',failed:'Lỗi'};
+    el('projectStatusFilter').innerHTML=filters.map(([key,name,count])=>`<option value="${key}" ${state.filter===key?'selected':''}>${filterNames[key]} (${count})</option>`).join('');
+    const empty=!data.scenes.length;
+    el('projectDetail').classList.toggle('project-is-empty',empty);
+    el('projectProgress').hidden=empty;
+    el('projectGenerateAll').hidden=empty;
+    root.querySelector('.project-browser').hidden=empty;
     renderMissing();
     el('projectGenerateAll').disabled=!data.scenes.some(s=>!s.skip_reason);
     el('projectSelectLatest').disabled=!data.scenes.some(s=>!s.selected_task && s.completed_attempt_count>0);
+    const existingVideos=new Map([...el('projectScenes').querySelectorAll('video')].map(v=>[v.closest('[data-scene-id]').dataset.sceneId,v]));
     el('projectScenes').innerHTML=data.scenes.length ? data.scenes.map(scene=>{
       const selected=scene.selected_task;
-      const url=selected && videoURL(selected.video_url);
+      const preview=selected || scene.latest_completed_task || (scene.latest_task?.status==='completed' ? scene.latest_task : null);
+      const url=preview && videoURL(preview.video_url);
       const refs=scene.missing_references || [];
-      return `<article class="project-scene" data-scene-id="${esc(scene.id)}">
-        <div><h4>Scene ${esc(String(scene.scene_number).padStart(2,'0'))} - ${esc(scene.scene_name)}</h4>
+      return `<article class="project-scene" data-scene-id="${esc(scene.id)}" data-selected="${!!selected}">
+        <div class="project-preview">${url ? `<video controls playsinline preload="metadata" src="${esc(url)}#t=0.001" aria-label="Scene ${scene.scene_number} preview"></video>` : `<div class="project-preview-empty"><span>${scene.active_task ? '◷' : '▷'}</span>${scene.active_task ? 'Generation in progress' : refs.length ? 'Upload references to get started' : 'Your video will appear here'}</div>`}</div>
+        <div><div class="project-meta">${esc(scene.model)} · ${esc(scene.ratio)} · ${esc(scene.duration)}s ${url ? selected ? ' · Selected output' : ' · Latest completed · Not selected' : ''}</div><h4>Scene ${esc(String(scene.scene_number).padStart(2,'0'))} - ${esc(scene.scene_name)}</h4>
           ${scene.scene_summary ? `<p class="project-scene-summary ${expandedSummaries.has(scene.id) ? '' : 'collapsed'}">${esc(scene.scene_summary)}</p><button class="btn" data-action="toggle-summary" data-scene-id="${esc(scene.id)}" ${expandedSummaries.has(scene.id) ? '' : 'hidden'}>${expandedSummaries.has(scene.id) ? 'Show less' : 'Show more'}</button>` : '<p class="project-summary-empty">No scene info imported.</p>'}
-          <button class="btn" data-action="edit-summary" data-scene-id="${esc(scene.id)}">Edit summary</button>
           <div>${badge(scene.production_status)}${scene.active_task && scene.production_status==='SELECTED' ? ` ${badge(scene.active_task.status)} new version` : ''}</div>
-          <p>References: ${refs.length ? `Missing ${refs.length}: ${esc(refs.map(r=>r.name).join(', '))}` : 'READY'}</p>
+          <details><summary>References & generation details</summary><p>References: ${refs.length ? `Missing ${refs.length}: ${esc(refs.map(r=>r.name).join(', '))}` : 'READY'}</p>
           <div>${(scene.references||[]).map(r=>`<span class="project-ref">${r.asset_id ? '&#10003;' : '&#10007;'} ${esc(r.name)} <small>Alias: ${esc(r.alias)} - ${r.asset_id ? 'Resolved' : 'Missing'}</small></span>`).join('')}</div>
           <p>Candidates: ${(scene.candidate_counts||{}).total||0} | Completed: ${(scene.candidate_counts||{}).completed||0} | Processing: ${(scene.candidate_counts||{}).processing||0} | Queued: ${(scene.candidate_counts||{}).queued||0}</p>
           <p>Latest generation: ${scene.latest_task ? esc(label(scene.latest_task.status).toUpperCase()) : 'None'}</p>
           ${selected ? `<p>&#9733; SELECTED ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open selected video</a>` : ''}</p>` : ''}
-          ${(scene.validation_errors||[]).length ? `<p>${esc(scene.validation_errors.join('; '))}</p>` : ''}
+          ${(scene.validation_errors||[]).length ? `<p>${esc(scene.validation_errors.join('; '))}</p>` : ''}</details>
         </div>
         <div class="project-actions">
-          <label>Candidates <select data-scene-candidates="${esc(scene.id)}" ${!scene.ready || scene.active_task ? 'disabled' : ''}>${candidateOptions(state.sceneCounts[scene.id]||1)}</select></label><button class="btn btn-p" data-action="generate" data-loading="Generating..." ${!scene.ready || scene.active_task ? 'disabled' : ''}>${scene.latest_task ? 'Regenerate' : 'Generate'}</button>
-          <button class="btn" data-action="review">Review Versions</button>
-          ${selected ? '<button class="btn" data-action="unselect">Unselect</button>' : ''}
-          ${refs.length ? `<button class="btn" data-action="upload-missing" data-name="${esc(refs[0].name)}">Upload Missing Reference</button>` : ''}
+          <button class="btn" data-action="review">Xem phiên bản</button>
+          ${url && !selected ? `<button class="btn btn-p" data-action="select" data-task-id="${esc(preview.id)}">Chọn bản này</button>` : ''}
+          ${refs.length ? `<button class="btn" data-action="upload-missing" data-name="${esc(refs[0].name)}">Bổ sung ảnh</button>` : ''}
+          <details class="project-menu"><summary class="btn" aria-label="Thao tác cảnh">⋯</summary><div class="project-menu-body">
+          <button class="btn" data-action="generate" data-loading="Đang chuẩn bị..." ${!scene.ready || scene.active_task ? 'disabled' : ''}>${scene.latest_task ? 'Tạo lại video' : 'Tạo video'}</button>
+          ${url ? `<a class="btn" href="${esc(url)}" download target="_blank" rel="noopener">Tải video</a>` : ''}
+          <button class="btn" data-action="edit-summary" data-scene-id="${esc(scene.id)}">Sửa mô tả</button>
+          ${selected ? '<button class="btn" data-action="unselect">Bỏ chọn</button>' : ''}
+          </div></details>
         </div></article>`;
-    }).join('') : '<p>No scenes in this project yet.</p>';
+    }).join('') : `<div class="project-empty"><h3>Thêm cảnh để bắt đầu</h3><p>${!parent && chapters.length ? 'Chọn chapter bên trái để nhập cảnh vào chapter đó, hoặc nhập trực tiếp vào project này.' : 'Nhập danh sách cảnh và prompt, sau đó bổ sung ảnh tham chiếu để tạo video.'}</p><button class="btn btn-p" data-action="import">Nhập cảnh</button> <button class="btn" data-action="import-example">Xem mẫu</button></div>`;
+    el('projectScenes').querySelectorAll('video').forEach(video=>{const previous=existingVideos.get(video.closest('[data-scene-id]').dataset.sceneId);if(previous && previous.getAttribute('src')===video.getAttribute('src'))video.replaceWith(previous);});
+    applySceneFilters();
     requestAnimationFrame(()=>{el('projectScenes').querySelectorAll('.project-scene-summary.collapsed').forEach(node=>{const button=node.nextElementSibling;button.hidden=node.scrollHeight<=node.clientHeight+1;});});
   }
+  function applySceneFilters(){
+    const query=el('projectSceneSearch').value.trim().toLocaleLowerCase();
+    let visible=0;
+    for(const card of el('projectScenes').querySelectorAll('.project-scene')){
+      const scene=state.data.scenes.find(s=>s.id===card.dataset.sceneId);
+      const matches={all:true,missing:!!scene.missing_references?.length,ready:!scene.skip_reason,active:!!scene.active_task,review:!scene.selected_task&&scene.completed_attempt_count>0,selected:!!scene.selected_task,failed:scene.latest_task?.status==='failed'};
+      card.hidden=!matches[state.filter] || ![scene.scene_number,scene.scene_name,scene.scene_summary].join(' ').toLocaleLowerCase().includes(query);
+      if(!card.hidden)visible++;else card.querySelector('video')?.pause();
+    }
+    el('projectScenes').dataset.view=state.view;
+    el('projectVisibleCount').textContent=`${visible} / ${state.data.scenes.length} scenes`;
+    el('projectScenes').querySelector('.project-filter-empty')?.remove();
+    if(!visible&&state.data.scenes.length)el('projectScenes').insertAdjacentHTML('beforeend','<p class="project-empty project-filter-empty">No scenes match this filter.</p>');
+    root.querySelectorAll('[data-action="workspace-view"]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.view===state.view));
+    root.querySelectorAll('[data-action="scene-filter"]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.filter===state.filter));
+  }
+  el('projectStatusFilter').addEventListener('change',event=>{state.filter=event.target.value;applySceneFilters();});
+  el('projectSceneSearch').addEventListener('input',applySceneFilters);
+  document.addEventListener('click',event=>root.querySelectorAll('.project-menu[open]').forEach(menu=>{if(!menu.contains(event.target))menu.open=false;}));
+  root.addEventListener('keydown',event=>{if(event.key==='Escape')root.querySelectorAll('.project-menu[open]').forEach(menu=>{menu.open=false;menu.querySelector('summary').focus();});});
+  root.addEventListener('play',event=>{if(event.target.tagName==='VIDEO')root.querySelectorAll('video').forEach(v=>{if(v!==event.target)v.pause();});},true);
+  root.addEventListener('error',event=>{if(event.target.tagName==='VIDEO'&&!event.target.parentElement.querySelector('.video-error'))event.target.insertAdjacentHTML('afterend','<p class="video-error" role="status">Preview unavailable. Try opening or downloading the video.</p>');},true);
   async function loadVersions(sceneId, force=false) {
+    renderBreadcrumb();
     const scene=(state.data && state.data.scenes || []).find(s=>s.id===sceneId);
     const signature=sceneSignature(scene);
     if(!force && signature===state.signature)return;
@@ -1690,17 +2208,27 @@ window.ProjectReview = (() => {
     state.scene=null;state.signature=null;state.versionsRequest++;
     el('projectVersions').hidden=true;
     el('projectVersionList').replaceChildren();
+    renderBreadcrumb();
   }
   root.addEventListener('click', event=>{
     const button=event.target.closest('button[data-action]');
     if(!button || button.disabled)return;
     const action=button.dataset.action;
+    button.closest('.project-menu')?.removeAttribute('open');
+    if(action==='open')message('');
+    if(action==='scene-filter'){state.filter=button.dataset.filter;applySceneFilters();return;}
+    if(action==='workspace-view'){state.view=button.dataset.view;applySceneFilters();return;}
     const row=button.closest('[data-scene-id]');
     const sceneId=row && row.dataset.sceneId;
     act(button, async()=>{
+      if(action==='breadcrumb'){
+        if(button.dataset.destination==='library'){await libraryPanel();return;}
+        if(button.dataset.destination==='review'){closePanel();renderBreadcrumb();el('projectVersions').scrollIntoView({block:'start'});return;}
+        await navigateProject(button.dataset.projectId || null);return;
+      }
       if(await workflowAction(action,button))return;
       if(action==='open') {
-        closePanel();closeVersions();state.project=button.dataset.projectId;state.data=null;
+        closePanel();closeVersions();state.filter='all';el('projectSceneSearch').value='';state.project=button.dataset.projectId;state.data=null;
         await refresh(true);return;
       }
       if(action==='review') {
@@ -1710,7 +2238,7 @@ window.ProjectReview = (() => {
       }
       if(action==='generate') {
         const scene=state.data.scenes.find(s=>s.id===sceneId);const count=state.sceneCounts[sceneId]||1;
-        panel('scene-generate',`Generate Scene ${scene.scene_number}?`,`<p>Candidates: ${count}</p><p>Total generation tasks: ${count}</p><p>This consumes approximately ${count} generation attempts.</p><button class="btn" data-action="close-panel">Cancel</button><button class="btn btn-p" data-action="confirm-scene-generate" data-scene-id="${esc(sceneId)}" data-count="${count}" data-request-id="${actionId()}" data-loading="Generating...">Generate ${count} Tasks</button>`);return;
+        panel('scene-generate',`Generate Scene ${scene.scene_number}?`,`<label>Số phiên bản <select data-generation-count data-ready="1">${candidateOptions(count)}</select></label><p id="projectGenerationTotal">Tổng số video sẽ tạo: ${count}</p><p>Quota is used for each generated version.</p><button class="btn" data-action="close-panel">Cancel</button><button class="btn btn-p" data-action="confirm-scene-generate" data-scene-id="${esc(sceneId)}" data-count="${count}" data-request-id="${actionId()}" data-loading="Generating...">Generate ${count} Tasks</button>`);return;
       } else if(action==='select') {
         await projectRequest(`/api/admin/scenes/${path(sceneId)}/selected-generation`,{method:'PUT',body:{task_id:button.dataset.taskId}});
         message('Selected output updated.');
@@ -1738,8 +2266,8 @@ window.ProjectReview = (() => {
       else if(scene.skip_reason==='MISSING_REFERENCES')counts.missing++;
       else counts.invalid++;
     }
-    const count=Number(el('projectCandidateCount').value);const total=counts.ready*count;
-    panel('generate','Generate candidates for all READY Scenes?',`<p>Ready Scenes: ${counts.ready}</p><p>Candidates per Scene: ${count}</p><p><strong>Total generation tasks: ${total}</strong></p><p>This consumes approximately ${total} generation attempts.</p><p>Missing References: ${counts.missing}</p><p>Invalid: ${counts.invalid}</p><p>Already Selected: ${counts.selected}</p><p>Active Generation: ${counts.active}</p><div class="project-actions"><button class="btn" data-action="close-panel">Cancel</button><button class="btn btn-p" data-action="confirm-generate" data-count="${count}" data-request-id="${actionId()}" data-loading="Generating..." ${counts.ready ? '' : 'disabled'}>Generate ${total} Tasks</button></div>`);
+    const count=1;const total=counts.ready*count;
+    panel('generate','Generate candidates for all READY Scenes?',`<p>Ready Scenes: ${counts.ready}</p><label>Số phiên bản mỗi cảnh <select id="projectCandidateCount" data-generation-count data-ready="${counts.ready}">${candidateOptions(count)}</select></label><p><strong id="projectGenerationTotal">Tổng số video sẽ tạo: ${total}</strong></p><p>Quota is used for each generated version.</p><p>Missing References: ${counts.missing}</p><p>Invalid: ${counts.invalid}</p><p>Already Selected: ${counts.selected}</p><p>Active Generation: ${counts.active}</p><div class="project-actions"><button class="btn" data-action="close-panel">Cancel</button><button class="btn btn-p" data-action="confirm-generate" data-count="${count}" data-request-id="${actionId()}" data-loading="Generating..." ${counts.ready ? '' : 'disabled'}>Generate ${total} Tasks</button></div>`);
   }));
   el('projectSelectLatest').addEventListener('click',event=>act(event.target,async()=>{
     const result=await projectRequest(`/api/admin/projects/${path(state.project)}/select-latest-completed`,{method:'POST'});
@@ -1757,7 +2285,7 @@ window.ProjectReview = (() => {
     if(!data || typeof data!=='object')return String(data || 'Request failed');
     if(data.detail)return explain(data.detail);
     if(data.validation_errors || data.conflicts){
-      return [...(data.validation_errors||[]).map(e=>`${validationLocation(e.path)}: ${e.message}`),
+      return [...(data.validation_errors||[]).map(e=>`${validationLocation(e.path)}: ${e.path?.endsWith('.duration') ? 'Thời lượng không hợp lệ. Chọn số 10, 15 hoặc 30 giây.' : e.message}`),
         ...(data.conflicts||[]).map(e=>`Scene ${e.scene_number} already exists.`)].join('\n');
     }
     if(data.message || data.error)return explain(data.message || data.error);
@@ -1775,18 +2303,25 @@ window.ProjectReview = (() => {
     return data;
   }
   function closePanel(){
+    if(state.panel){const area=el('projectPanelBody').querySelector('#projectImportJSON,#projectInfoJSON');if(area)navigationDrafts.set(`${state.project}:${state.panel}`,area.value);}
     state.panel=null;state.panelRequest++;state.validated=null;state.replaceFile=null;
     state.staging.forEach(entry=>URL.revokeObjectURL(entry.url));state.staging=[];
     state.blobs.forEach(URL.revokeObjectURL);state.blobs=[];
     el('projectPanel').hidden=true;el('projectPanelBody').replaceChildren();el('projectPanelError').textContent='';
     el('projectHome').hidden=!!state.project;el('projectDetail').hidden=!state.project;el('projectVersions').hidden=!state.scene;
+    renderBreadcrumb();
   }
   function panel(kind,title,body){
+    if(!state.panel)workspaceScroll=window.scrollY;
+    root.querySelectorAll('.project-menu[open]').forEach(menu=>menu.open=false);
     closePanel();state.panel=kind;el('projectPanel').hidden=false;
     el('projectPanelTitle').textContent=title;el('projectPanelBody').innerHTML=body;
-    el('projectPanelBack').textContent=state.project ? 'Back to project' : 'Back to Projects';
+    const area=el('projectPanelBody').querySelector('#projectImportJSON,#projectInfoJSON');
+    if(area)area.value=navigationDrafts.get(`${state.project}:${kind}`)||'';
+    el('projectPanelBack').textContent=['upload','bulk','replace','remove'].includes(kind) ? '← Ảnh tham chiếu' : state.scene ? '← Phiên bản cảnh' : state.project ? '← Cảnh & video' : '← Projects';
     el('projectHome').hidden=true;el('projectDetail').hidden=true;el('projectVersions').hidden=true;
     el('projectPanel').scrollIntoView({block:'start',behavior:'smooth'});
+    renderBreadcrumb();
   }
   function missingGroups(){
     const groups=new Map();
@@ -1799,7 +2334,7 @@ window.ProjectReview = (() => {
   }
   function renderMissing(){
     const groups=missingGroups();
-    el('projectMissing').innerHTML=groups.length ? `<section class="project-missing"><h4>Missing References - ${groups.length}</h4><button class="btn btn-p" data-action="bulk">Bulk Upload References</button>${groups.map(ref=>`<div class="project-asset" data-drop-reference="${esc(ref.name)}"><strong>${esc(ref.name)}</strong><p>Drop image here to stage it for this reference.</p><p>Used by Scenes: ${ref.scenes.join(', ')}</p><button class="btn" data-action="upload-missing" data-name="${esc(ref.name)}">Upload</button></div>`).join('')}</section>` : '';
+    el('projectMissing').innerHTML=groups.length ? `<section class="project-missing"><div class="project-actions"><strong>Còn thiếu ${groups.length} ảnh tham chiếu</strong><button class="btn" data-action="bulk">Bổ sung ảnh</button></div><details><summary>Xem ảnh còn thiếu</summary>${groups.map(ref=>`<div class="project-asset" data-drop-reference="${esc(ref.name)}"><strong>${esc(ref.name)}</strong><p>Dùng trong cảnh: ${ref.scenes.join(', ')}</p><button class="btn" data-action="upload-missing" data-name="${esc(ref.name)}">Tải ảnh lên</button></div>`).join('')}</details></section>` : '';
   }
   let runAccountDomain=null;
   async function projectAccountsPanel(){
@@ -1829,11 +2364,37 @@ window.ProjectReview = (() => {
     panel(rename ? 'rename' : chapter ? 'create-chapter' : 'create',rename ? `Rename ${kind}` : `Create ${kind}`,`<form class="project-form" id="projectNameForm"><label>${kind} Name<input id="projectNameInput" maxlength="200" required value="${rename ? esc(project.name) : ''}"></label><div class="project-actions"><button type="button" class="btn" data-action="close-panel">Cancel</button><button type="submit" class="btn btn-p" data-loading="${rename ? 'Saving...' : 'Creating...'}">${rename ? 'Save Name' : `Create ${kind}`}</button></div></form>`);
     el('projectNameInput').focus();
   }
+  function inputSample(info=false){
+    const number=info ? (state.data?.scenes[0]?.scene_number || 1) : Math.max(0,...(state.data?.scenes||[]).map(s=>s.scene_number))+1;
+    return JSON.stringify({scenes:[info ? {scene_number:number,summary:'Nhân vật bước vào căn phòng và nhìn thấy một bức thư.'} : {scene_number:number,scene_name:'Bước vào căn phòng',model:'seedance-2.5',ratio:'16:9',duration:15,start_end:false,references:[{name:'Nhan vat A',alias:'Hero'}],prompt:'@Hero bước vào căn phòng. Camera di chuyển theo sau.'}]},null,2);
+  }
+  function inputHelp(info=false){
+    return `<section class="project-input-help"><p>${info ? 'Cập nhật mô tả cho các cảnh đã có. Không thay đổi prompt tạo video.' : 'Thêm cảnh mới gồm prompt, cấu hình video và tên ảnh tham chiếu. Có thể bổ sung ảnh sau khi nhập.'}</p><div class="project-actions"><button class="btn" data-action="insert-input-sample">Chèn mẫu</button><button class="btn" data-action="copy-input-sample">Sao chép mẫu</button><label class="btn">Chọn file .json<input type="file" data-input-json accept=".json,application/json" hidden></label></div><p class="tiny" data-input-notice role="status"></p><details><summary>Xem mẫu và quy định định dạng</summary><pre>${esc(inputSample(info))}</pre>${info ? '<p>Chỉ có scene_number và summary. Số cảnh phải tồn tại trong project/chapter đang mở. Nhập lại sẽ ghi đè mô tả của các cảnh được cung cấp.</p>' : '<p>Tất cả trường trong mẫu đều bắt buộc; không thêm summary vào đây. scene_number là số nguyên dương và không được trùng. model: seedance-2.0 hoặc seedance-2.5. duration: 10, 15 hoặc 30. ratio: 16:9, 9:16, 1:1, 4:3 hoặc 3:4.</p><p>references.name là tên ảnh trong thư viện; alias là tên dùng trong prompt: alias Hero → @Hero. Không lặp name/alias trong một cảnh. Dùng references: [] nếu không có ảnh. start_end là true hoặc false; true cần đúng 2 ảnh theo thứ tự đầu → cuối.</p>'}<p>Dán JSON thuần, không kèm dấu &#96;&#96;&#96; hoặc lời giải thích. Xuống dòng trong chuỗi bằng \\n. Bấm Kiểm tra rồi Nhập.</p></details></section>`;
+  }
+  root.addEventListener('change',async event=>{
+    const input=event.target;
+    if(input.matches('[data-generation-count]')){
+      const count=Number(input.value),total=count*Number(input.dataset.ready);
+      const button=el('projectPanelBody').querySelector('[data-action="confirm-generate"],[data-action="confirm-scene-generate"]');
+      button.dataset.count=count;button.textContent=`Tạo ${total} video`;
+      el('projectGenerationTotal').textContent=`Tổng số video sẽ tạo: ${total}`;
+    }
+    if(input.matches('[data-input-json]') && input.files[0]){
+      const file=input.files[0],ticket=state.panelRequest;
+      try{
+        if(file.size>5*1024*1024)throw new Error('File quá lớn. Vui lòng chọn JSON dưới 5 MB.');
+        const text=await file.text();if(ticket!==state.panelRequest)return;
+        const area=el(state.panel==='scene-info'?'projectInfoJSON':'projectImportJSON');
+        area.value=text;area.dispatchEvent(new Event('input',{bubbles:true}));
+        root.querySelector('[data-input-notice]').textContent=`Đã đọc ${file.name}. Bấm Kiểm tra để xem kết quả.`;
+      }catch(e){error(e);}finally{input.value='';}
+    }
+  });
   function importPanel(){
-    panel('import','Import Scenes',`<div class="project-form"><label>Paste Tool Import JSON<textarea id="projectImportJSON" spellcheck="false"></textarea></label><div class="project-actions"><button class="btn" data-action="validate-import" data-loading="Validating...">Validate</button><button class="btn btn-p" id="projectImportSubmit" data-action="submit-import" data-loading="Importing..." disabled>Import</button></div></div><div id="projectImportPreview" aria-live="polite"></div>`);
+    panel('import','Nhập cảnh',`${inputHelp()}<div class="project-form"><label>Dán JSON danh sách cảnh<textarea id="projectImportJSON" spellcheck="false"></textarea></label><div class="project-actions"><button class="btn" data-action="validate-import" data-loading="Validating...">Kiểm tra</button><button class="btn btn-p" id="projectImportSubmit" data-action="submit-import" data-loading="Importing..." disabled>Nhập</button></div></div><div id="projectImportPreview" aria-live="polite"></div>`);
   }
   function importPayload(){
-    try{return JSON.parse(el('projectImportJSON').value);}catch(e){throw new Error('Invalid JSON. Check the pasted text and try again.');}
+    try{return JSON.parse(el('projectImportJSON').value);}catch(e){throw new Error('JSON chưa hợp lệ. Dùng dấu ngoặc kép, bỏ dấu phẩy cuối và dấu ``` nếu có; xem mẫu bên trên.');}
   }
   async function validateImport(){
     state.validated=null;el('projectImportSubmit').disabled=true;
@@ -1841,10 +2402,10 @@ window.ProjectReview = (() => {
     const data=await projectRequest(`/api/admin/projects/${path(state.project)}/scenes/import/validate`,{method:'POST',body:payload});
     if(el('projectImportJSON').value!==text)return;
     el('projectImportPreview').innerHTML=`<h4>Import Preview</h4><p>Scenes: ${data.scene_count}</p><p>References: ${data.unique_reference_count} unique</p><p>Matched: ${data.matched_reference_count}</p><p>Missing: ${data.missing_reference_count}</p>${data.references_missing.length ? `<h4>Missing References</h4><ul>${data.references_missing.map(r=>`<li>${esc(r.name)}</li>`).join('')}</ul><p>These references can be uploaded after import.</p>` : ''}${data.valid ? '' : `<pre class="project-error">${esc(explain(data))}</pre>`}`;
-    if(data.valid){state.validated=text;el('projectImportSubmit').disabled=false;el('projectImportSubmit').textContent=`Import ${data.scene_count} Scenes`;}
+    if(data.valid){state.validated=text;el('projectImportSubmit').disabled=false;el('projectImportSubmit').textContent=`Nhập ${data.scene_count} cảnh`;}
   }
   function uploadPanel(name=''){
-    panel('upload','Upload Reference',`<form class="project-form" id="projectUploadForm"><label>Reference Name<input id="projectAssetName" maxlength="200" required value="${esc(name)}"><small>Name must match the reference name used in imported Scenes.</small></label><label>Type<select id="projectAssetType"><option value="character">Character</option><option value="environment">Environment</option><option value="prop">Prop</option><option value="special_state">Special State</option></select></label><label>Image<input id="projectAssetFile" type="file" accept=".jpg,.jpeg,.png,.webp" required></label><div class="project-actions"><button type="button" class="btn" data-action="library">Reference Library</button><button type="submit" class="btn btn-p" data-loading="Uploading...">Upload</button></div></form>`);
+    panel('upload','Upload Reference',`<form class="project-form" id="projectUploadForm"><label>Reference Name<input id="projectAssetName" maxlength="200" required value="${esc(name)}"><small>Tên phải khớp references.name trong JSON, ví dụ Nhan vat A. Chấp nhận JPG, JPEG, PNG, WEBP.</small></label><label>Type<select id="projectAssetType"><option value="character">Character</option><option value="environment">Environment</option><option value="prop">Prop</option><option value="special_state">Special State</option></select></label><label>Image<input id="projectAssetFile" type="file" accept=".jpg,.jpeg,.png,.webp" required></label><div class="project-actions"><button type="button" class="btn" data-action="library">Reference Library</button><button type="submit" class="btn btn-p" data-loading="Uploading...">Upload</button></div></form>`);
   }
   async function resolveReferences(projectId){
     const data=await projectRequest(`/api/admin/projects/${path(projectId)}/generation-status`);
@@ -1876,10 +2437,10 @@ window.ProjectReview = (() => {
     panel('outputs','Selected Outputs','<p>Loading...</p>');const ticket=state.panelRequest;
     const data=await projectRequest(`/api/admin/projects/${path(state.project)}/selected-videos`);
     if(ticket!==state.panelRequest)return;
-    el('projectPanelBody').innerHTML=`<p>${data.selected_count} / ${data.total_scenes} selected${data.complete ? ' - Production complete' : ''}</p>${data.videos.map(video=>{
+    el('projectPanelBody').innerHTML=`<p>${data.selected_count} / ${data.total_scenes} selected${data.complete ? ' - Production complete' : ''}</p><div class="project-output-grid">${data.videos.map(video=>{
       const url=videoURL(video.video_url);
-      return `<article class="project-output"><h4>Scene ${String(video.scene_number).padStart(2,'0')} - ${esc(video.scene_name)}</h4>${url ? `<video controls preload="metadata" src="${esc(url)}" aria-label="Scene ${video.scene_number} selected video"></video>` : '<p>Video unavailable.</p>'}</article>`;
-    }).join('') || '<p>No selected outputs yet. Review completed versions and select an output.</p>'}`;
+      return `<article class="project-output"><h4>Scene ${String(video.scene_number).padStart(2,'0')} - ${esc(video.scene_name)}</h4>${url ? `<video controls playsinline preload="metadata" src="${esc(url)}#t=0.001" aria-label="Scene ${video.scene_number} selected video"></video><a class="btn" href="${esc(url)}" download target="_blank" rel="noopener">Download video</a>` : '<p>Video unavailable.</p>'}</article>`;
+    }).join('') || '<p>No selected outputs yet. Review completed versions and select an output.</p>'}</div>`;
   }
   const actionId=()=>[...crypto.getRandomValues(new Uint8Array(16))].map(n=>n.toString(16).padStart(2,'0')).join('');
   const candidateOptions=value=>[1,2,3,4,5].map(n=>`<option value="${n}" ${n===Number(value) ? 'selected' : ''}>x${n}</option>`).join('');
@@ -1972,10 +2533,18 @@ window.ProjectReview = (() => {
     const name=zone.dataset.dropReference || null;if(state.panel!=='bulk')bulkPanel();stageFiles(files,name);
   });
   function infoPanel(){
-    panel('scene-info','Import Scene Info',`<div class="project-form"><p>Update summaries of existing scenes in this Project. All scene numbers must match.</p><label>Scene Info JSON<textarea id="projectInfoJSON" spellcheck="false" placeholder='{"scenes":[{"scene_number":1,"summary":"Scene description"}]}'></textarea></label><div class="project-actions"><button class="btn" data-action="validate-info">Validate</button><button class="btn btn-p" id="projectInfoSubmit" data-action="submit-info" disabled>Import</button></div></div><div id="projectInfoPreview" aria-live="polite"></div>`);
+    panel('scene-info','Nhập mô tả cảnh',`${inputHelp(true)}<div class="project-form"><label>JSON mô tả cảnh<textarea id="projectInfoJSON" spellcheck="false" placeholder='{"scenes":[{"scene_number":1,"summary":"Scene description"}]}'></textarea></label><div class="project-actions"><button class="btn" data-action="validate-info">Kiểm tra</button><button class="btn btn-p" id="projectInfoSubmit" data-action="submit-info" disabled>Nhập</button></div></div><div id="projectInfoPreview" aria-live="polite"></div>`);
   }
   function infoPayload(){try{return JSON.parse(el('projectInfoJSON').value);}catch(e){throw new Error('Invalid Scene Info JSON.');}}
   async function workflowAction(action,button){
+    if(action==='import-example'){importPanel();el('projectPanelBody').querySelector('details').open=true;return true;}
+    if(action==='insert-input-sample' || action==='copy-input-sample'){
+      const sample=inputSample(state.panel==='scene-info');
+      if(action==='copy-input-sample'){await copy(sample);root.querySelector('[data-input-notice]').textContent='Đã sao chép mẫu.';return true;}
+      const area=el(state.panel==='scene-info'?'projectInfoJSON':'projectImportJSON');
+      if(area.value.trim() && button.dataset.confirm!=='yes'){button.dataset.confirm='yes';button.textContent='Thay nội dung bằng mẫu?';return true;}
+      area.value=sample;area.dispatchEvent(new Event('input',{bubbles:true}));area.focus();button.dataset.confirm='';button.textContent='Chèn mẫu';return true;
+    }
     if(action==='import-info'){infoPanel();return true;}
     if(action==='validate-info'){
       const text=el('projectInfoJSON').value;
@@ -2020,7 +2589,10 @@ window.ProjectReview = (() => {
     if(action==='create-chapter'){projectForm(false,true);return true;}
     if(action==='create'){projectForm();return true;}
     if(action==='rename'){projectForm(true);return true;}
-    if(action==='close-panel'){closePanel();el(state.project ? 'projectDetail' : 'projectHome').scrollIntoView({block:'start',behavior:'smooth'});return true;}
+    if(action==='close-panel'){
+      if(button.id==='projectPanelBack' && ['upload','bulk','replace','remove'].includes(state.panel)){await libraryPanel();return true;}
+      closePanel();window.scrollTo({top:workspaceScroll,behavior:'instant'});return true;
+    }
     if(action==='import'){importPanel();return true;}
     if(action==='library'){await libraryPanel();return true;}
     if(action==='outputs'){await outputsPanel();return true;}
@@ -2075,5 +2647,7 @@ window.ProjectReview = (() => {
 })();
 </script>
 
+<script src="/image-studio.js?v=20261012-multiple-1"></script>
+<script src="/image-gallery.js?v=20261012-multiple-1"></script>
 </body>
 </html>

@@ -25,7 +25,11 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from image_library import ImageLibrary
+from image_studio import ImageStudio, register_image_studio
 from browser_queue import async_playwright
+from patchright.async_api import async_playwright as manual_async_playwright
 from video_schedule import VideoScheduler
 from browser_queue import lock_file, unlock_file, ROOT as RUNTIME_ROOT
 from pydantic import BaseModel, Field
@@ -175,6 +179,7 @@ def _normalize_allowed_durations(values) -> list[int]:
 
 
 class VideoGenRequest(BaseModel):
+    batch_id: str | None = Field(None, min_length=1, max_length=200)
     name: str | None = Field(None, max_length=200)
     model: str = "seedance-2.0"
     prompt: str = Field(..., min_length=1)
@@ -185,7 +190,8 @@ class VideoGenRequest(BaseModel):
     reference_images: list[str] = Field(default_factory=list)
     reference_aliases: list[str] = Field(default_factory=list)
     start_end: bool = False
-    count: int = Field(1, ge=1, le=5, strict=True)
+    has_end_frame: bool | None = None
+    count: int = Field(1, ge=1, le=10, strict=True)
 
 
 class TaskResponse(BaseModel):
@@ -203,38 +209,70 @@ class BatchTaskResponse(BaseModel):
     tasks: list[TaskResponse]
 
 
+
+image_library = ImageLibrary(Path(__file__).resolve().parent / ".image_library")
+image_studio = ImageStudio(Path(__file__).resolve().parent / '.runtime' / 'image_studio', pool, image_library,
+                           max_concurrency=config.IMAGE_MAX_CONCURRENCY,
+                           unavailable=lambda name: JOBS.get(name, {}).get('status') == 'running'
+                           or name in WEB_SESSIONS)
+register_image_studio(app, image_studio, _admin_auth)
+
+
+@app.get("/api/admin/image-library")
+async def list_library_images(offset: int = 0, limit: int = 60, search: str = "", x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return image_library.list(max(0, offset), max(1, min(60, limit)), search[:255])
+
+
+@app.post("/api/admin/image-library", status_code=201)
+async def save_library_images(files: list[UploadFile] = File(...), x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    if not files or len(files) > config.REFERENCE_IMAGE_MAX_COUNT:
+        raise HTTPException(422, f"Maximum of {config.REFERENCE_IMAGE_MAX_COUNT} images allowed")
+    images = []
+    for upload in files:
+        data = await upload.read(config.REFERENCE_IMAGE_MAX_BYTES + 1)
+        try:
+            images.append(image_library.save(data, upload.filename, config.REFERENCE_IMAGE_MAX_BYTES))
+        except Exception as exc:
+            raise HTTPException(422, "Invalid image or file exceeds size limit") from exc
+    return {"images": images}
+
+
+@app.get("/api/admin/image-library/{identity}")
+async def library_image(identity: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    try:
+        path = image_library.path(identity)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return FileResponse(path)
+
+
+@app.delete("/api/admin/image-library/{identity}")
+async def delete_library_image(identity: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    try:
+        # Synchronous check/delete: no task creation can interleave on the event loop.
+        count = image_library.usage(store._conn, identity)
+        if count:
+            raise HTTPException(409, f"Ảnh đang được {count} job sử dụng. Xóa các job đó khỏi lịch sử trước khi xóa ảnh.")
+        image_library.delete(identity)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"ok": True}
+
+
 @app.post("/api/admin/reference-images", status_code=201)
 async def upload_reference_images(
     files: list[UploadFile] = File(...),
     x_admin_key: str | None = Header(default=None),
 ):
-    """Stores local reference images briefly for the next generation task."""
-    _admin_auth(x_admin_key)
-    if not files or len(files) > config.REFERENCE_IMAGE_MAX_COUNT:
-        raise HTTPException(422, f"Maximum of {config.REFERENCE_IMAGE_MAX_COUNT} images allowed")
-    root = Path(tempfile.mkdtemp(prefix="dola_upload_"))
-    paths = []
-    try:
-        for index, upload in enumerate(files):
-            data = await upload.read()
-            if len(data) > config.REFERENCE_IMAGE_MAX_BYTES:
-                raise ValueError("Reference image exceeds single file size limit")
-            from io import BytesIO
-            with Image.open(BytesIO(data)) as image:
-                image.verify()
-                image_format = image.format
-            suffix = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp"}.get(image_format)
-            if not suffix:
-                raise ValueError("Reference image only supports JPEG, PNG, WEBP")
-            path = root / f"image_{index}{suffix}"
-            path.write_bytes(data)
-            paths.append(str(path))
-    except Exception as exc:
-        shutil.rmtree(root, ignore_errors=True)
-        raise HTTPException(422, str(exc)) from exc
-    token = "uploaded://" + uuid.uuid4().hex
-    UPLOADED_REFERENCES[token] = (root, paths)
-    return {"reference_images": [token], "count": len(paths)}
+    """Compatibility upload endpoint; returns durable shared image references."""
+    result = await save_library_images(files, x_admin_key)
+    return {"reference_images": ["library://" + item["id"] for item in result["images"]],
+            "count": len(result["images"])}
+
 
 
 def _resolve_ratio(size, ratio):
@@ -302,11 +340,16 @@ async def resume_incomplete_tasks():
     if SERVER_GUARD is None:
         raise RuntimeError("Only one scheduler server may run per workspace; use one uvicorn worker")
     scheduler.recover_reservations()
+    image_studio.recover()
     rows = store._conn.execute(
-        "SELECT * FROM tasks WHERE status IN ('queued','processing') AND deleted_at IS NULL ORDER BY created_at"
+        "SELECT * FROM tasks WHERE (status IN ('queued','processing') OR (status='needs_recovery' AND dispatch_uncertain=1)) AND deleted_at IS NULL ORDER BY created_at"
     ).fetchall()
     for raw in rows:
         row = dict(raw)
+        if row["status"] == "needs_recovery" and row.get("dispatch_uncertain"):
+            if scheduler.reserved.get(row.get("account")) != row["id"]:
+                continue
+            store.update(row["id"],status="queued",phase="dispatching")
         # Legacy records predate the persisted dispatch checkpoint.
         if row.get("conversation_id") and row.get("phase") == "ready":
             store.update(row["id"], phase="checking")
@@ -321,6 +364,7 @@ async def stop_task_runners():
     global SERVER_GUARD
     if DOMAIN_WEB_QUEUE:
         DOMAIN_WEB_QUEUE.stop()
+    await image_studio.stop()
     runners = list(TASK_RUNNERS.values())
     for runner in runners:
         runner.cancel()
@@ -335,10 +379,20 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
     return await _submit_video(req, _auth(authorization))
 
 
-async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, prepare_only=False, project_id=None, scene_updated_at=None, generation_request_id=None, candidates_per_scene=1):
+async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, prepare_only=False, project_id=None, scene_updated_at=None, generation_request_id=None, candidates_per_scene=1, studio_task_id=None):
     """Shared admission, task snapshots and scheduling for legacy and scene inputs."""
     if project_id is not None:
         return await submit_project_generation(project_id, client, store, VideoGenRequest, _submit_video, _run_task, config.MAX_PENDING_TASKS, candidates_per_scene, generation_request_id)
+    if (req.batch_id or '').startswith('studio_') and not studio_task_id:
+        raise HTTPException(409, 'Film Studio manages retries and the 10-video limit for this batch')
+    if studio_task_id:
+        if req.count != 1 or not (req.batch_id or '').startswith('studio_') or scene_id is not None:
+            raise HTTPException(422, 'Invalid internal Film Studio submission')
+        previous = store.get(studio_task_id)
+        if previous:
+            if previous.get('batch_id') != req.batch_id:
+                raise HTTPException(409, 'Film Studio task belongs to a different batch')
+            return BatchTaskResponse(batch_id=req.batch_id, tasks=[TaskResponse(id=studio_task_id, status=previous['status'])])
     duration = req.duration or 10
     if duration not in SUPPORTED_DURATIONS:
         raise HTTPException(422, "Currently supports durations of 10s, 15s, and 30s")
@@ -360,7 +414,11 @@ async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, 
             reference_images = ["asset://" + ref["asset_id"] for ref in reference_snapshot]
         else:
             for reference in req.reference_images:
-                if reference.startswith("uploaded://"):
+                if reference.startswith("library://"):
+                    image_library.path(reference[10:])
+                    image_count += 1
+                    reference_images.append(reference)
+                elif reference.startswith("uploaded://"):
                     uploaded = UPLOADED_REFERENCES.get(reference)
                     if not uploaded:
                         raise ValueError("Uploaded images expired; please upload them again")
@@ -371,11 +429,12 @@ async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, 
                     image_count += 1
         if image_count > config.REFERENCE_IMAGE_MAX_COUNT:
             raise ValueError("Too many reference images")
-        if len(set(reference_images)) != len(reference_images):
-            raise ValueError("Duplicate reference entries are not supported")
         resolved_prompt = resolve_reference_aliases(req.prompt, req.reference_aliases, image_count)
-        if req.start_end and image_count != 2:
-            raise ValueError("Start / End requires exactly two images: start first, end second")
+        has_end_frame = req.has_end_frame if req.has_end_frame is not None else image_count >= 2
+        if req.start_end and image_count < 1:
+            raise ValueError("Start / End requires a start image")
+        if req.start_end and has_end_frame and image_count < 2:
+            raise ValueError("An end frame was specified but fewer than two images were provided")
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     # Queue task when accounts are busy; reject only when pool is fully exhausted.
@@ -385,65 +444,58 @@ async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, 
         raise HTTPException(429, "Insufficient credits: All accounts lack points, waiting for refresh")
     if not pool.accounts:
         raise HTTPException(503, "no account in pool")
-    task_ids = ["video_" + uuid.uuid4().hex for _ in range(req.count)]
-    batch_id = store.submission_batch_id("scene",scene_id,generation_request_id,client["api_key_hash"]) if scene_id and generation_request_id else ("batch_" + uuid.uuid4().hex if req.count > 1 else None)
+    task_ids = [studio_task_id] if studio_task_id else ["video_" + uuid.uuid4().hex for _ in range(req.count)]
+    batch_id = store.submission_batch_id("scene",scene_id,generation_request_id,client["api_key_hash"]) if scene_id and generation_request_id else (req.batch_id or "batch_" + uuid.uuid4().hex)
     ratio = _resolve_ratio(req.size, req.ratio)
     prompt = resolved_prompt
-    if req.start_end:
+    if req.start_end and not has_end_frame:
+        prompt += '\n\nUse the first uploaded image as the opening frame. Continue the motion naturally from this frame, preserving its composition and subjects. No ending frame is specified.'
+        if image_count > 1:
+            prompt += ' Use all remaining uploaded images only as environment and scene references for background, lighting, and scene details; do not treat them as an ending frame.'
+    elif req.start_end:
         prompt += ("\n\nUse the first uploaded image as the opening frame and the second "
                    "uploaded image as the ending frame. Create continuous motion between "
                    "these two frames, preserving their composition and subjects.")
+        if image_count > 2:
+            prompt += (" Use uploaded images from the third onward only as additional environment "
+                       "and scene references. Use them to guide the background, lighting, and scene "
+                       "details without replacing the opening or ending frame or overriding their subjects.")
     if prepare_only:
         if scene_id is None or reference_snapshot is None:
             raise ValueError("Project batch preparation requires persistent scene references")
         return dict(scene_id=scene_id, model=req.model, prompt=prompt, ratio=ratio or "default",
                     duration=duration, start_end=req.start_end, name=req.name,
                     reference_images=reference_images, reference_snapshot=reference_snapshot)
-    # Each runner owns its uploaded copies and can clean them independently.
-    task_references = {}
-    copied_tokens = []
-    accepted = False
+    # Resolve again after URL validation awaits, then persist without yielding.
+    references = []
     try:
-        for task_id in task_ids:
-            references = []
-            for reference in reference_images:
-                uploaded = UPLOADED_REFERENCES.get(reference)
-                if uploaded:
-                    job_root = Path(".job_media") / task_id
-                    job_root.mkdir(parents=True, exist_ok=True)
-                    root = Path(tempfile.mkdtemp(prefix="upload_", dir=job_root)).resolve()
-                    token = "uploaded://" + uuid.uuid4().hex
-                    paths = []
-                    UPLOADED_REFERENCES[token] = (root, paths)
-                    copied_tokens.append(token)
-                    for index, source in enumerate(uploaded[1]):
-                        target = root / f"image_{index}{Path(source).suffix}"
-                        shutil.copy2(source, target)
-                        paths.append(str(target))
-                    references.extend("local://" + path for path in paths)
-                else:
-                    references.append(reference)
-            task_references[task_id] = references
+        for reference in reference_images:
+            if reference.startswith("library://"):
+                image_library.path(reference[10:])
+                references.append(reference)
+            elif reference.startswith("uploaded://"):
+                for path in UPLOADED_REFERENCES[reference][1]:
+                    references.append("library://" + image_library.import_path(path)["id"])
+            else:
+                references.append(reference)
+    except (ValueError, KeyError, OSError) as exc:
+        raise HTTPException(422, "Reference image is no longer available; please select it again") from exc
+    task_references = {task_id: references for task_id in task_ids}
+    try:
         store.create_batch(
-            task_ids,
-            req.model,
-            prompt,
-            ratio or "default",
-            duration,
+            task_ids, req.model, prompt, ratio or "default", duration,
             reference_images={key: json.dumps(value, ensure_ascii=False) for key, value in task_references.items()},
-            batch_id=batch_id,
-            start_end=req.start_end,
-            api_key_hash=client["api_key_hash"],
-            api_key_name=client["api_key_name"],
-            daily_limit=client["daily_limit"],
-            concurrency_limit=client["concurrency_limit"],
+            batch_id=batch_id, start_end=req.start_end,
+            append_batch=(bool(req.batch_id) and scene_id is None and
+                          (not studio_task_id or store._conn.execute('SELECT 1 FROM tasks WHERE batch_id=?', (req.batch_id,)).fetchone() is not None)),
+            api_key_hash=client["api_key_hash"], api_key_name=client["api_key_name"],
+            daily_limit=client["daily_limit"], concurrency_limit=client["concurrency_limit"],
             max_pending=config.MAX_PENDING_TASKS,
             name=req.name,
             scene_id=scene_id,
             reference_snapshot=reference_snapshot,
             guard_scene=scene_id is not None, scene_updated_at=scene_updated_at,
         )
-        accepted = True
     except TaskSubmissionConflict as exc:
         raise HTTPException(409, str(exc)) from exc
     except sqlite3.IntegrityError as exc:
@@ -454,14 +506,9 @@ async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, 
         raise HTTPException(429, str(exc)) from exc
     except PendingTaskLimitExceeded as exc:
         raise HTTPException(429, str(exc)) from exc
-    finally:
-        if not accepted:
-            for token in copied_tokens:
-                root, _ = UPLOADED_REFERENCES.pop(token)
-                shutil.rmtree(root, ignore_errors=True)
-    for token in copied_tokens:
-        UPLOADED_REFERENCES.pop(token, None)
-    for reference in reference_images:
+    if studio_task_id:
+        store.rename_batch(batch_id, req.name or batch_id)
+    for reference in set(reference_images):
         uploaded = UPLOADED_REFERENCES.pop(reference, None)
         if uploaded:
             shutil.rmtree(uploaded[0], ignore_errors=True)
@@ -471,7 +518,7 @@ async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, 
         ))
     tasks = [TaskResponse(id=task_id, name=store.get(task_id).get("name", ""), status="queued", model=req.model, prompt=prompt)
              for task_id in task_ids]
-    return BatchTaskResponse(batch_id=batch_id, tasks=tasks) if batch_id else tasks[0]
+    return BatchTaskResponse(batch_id=batch_id, tasks=tasks) if req.count > 1 or req.batch_id or (scene_id and generation_request_id) else tasks[0]
 
 
 @app.get("/v1/videos/{task_id}", response_model=TaskResponse)
@@ -556,6 +603,8 @@ async def admin_accounts(x_admin_key: str | None = Header(default=None)):
     accounts = []
     for account in pool.list_accounts():
         public = pool.public_account(account)
+        from dola_account_lifecycle import read_checkpoint
+        public["dola_delete_phase"] = read_checkpoint(account["name"]).get("phase", "")
         public["ready_to_generate"] = bool(
             scheduler.eligible(account)
             and JOBS.get(account["name"], {}).get("status") != "running"
@@ -721,6 +770,74 @@ async def admin_account_delete(name: str, x_admin_key: str | None = Header(defau
 
 
 
+async def _run_dola_delete(name: str, resume: bool = False):
+    from dola_account_lifecycle import delete_and_relogin, checkpoint, read_checkpoint
+    recovering_uncertain = resume and read_checkpoint(name).get("phase") == "submitting"
+    def report(stage, message):
+        if JOBS[name].get("stage") != stage:
+            logging.getLogger("uvicorn.error").info("[delete-dola] account=%s stage=%s", name, stage)
+        JOBS[name].update(stage=stage, message=message)
+    try:
+        async with pool.account_activity(name, "delete_dola"):
+            # Keep failed/interrupted flows out of dispatch, including after restart.
+            pool.auth_result(name, "expired", "Dola deletion / Google re-login in progress")
+            await delete_and_relogin(name, pool._meta(name)["email"], report, resume=resume)
+            report("verifying", "Verifying the new Dola session")
+            from browser import inspect_account_session
+            result = await inspect_account_session(name)
+            if result["state"] != "active":
+                raise RuntimeError("Google re-login could not be verified")
+            state = pool.auth_result(name, "active", identity=result)
+            if state != "active":
+                raise RuntimeError("Re-login identity duplicates another account")
+            pool.reset_renewed_account_usage(name)
+            checkpoint(name, "complete")
+            JOBS[name].update(status="success", stage="complete", message=("Google login verified; usage reset to 0/2; previous deletion result was not confirmed" if recovering_uncertain else "Account renewed; Google login verified; usage reset to 0/2"), error="")
+    except Exception as exc:
+        # Never copy browser exception URLs (OAuth tokens) into logs / dashboard.
+        import traceback
+        locations = " > ".join(
+            f"{frame.name}:{frame.lineno}" for frame in traceback.extract_tb(exc.__traceback__)
+            if frame.filename.endswith(("dola_account_lifecycle.py", "server.py", "browser.py")))
+        stage = JOBS[name].get("stage", "starting")
+        error = f"Dola recovery stopped at {stage} ({type(exc).__name__}). Resume login to continue."
+        pool.auth_result(name, "expired", error)
+        JOBS[name].update(status="failed", error=error)
+        logging.getLogger("uvicorn.error").warning("[delete-dola] account=%s stage=%s failure=%s location=%s", name, stage, type(exc).__name__, locations)
+
+
+@app.post("/api/admin/accounts/{name}/delete-dola", status_code=202)
+async def admin_delete_dola(name: str, resume: bool = False,
+                            x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    name = pool.resolve_account(name)
+    if name not in pool.accounts:
+        raise HTTPException(404, "Account not found")
+    meta = pool._meta(name)
+    if meta["account_type"] != "google":
+        raise HTTPException(400, "Only Google accounts are supported; Facebook will be added later")
+    if not meta["email"]:
+        raise HTTPException(400, "Account email is required to select the correct Google identity")
+    if scheduler.reservation_ids(name):
+        raise HTTPException(409, "Account has unfinished video tasks; finish or stop them first")
+    from browser import ACTIVE_CONTEXTS
+    lock = pool._locks.get(name)
+    if name in WEB_SESSIONS or name in ACTIVE_CONTEXTS or (lock and lock.locked()) or JOBS.get(name, {}).get("status") == "running":
+        raise HTTPException(409, "Account is busy; close its browser first")
+    from dola_account_lifecycle import read_checkpoint
+    phase = read_checkpoint(name).get("phase")
+    if resume:
+        if phase not in ("deleted", "submitting"):
+            raise HTTPException(409, "No interrupted deletion awaiting login")
+    else:
+        if phase in ("submitting", "deleted"):
+            raise HTTPException(409, "Previous deletion requires recovery; do not delete again")
+    pool.auth_result(name, "expired", "Dola deletion / Google re-login in progress")
+    JOBS[name] = {"kind":"delete_dola", "status":"running", "stage":"starting", "error":"", "started_at":time.time()}
+    asyncio.create_task(_run_dola_delete(name, resume))
+    return {"ok": True}
+
+
 @app.post("/api/admin/accounts/{name}/reset-quota")
 async def admin_account_reset_quota(name: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
@@ -757,18 +874,26 @@ async def _run_open_web(name: str, conversation_id=None):
             raise RuntimeError("Account is busy")
         await lock.acquire()
         acquired = True
-        pool._activities[name] = "browser_open"
+        pool._activities[name] = "browser_starting"
         from browser import launch_account_context
 
-        async with async_playwright() as playwright:
+        # Interactive windows launch immediately, outside worker browser admission.
+        async with manual_async_playwright() as playwright:
             context = await launch_account_context(
                 playwright, name, headless=False,
                 use_extension=config.EXTENSION_ENABLED)
+            page = context.pages[0] if context.pages else await context.new_page()
+            await page.bring_to_front()
             session["status"] = "open"
             session["started_at"] = time.time()
-            page = context.pages[0] if context.pages else await context.new_page()
-            await page.goto("https://www.dola.com/chat" + ("/" + conversation_id if conversation_id else ""), timeout=60000,
-                            wait_until="domcontentloaded")
+            pool._activities[name] = "browser_open"
+            try:
+                await page.goto("https://www.dola.com/chat" + ("/" + conversation_id if conversation_id else ""), timeout=60000,
+                                wait_until="domcontentloaded")
+            except Exception as exc:
+                # Manual browsers must remain available for inspection and reload.
+                session["error"] = f"{type(exc).__name__}: {exc}"[:500]
+                print(f"[open-web:{name}] Navigation failed; keeping browser open: {session['error']}", flush=True)
             while context.pages:
                 await asyncio.sleep(1)
     except Exception as exc:
@@ -789,6 +914,34 @@ async def _run_open_web(name: str, conversation_id=None):
             pool._activities.pop(name, None)
             lock.release()
         WEB_SESSIONS.pop(name, None)
+
+
+@app.post('/api/admin/image-studio/jobs/{identity}/open', status_code=202)
+async def open_image_conversation(identity: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    row = image_studio.get(identity)
+    account, conversation = row.get('account') or row.get('requested_account'), row.get('conversation_id')
+    if not account:
+        raise HTTPException(409, 'Tác vụ chưa được gán tài khoản Dola.')
+    if account not in pool.accounts:
+        raise HTTPException(404, 'Tài khoản của tác vụ không còn tồn tại.')
+    if JOBS.get(account, {}).get('status') == 'running':
+        raise HTTPException(409, 'Tài khoản đang đăng nhập hoặc kiểm tra. Hãy thử lại sau.')
+    from browser import focus_task_conversation, focus_account_context
+    try:
+        focused = await focus_task_conversation(account, conversation) if conversation else await focus_account_context(account)
+        if focused:
+            return {'ok': True, 'status': 'open'}
+    except Exception as exc:
+        raise HTTPException(409, 'Trình duyệt tài khoản đang bận. Hãy thử lại khi tác vụ hoàn tất.') from exc
+    lock = pool._locks.get(account)
+    if account in WEB_SESSIONS or (lock and lock.locked()):
+        raise HTTPException(409, 'Tài khoản đang bận hoặc trình duyệt đang mở. Hãy thử lại sau.')
+    if len(WEB_SESSIONS) >= 10:
+        raise HTTPException(409, 'Đã mở 10 cửa sổ Dola. Đóng bớt cửa sổ trước khi mở thêm.')
+    WEB_SESSIONS[account] = {'status': 'starting', 'started_at': time.time()}
+    asyncio.create_task(_run_open_web(account, conversation))
+    return {'ok': True, 'status': 'starting'}
 
 
 @app.post("/api/admin/accounts/{name}/open-web", status_code=202)
@@ -1056,11 +1209,34 @@ async def admin_jobs(x_admin_key: str | None = Header(default=None)):
     return {"jobs": {pool.account_uuid(name): job for name, job in JOBS.items()}}
 
 
+class BatchRenameRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+@app.get("/api/admin/batches")
+async def admin_batches(x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return {"batches": store.list_batches()}
+
+
+@app.patch("/api/admin/batches/{batch_id}")
+async def admin_rename_batch(batch_id: str, body: BatchRenameRequest, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, 'Batch name cannot be empty')
+    try:
+        store.rename_batch(batch_id, name)
+    except KeyError:
+        raise HTTPException(404, 'Batch not found')
+    return {"ok": True}
+
+
 @app.get("/api/admin/tasks")
 async def admin_tasks(limit: int = -1, x_admin_key: str | None = Header(default=None), task_id: str = "",
                       query: str = "", search_in: str = "all", status: str = "",
                       account: str = "", duration: int = 0, edit_selected: bool | None = None,
-                      page: int = 1, video_filter: str = "",
+                      page: int = 1, video_filter: str = "", group_by_batch: bool = False,
                       created_from: float | None = None, created_before: float | None = None):
     _admin_auth(x_admin_key)
     if any(value is not None and not math.isfinite(value) for value in (created_from, created_before)):
@@ -1071,9 +1247,13 @@ async def admin_tasks(limit: int = -1, x_admin_key: str | None = Header(default=
         raise HTTPException(422, "Unknown video filter")
     result = store.recent_tasks(limit, task_id=task_id, query=query, search_in=search_in,
         status=status, account=account, duration=duration, edit_selected=edit_selected,
-        page=page, video_filter=video_filter, created_from=created_from, created_before=created_before)
+        page=page, video_filter=video_filter, created_from=created_from, created_before=created_before,
+        group_by_batch=group_by_batch)
     result["tasks"] = [{**t, "account": t.get("account_uuid") or
         (pool.account_uuid(t["account"]) if t.get("account") else None)} for t in result["tasks"]]
+    studio_runtime = getattr(app.state, 'film_studio_runtime', None)
+    if studio_runtime:
+        result['tasks'] = studio_runtime.workflow.annotate_tasks(result['tasks'])
     return result
 
 
@@ -1120,6 +1300,8 @@ async def admin_task_delete(task_id: str, x_admin_key: str | None = Header(defau
         row = store.get(task_id)
         if not row or row.get("deleted_at") is not None:
             raise HTTPException(404, "Task not found")
+        if (row.get('batch_id') or '').startswith('studio_'):
+            raise HTTPException(409, 'Film Studio retains its render history and selected takes')
         if row.get('edit_selected'):
             raise HTTPException(409, 'Unselect this video for editing before deleting its record')
         runner = TASK_RUNNERS.get(task_id)
@@ -1134,6 +1316,90 @@ async def admin_task_delete(task_id: str, x_admin_key: str | None = Header(defau
         return {"ok": True}
 
 
+
+class SwitchTaskAccount(BaseModel):
+    account_uuid: str
+
+
+def _switch_account_candidates(row):
+    from browser import ACTIVE_CONTEXTS
+    return [
+        {**pool.public_account(account), "number": index + 1}
+        for index, account in enumerate(pool.list_accounts())
+        if account["name"] != row.get("account")
+        and pool._schedulable(account) and not account["busy"]
+        and account["name"] not in WEB_SESSIONS
+        and account["name"] not in ACTIVE_CONTEXTS
+        and JOBS.get(account["name"], {}).get("status") != "running"
+    ]
+
+
+def _review_task(task_id):
+    row = store.get(task_id)
+    if not row or row.get("deleted_at") is not None:
+        raise HTTPException(404, "Task not found")
+    if row["status"] not in ("needs_recovery", "stopped"):
+        raise HTTPException(409, "Only stopped tasks or tasks needing review can switch accounts")
+    return row
+
+
+@app.get("/api/admin/tasks/{task_id}/switch-account")
+async def task_switch_candidates(task_id: str, x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    return {"accounts": _switch_account_candidates(_review_task(task_id))}
+
+
+@app.post("/api/admin/tasks/{task_id}/switch-account")
+async def task_switch_account(task_id: str, body: SwitchTaskAccount,
+                              x_admin_key: str | None = Header(default=None)):
+    _admin_auth(x_admin_key)
+    async with TASK_ACTION_LOCKS.setdefault(task_id, asyncio.Lock()):
+        row = _review_task(task_id)
+        runner = TASK_RUNNERS.get(task_id)
+        if runner and not runner.done():
+            raise HTTPException(409, "Task is still running; try again shortly")
+        target = next((a for a in _switch_account_candidates(row)
+                       if a["uuid"] == body.account_uuid), None)
+        if target is None:
+            raise HTTPException(409, "Selected account is no longer available; choose another account")
+        try:
+            paths = json.loads(row.get("reference_paths") or "[]")
+            sources = json.loads(row.get("reference_images") or "[]")
+            if not isinstance(paths, list) or not isinstance(sources, list):
+                raise ValueError()
+            if sources and all(isinstance(s, str) and s.startswith("library://") for s in sources):
+                paths = [str(image_library.path(s[10:])) for s in sources]
+            if not paths and sources:
+                if not all(isinstance(s, str) and s.startswith("local://") for s in sources):
+                    raise ValueError()
+                paths = [s[8:] for s in sources]
+            if sources and not any(str(s).startswith("uploaded://") for s in sources) and len(paths) != len(sources):
+                raise ValueError()
+            if not all(isinstance(p, str) and Path(p).is_file() for p in paths):
+                raise ValueError()
+        except (TypeError, ValueError, OSError):
+            raise HTTPException(409, "Saved reference images are missing or invalid; account was not changed")
+        name = pool.resolve_account(target["uuid"])
+        # No awaits between checking availability and reserving the target.
+        # Preserve all input fields and reset only the previous execution state.
+        if row.get("account") in pool.accounts:
+            pool.set_scheduling(row["account"], False)
+        store.update(task_id, account=name, account_uuid=target["uuid"],
+                     status="queued", phase="ready", conversation_id=None,
+                     deadline_at=None, last_poll_at=None, failure_code=None,
+                     next_check_at=None, accepted_at=None, eta_seconds=None, eta_raw=None,
+                     check_round=0, retry_count=0, after_index=0, dispatch_uncertain=0,
+                     submitted_at=None, result_url=None, video_url=None, error=None,
+                     finished_at=None)
+        scheduler.release(row)
+        scheduler.reserved[name] = task_id
+        logging.getLogger("uvicorn.error").info(
+            "Task account switch task=%s old=%s new=%s previous_conversation=%s",
+            task_id, row.get("account"), name, row.get("conversation_id"))
+        TASK_RUNNERS[task_id] = asyncio.create_task(_run_task(task_id))
+        return {"ok": True, "status": "queued", "account_uuid": target["uuid"]}
+
+
 @app.post("/api/admin/tasks/{task_id}/{action}")
 async def admin_task_action(task_id: str, action: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
@@ -1143,6 +1409,8 @@ async def admin_task_action(task_id: str, action: str, x_admin_key: str | None =
         row = store.get(task_id)
         if not row or row.get("deleted_at") is not None:
             raise HTTPException(404, "Task not found")
+        if (row.get('batch_id') or '').startswith('studio_') and action == 'retry':
+            raise HTTPException(409, 'Retry this video through Film Studio to preserve attempt accounting')
         if row["status"] == "completed" and action != "open":
             raise HTTPException(409, "Task already completed")
         if action == "open":
@@ -1273,5 +1541,94 @@ async def admin_key_delete(key: str, x_admin_key: str | None = Header(default=No
 # Register API routes before the dashboard catch-all mount.
 register_asset_routes(app, store, _admin_auth, _auth, VideoGenRequest, _submit_video)
 
+from task_references import register_task_reference_routes
+register_task_reference_routes(app, store, _admin_auth, image_library, Path(__file__).resolve().parent)
+
+from film_studio import register_film_studio
+film_registry = register_film_studio(app, _admin_auth, Path(config.DB_PATH).with_name('film_studio.db'))
+from studio_api import register_studio_workflow
+
+
+async def _studio_submit_video(payload):
+    request = VideoGenRequest(batch_id=payload['batch_id'], name=payload['name'],
+                              model='seedance-2.5', ratio='16:9', duration=30, count=1,
+                              prompt=payload['prompt'], reference_images=payload['reference_images'],
+                              reference_aliases=payload.get('reference_aliases', []))
+    client = {**_anonymous_client(), 'api_key_name': 'Film Studio', 'concurrency_limit': 1}
+    try:
+        return await _submit_video(request, client, studio_task_id=payload['task_id'])
+    except HTTPException as exc:
+        if store.get(payload['task_id']) is None:
+            from studio_runtime import AdmissionRejected
+            raise AdmissionRejected(exc.status_code, exc.detail) from exc
+        raise
+
+
+register_studio_workflow(app, _admin_auth, film_registry, image_library, _studio_submit_video, store.get,
+                         config.REFERENCE_IMAGE_MAX_COUNT, image_studio=image_studio)
+
+
+FILM_STUDIO_SUPERVISOR = None
+
+
+async def _film_studio_supervisor_loop():
+    """Keep the selected Account List context and ChatGPT worker alive.
+
+    The durable workflow remains authoritative.  This supervisor only restores
+    transport while a nonterminal, unpaused Film Studio run exists, and never
+    opens a second browser for an already-live account context.
+    """
+    from browser import ACTIVE_CONTEXTS
+    from studio_workflow import TERMINAL
+    while True:
+        try:
+            runtime = app.state.film_studio_runtime
+            active = [item for item in runtime.workflow.list()
+                      if item['status'] not in TERMINAL and not item.get('paused')]
+            if active:
+                settings = film_registry.read()
+                worker = app.state.film_studio_chatgpt
+                if settings.account_id:
+                    account = pool.resolve_account(settings.account_id)
+                    if (account not in ACTIVE_CONTEXTS and account not in WEB_SESSIONS
+                            and not (pool._locks.get(account) and pool._locks[account].locked())):
+                        WEB_SESSIONS[account] = {'status': 'starting', 'started_at': time.time(),
+                                                 'owner': 'film_studio_supervisor'}
+                        asyncio.create_task(_run_open_web(account))
+                    if account in ACTIVE_CONTEXTS and not worker.enabled:
+                        await worker.connect_profile()
+                elif (settings.profile_id or settings.chatgpt_profile_id) and not worker.enabled:
+                    await worker.connect_profile()
+                # Connection alone does not advance a durable Film Studio
+                # task.  The worker owns one serialized operation per tick
+                # and journals delivery before Send, so invoking it here lets
+                # an unpaused run recover and continue after restart without
+                # requiring a manual API request.
+                if worker.enabled:
+                    await worker.tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logging.getLogger('uvicorn.error').warning(
+                'Film Studio transport supervisor retrying: %s', str(exc)[:500])
+        await asyncio.sleep(5)
+
+
+@app.on_event('startup')
+async def start_film_studio_supervisor():
+    global FILM_STUDIO_SUPERVISOR
+    if FILM_STUDIO_SUPERVISOR is None or FILM_STUDIO_SUPERVISOR.done():
+        FILM_STUDIO_SUPERVISOR = asyncio.create_task(_film_studio_supervisor_loop())
+
+
+@app.on_event('shutdown')
+async def stop_film_studio_supervisor():
+    global FILM_STUDIO_SUPERVISOR
+    if FILM_STUDIO_SUPERVISOR:
+        FILM_STUDIO_SUPERVISOR.cancel()
+        await asyncio.gather(FILM_STUDIO_SUPERVISOR, return_exceptions=True)
+        FILM_STUDIO_SUPERVISOR = None
+
 app.mount("/", StaticFiles(directory="web", html=True), name="web")
+
 

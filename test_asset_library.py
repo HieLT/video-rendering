@@ -25,7 +25,16 @@ from test_video_batch import isolated_api, backend_checks
 
 def run_saved_task(case, args):
     """Exercise server runner + real scheduler/reference copies/download, mock only Dola."""
-    scheduler = VideoScheduler(case.store, SimpleNamespace())
+    # The current scheduler journals quota claims even for a mocked completed take.
+    # Keep that ledger isolated too, rather than omitting the pool DB contract.
+    ledger = sqlite3.connect(':memory:')
+    ledger.executescript('CREATE TABLE account_usage(uuid TEXT PRIMARY KEY,used INTEGER,last_used_at REAL);'
+                         "INSERT INTO account_usage VALUES('fixture',0,0);"
+                         'CREATE TABLE accounts_meta(name TEXT PRIMARY KEY,last_used_at REAL);'
+                         "INSERT INTO accounts_meta VALUES('fixture',0);")
+    fixture_pool = SimpleNamespace(_conn=ledger, account_uuid=lambda name: name,
+                                   used_today=lambda name: ledger.execute('SELECT used FROM account_usage WHERE uuid=?', (name,)).fetchone()[0])
+    scheduler = VideoScheduler(case.store, fixture_pool)
     case.ns['scheduler'] = scheduler
     output = {}
     async def account(row):
@@ -42,6 +51,7 @@ def run_saved_task(case, args):
             asyncio.run(case.runner(*args))
     finally:
         os.chdir(previous)
+        ledger.close()
 
 
 def image_bytes(fmt='PNG', color='red'):
@@ -57,6 +67,8 @@ class LibraryApiTests(unittest.TestCase):
         self.root_patch = patch('config.ASSET_DIR', str(self.root))
         self.root_patch.start()
         self.ns, self.client_policy = isolated_api()
+        from image_library import ImageLibrary
+        self.ns['image_library'] = ImageLibrary(Path(self.tmp.name) / 'shared-library')
         self.store = self.ns['store']
         self.runner = self.ns['_run_task']
         self.queued = []
@@ -455,7 +467,7 @@ class SnapshotMigrationTests(unittest.TestCase):
                 self.assertIsNone(upgraded.get('old')['reference_snapshot'])
                 self.assertEqual(upgraded.get('old')['scene_id'], scene['id'])
                 self.assertEqual(upgraded.get('old')['prompt'], 'old prompt')
-                self.assertEqual(upgraded.get_project(project['id']), project)
+                self.assertEqual(upgraded.get_project(project['id']), {**project, 'parent_project_id': None})
                 upgraded._conn.close()
             with closing(sqlite3.connect(str(path) + '.before_v3.bak')) as backup:
                 self.assertEqual(backup.execute('PRAGMA user_version').fetchone()[0], 2)

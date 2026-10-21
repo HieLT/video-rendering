@@ -92,6 +92,7 @@ class TaskStore(ProductionStoreMixin):
                     ("deleted_at", "REAL"),
                     ("start_end", "INTEGER DEFAULT 0"),
                     ("batch_id", "TEXT"),
+                    ("batch_name", "TEXT DEFAULT ''"),
                     ("batch_index", "INTEGER"),
                     ("batch_count", "INTEGER"),
                     ("conversation_id", "TEXT"),
@@ -198,9 +199,10 @@ class TaskStore(ProductionStoreMixin):
         reference_snapshot=None,
         guard_scene=False,
         scene_updated_at=None,
+        append_batch=False,
     ):
-        if not 1 <= len(task_ids) <= 5 or len(set(task_ids)) != len(task_ids):
-            raise ValueError("Expected 1 to 5 unique task IDs")
+        if not 1 <= len(task_ids) <= 10 or len(set(task_ids)) != len(task_ids):
+            raise ValueError("Expected 1 to 10 unique task IDs")
         now = time.time()
         with _LOCK, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -213,6 +215,18 @@ class TaskStore(ProductionStoreMixin):
                         raise TaskSubmissionConflict('This Scene already has active candidates; review them or wait before regenerating')
                     if scene_updated_at is not None and scene['updated_at'] != scene_updated_at:
                         raise TaskSubmissionConflict('Scene references/configuration changed during submission; refresh and retry')
+            offset = 0
+            batch_name = ''
+            if append_batch:
+                existing = self._conn.execute("SELECT * FROM tasks WHERE batch_id=?", (batch_id,)).fetchall()
+                if not existing or not any(row['deleted_at'] is None for row in existing):
+                    raise TaskSubmissionConflict('Batch no longer exists')
+                if any(row['api_key_hash'] != api_key_hash for row in existing):
+                    raise TaskSubmissionConflict('Select the API key that owns this batch')
+                if any(row['scene_id'] for row in existing):
+                    raise TaskSubmissionConflict('Project batches cannot accept standalone videos')
+                offset = max(row['batch_index'] or 0 for row in existing)
+                batch_name = existing[0]['batch_name'] or ''
             snapshot_json = (self._validate_reference_snapshot(scene_id, reference_snapshot)
                              if reference_snapshot is not None else None)
             if max_pending > 0:
@@ -251,13 +265,25 @@ class TaskStore(ProductionStoreMixin):
                     max(0, int(concurrency_limit or 0)),
                     int(start_end),
                     batch_id,
-                    index,
-                    len(task_ids),
+                    offset + index,
+                    offset + len(task_ids),
                     ((name or "").strip() + (f" ({index}/{len(task_ids)})" if len(task_ids) > 1 and name else "")),
                     scene_id,
                     snapshot_json,
                 ) for index, task_id in enumerate(task_ids, 1)])
+            if batch_id:
+                self._conn.execute("UPDATE tasks SET batch_count=?, batch_name=? WHERE batch_id=?", (offset + len(task_ids), batch_name, batch_id))
             self._conn.commit()
+
+    def list_batches(self):
+        with _LOCK:
+            return [dict(row) for row in self._conn.execute("SELECT batch_id, MAX(batch_name) AS name, COUNT(*) AS task_count, MAX(created_at) AS created_at, MAX(CASE WHEN scene_id IS NOT NULL THEN 1 ELSE 0 END) AS project_batch FROM tasks WHERE batch_id IS NOT NULL AND deleted_at IS NULL GROUP BY batch_id ORDER BY created_at DESC")]
+
+    def rename_batch(self, batch_id, name):
+        with _LOCK, self._conn:
+            if not self._conn.execute("SELECT 1 FROM tasks WHERE batch_id=? AND deleted_at IS NULL", (batch_id,)).fetchone():
+                raise KeyError(batch_id)
+            self._conn.execute("UPDATE tasks SET batch_name=? WHERE batch_id=?", (name, batch_id))
 
     @staticmethod
     def submission_batch_id(scope, identifier, request_id, client_hash):
@@ -283,6 +309,7 @@ class TaskStore(ProductionStoreMixin):
             status = active['status'].upper() if active else ('SELECTED' if selected else (scene['readiness'] if not scene['ready'] else (latest['status'].upper() if latest else 'READY')))
             result.append({**scene, 'generation_status':status, 'latest_task':latest,
                            'active_task':active, 'selected_task':selected, 'skip_reason':reason,
+                           'latest_completed_task':next((r for r in attempts if r['status']=='completed' and (r['video_url'] or '').strip()),None),
                            'production_status':production_status(scene,attempts,active,selected),
                            'candidate_counts':counts,'candidate_revision':revision,
                            'completed_attempt_count':sum(row['status']=='completed' for row in attempts)})
@@ -443,7 +470,7 @@ class TaskStore(ProductionStoreMixin):
                      status: str = "", account: str = "", duration: int = 0,
                      edit_selected: bool | None = None, page: int | None = None,
                      video_filter: str = "", created_from: float | None = None,
-                     created_before: float | None = None) -> list | dict:
+                     created_before: float | None = None, group_by_batch: bool = False) -> list | dict:
         fields = {"name": ["name"], "id": ["id"], "prompt": ["prompt"], "client": ["api_key_name"],
                   "batch": ["batch_id"], "error": ["error"]}
         clauses, params = [], []
@@ -484,6 +511,29 @@ class TaskStore(ProductionStoreMixin):
         where = " AND ".join(clauses)
         with _LOCK:
             total = self._conn.execute("SELECT COUNT(*) FROM tasks WHERE " + where, params).fetchone()[0]
+            if group_by_batch:
+                # Prefix standalone IDs so they cannot collide with batch IDs.
+                cte = ("WITH filtered AS (SELECT *, CASE WHEN COALESCE(batch_id,'')<>'' "
+                       "THEN 'batch:' || batch_id ELSE 'task:' || id END AS page_group "
+                       "FROM tasks WHERE " + where + "), groups AS ("
+                       "SELECT page_group, MAX(created_at) AS newest, "
+                       "CASE WHEN batch_id LIKE 'studio_film_%' THEN substr(batch_id,1,length(batch_id)-5) ELSE page_group END AS family, "
+                       "CASE WHEN batch_id LIKE 'studio_film_%' THEN CAST(substr(batch_id,-4) AS INTEGER) ELSE 0 END AS video_number "
+                       "FROM filtered GROUP BY page_group), ranked AS ("
+                       "SELECT *, MAX(newest) OVER (PARTITION BY family) AS family_newest FROM groups) ")
+                total_groups = self._conn.execute(cte + "SELECT COUNT(*) FROM groups", params).fetchone()[0]
+                limit = 10
+                pages = max(1, (total_groups + limit - 1) // limit)
+                page = min(max(page or 1, 1), pages)
+                rows = self._conn.execute(
+                    cte + "SELECT filtered.* FROM filtered JOIN (SELECT * FROM ranked "
+                    "ORDER BY family_newest DESC, family DESC, video_number DESC, newest DESC, page_group DESC LIMIT ? OFFSET ?) selected "
+                    "ON filtered.page_group=selected.page_group "
+                    "ORDER BY selected.family_newest DESC, selected.family DESC, selected.video_number DESC, selected.newest DESC, selected.page_group DESC, batch_index, id",
+                    [*params, limit, (page - 1) * limit]).fetchall()
+                tasks = [{k: row[k] for k in row.keys() if k != 'page_group'} for row in rows]
+                return {"tasks": tasks, "total": total, "total_groups": total_groups,
+                        "page": page, "pages": pages, "limit": limit}
             if limit <= 0:
                 limit, page, pages, offset = -1, (1 if page is not None else None), 1, 0
             else:
@@ -554,6 +604,12 @@ class TaskStore(ProductionStoreMixin):
                     "WHERE date(created_at,'unixepoch','localtime')=?", (d,),
                 ).fetchone()
                 per_day.append({"day": d[5:], "completed": row[0] or 0, "failed": row[1] or 0})
+            active = self._conn.execute(
+                "SELECT coalesce(sum(phase IN ('waiting','checking')),0), "
+                "coalesce(sum(coalesce(retry_count,0)>0 AND "
+                "coalesce(phase,'ready') IN ('ready','queued','dispatching','')),0) "
+                "FROM tasks WHERE deleted_at IS NULL AND status IN ('queued','processing')"
+            ).fetchone()
             t = per_day[-1]
             per_account = self._conn.execute(
                 "SELECT account_uuid, sum(status='completed') FROM tasks "
@@ -563,6 +619,8 @@ class TaskStore(ProductionStoreMixin):
         completed, failed = t["completed"], t["failed"]
         total = completed + failed
         return {
+            "process": active[0],
+            "retrying": active[1],
             "today_completed": completed,
             "today_failed": failed,
             "success_rate": round(completed / total, 3) if total else None,

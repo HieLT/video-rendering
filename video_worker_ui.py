@@ -1,3 +1,4 @@
+from account_risk import check_risk, AccountRiskBlockedError
 """Video generation worker v2: UI automation with OpenCV slider puzzle solver."""
 import asyncio
 import json
@@ -507,6 +508,7 @@ async def poll_conversation(account: str, page, context, conversation_id: str,
     accepted = False
     idle_rejection_index = None
     while time.time() - start < timeout:
+        check_risk(context)
         await asyncio.sleep(5 if accepted else 2)
         try:
             if page.is_closed():
@@ -1067,10 +1069,33 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             cookies = await context.cookies("https://www.dola.com")
             ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
             await ensure_account_session(page, context)
-            await _preflight_balance(page, ms_token, fp, config.VIDEO_REQUIRED_POINTS)
 
             after_index = after_index_start
             indexed_conversation_id = start_conversation_id
+            # A reopened conversation must be inspected before touching the composer.
+            if start_conversation_id and monitor:
+                outcome = await monitor(account, page, context, start_conversation_id,
+                                        timeout, on_poll, on_balance, after_index=after_index)
+                if outcome.get("kind") != "rejected":
+                    return outcome
+                if not on_rejected or not on_rejected(outcome["poll"]):
+                    return outcome
+                after_index = outcome["poll"]["latestIndex"]
+
+            await _preflight_balance(page, ms_token, fp, config.VIDEO_REQUIRED_POINTS)
+
+            checkpoint_active = False
+            checkpoint_id = None
+            def checkpoint_conversation(frame=None):
+                nonlocal checkpoint_id
+                if not checkpoint_active or (frame is not None and frame != page.main_frame):
+                    return
+                tail = page.url.rstrip("/").split("/")[-1]
+                if tail.isdigit() and tail != checkpoint_id:
+                    if on_conversation_id:
+                        on_conversation_id(account, tail, time.time() + timeout)
+                    checkpoint_id = tail
+            page.on("framenavigated", checkpoint_conversation)
             for retry in range(1 if single_attempt else 11):
                 # ---- UI Submission ----
                 for setup_attempt in range(3):
@@ -1176,7 +1201,9 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 # Mark the attempt before Enter: a timeout may occur after dispatch.
                 if on_submit:
                     on_submit()
+                checkpoint_active = True
                 await box.press("Enter")
+                checkpoint_conversation()
                 _log(f"[{account}] UI submitted prompt: {prompt[:40]}")
 
                 # ---- Captcha Solver (up to 3 attempts) ----
@@ -1184,7 +1211,9 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                 for attempt in range(1, 4):
                     frame = None
                     for _ in range(20):
+                        checkpoint_conversation()
                         await page.wait_for_timeout(1000)
+                        checkpoint_conversation()
                         frame = find_captcha_frame(page)
                         if frame:
                             break
@@ -1243,6 +1272,7 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                     _log(f"[{account}] Dola {exc.code}: retry {retry + 1}/10 in conversation {conv_id}; preserving request parameters")
                     await page.wait_for_timeout(5000)
         except Exception as exc:
+            check_risk(context)
             if is_browser_closed_error(exc) or ('page' in locals() and page.is_closed()):
                 raise BrowserClosedByUserError('Submission browser was closed') from exc
             await ensure_account_session(page, context)

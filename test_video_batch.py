@@ -20,6 +20,8 @@ from reference_aliases import resolve_reference_aliases
 from scene_generation import task_reference_paths
 from project_generation import submit_project_generation
 from store import TaskStore, TaskQuotaExceeded, PendingTaskLimitExceeded, TaskSubmissionConflict
+from image_library import ImageLibrary
+from test_image_library import png
 
 
 def isolated_api():
@@ -46,7 +48,7 @@ def isolated_api():
 async def backend_checks():
     ns, client = isolated_api()
     request = ns["VideoGenRequest"]
-    for count in [0,6,1.5,True]:
+    for count in [0,11,1.5,True]:
         try: request(prompt="p", count=count)
         except ValidationError: pass
         else: raise AssertionError(count)
@@ -55,21 +57,22 @@ async def backend_checks():
     runner=ns["_run_task"]
     ns["_run_task"]=capture
     with tempfile.TemporaryDirectory() as folder:
+        ns["image_library"]=ImageLibrary(Path(folder)/"library")
         ns["Path"] = lambda value: Path(value) if Path(value).is_absolute() else Path(folder) / value
         root=Path(folder)/"source";root.mkdir()
         files=[root/"first.png",root/"second.png"]
-        for i,path in enumerate(files): path.write_bytes(bytes([i]))
+        for i,path in enumerate(files): path.write_bytes(png("red" if i==0 else "blue"))
         token="uploaded://test"
         ns["UPLOADED_REFERENCES"][token]=(root,[str(p) for p in files])
-        client["daily_limit"]=4
-        req=request(prompt="@hero moves", count=5, reference_images=[token], reference_aliases=["hero","scene"])
+        client["daily_limit"]=9
+        req=request(prompt="@hero moves", count=10, reference_images=[token], reference_aliases=["hero","scene"])
         try: await ns["create_video"](req,None)
         except HTTPException as e: assert e.status_code==429
         else: raise AssertionError("Quota should reject entire batch")
         assert ns["store"].pending_task_count()==0
         assert list(ns["UPLOADED_REFERENCES"])==[token] and root.exists()
         client["daily_limit"]=0
-        ns["config"].MAX_PENDING_TASKS=4
+        ns["config"].MAX_PENDING_TASKS=9
         try: await ns["create_video"](req,None)
         except HTTPException as e: assert e.status_code==429
         else: raise AssertionError("Queue should reject entire batch")
@@ -77,27 +80,27 @@ async def backend_checks():
         ns["config"].MAX_PENDING_TASKS=100
         result=await ns["create_video"](req,None)
         await asyncio.sleep(0)
-        assert len(result.tasks)==5 and len(captured)==5
-        assert len({t.id for t in result.tasks})==5
+        assert len(result.tasks)==10 and len(captured)==10
+        assert len({t.id for t in result.tasks})==10
         assert not ns["UPLOADED_REFERENCES"]
         assert not root.exists()
         all_paths=[]
         for index,t in enumerate(result.tasks,1):
             row=ns["store"].get(t.id)
-            assert (row["batch_id"],row["batch_index"],row["batch_count"])==(result.batch_id,index,5)
+            assert (row["batch_id"],row["batch_index"],row["batch_count"])==(result.batch_id,index,10)
             assert row["prompt"]=="@Image1 moves"
             references=json.loads(row["reference_images"])
-            assert len(references)==2 and all(ref.startswith("local://") for ref in references)
-            paths=[Path(ref[8:]) for ref in references]
-            assert [path.read_bytes() for path in paths]==[bytes([0]),bytes([1])]
+            assert len(references)==2 and all(ref.startswith("library://") for ref in references)
+            paths=[ns["image_library"].path(ref[10:]) for ref in references]
+            assert [path.read_bytes() for path in paths]==[png("red"),png("blue")]
             assert all(path.is_relative_to(Path(folder)) for path in paths)
             all_paths.extend(paths)
-        assert len(set(all_paths))==10
+        assert len(set(all_paths))==2
         async def scheduled_run(task_id,uploads):
             assert uploads=={}
             row=ns["store"].get(task_id)
-            paths=[Path(ref[8:]) for ref in json.loads(row["reference_images"])]
-            assert [path.read_bytes() for path in paths]==[bytes([0]),bytes([1])]
+            paths=[ns["image_library"].path(ref[10:]) for ref in json.loads(row["reference_images"])]
+            assert [path.read_bytes() for path in paths]==[png("red"),png("blue")]
             if task_id==result.tasks[0].id:
                 raise RuntimeError("fixture scheduler failure")
             ns["store"].update(task_id,status="completed")
@@ -107,8 +110,8 @@ async def backend_checks():
         for args in captured: await runner(*args)
         assert not ns["UPLOADED_REFERENCES"]
         assert ns["store"].get(result.tasks[0].id)["status"]=="needs_recovery"
-        assert ns["scheduler"].run.await_count==5
-        assert ns["key_limiter"].release.await_count==5
+        assert ns["scheduler"].run.await_count==10
+        assert ns["key_limiter"].release.await_count==10
         assert not ns["TASK_RUNNERS"]
         assert all(ns["store"].get(t.id)["status"]=="completed" for t in result.tasks[1:])
     result=await ns["create_video"](request(prompt="single"),None)
@@ -121,7 +124,7 @@ async def backend_checks():
     else: raise AssertionError("Duplicate ID should fail")
     assert db.get("new") is None
     db._conn.close()
-    print("PASS backend: count validation, atomic quota/queue/SQL rollback, batch metadata, independent images/failure, single response")
+    print("PASS backend: count validation, atomic quota/queue/SQL rollback, batch metadata, shared images/independent failure, single response")
 
 
 async def browser_checks():
@@ -130,14 +133,14 @@ async def browser_checks():
         browser=await p.chromium.launch(channel="chrome",headless=True)
         page=await browser.new_page()
         page.on("pageerror",lambda e:errors.append(str(e)))
-        page.on("dialog",lambda d:d.accept())
+        page.on("dialog",lambda d:asyncio.create_task(d.accept()))
         async def route(r):
             nonlocal reject
             path=r.request.url.split("http://batch.test")[-1]
             if path=="/": return await r.fulfill(content_type="text/html",body=Path("web/index.html").read_text(encoding="utf-8"))
-            if path=="/api/admin/reference-images":
+            if path=="/api/admin/image-library":
                 uploads.append(1)
-                return await r.fulfill(json={"reference_images":["uploaded://fixture"]})
+                return await r.fulfill(json={"images":[{"id":"fixture"}]})
             if path=="/v1/videos/generations":
                 body=r.request.post_data_json;requests.append(body)
                 if reject: return await r.fulfill(status=429,json={"detail":"Not enough quota"})
@@ -149,16 +152,16 @@ async def browser_checks():
         await page.goto("http://batch.test/")
         await page.add_script_tag(content="clearInterval(timer);switchTab('tasks');")
         assert await page.locator("#videoCount").input_value()=="1"
-        await page.select_option("#videoCount","3")
-        assert "Generate 3 videos" in await page.locator("#generateBtn").inner_text()
+        await page.select_option("#videoCount","10")
+        assert "Generate 10 videos" in await page.locator("#generateBtn").inner_text()
         await page.fill("#videoPrompt","same prompt")
         await page.fill("#videoName", "scene 2")
         assert await page.locator('#try30Btn').count() == 0
         await page.locator("#referenceImages").set_input_files({"name":"test.png","mimeType":"image/png","buffer":b"fixture"})
         await page.click("#generateBtn")
         await page.wait_for_function("!document.querySelector('#generateBtn').disabled")
-        assert len(uploads)==1 and len(requests)==1 and requests[0]["count"]==3
-        assert requests[0]["reference_images"]==["uploaded://fixture"]
+        assert len(uploads)==1 and len(requests)==1 and requests[0]["count"]==10, (uploads,requests,errors,await page.locator("#librarySaveStatus").inner_text())
+        assert requests[0]["reference_images"]==["library://fixture"]
         assert requests[0]['name'] == 'scene 2'
         assert await page.locator('#videoName').input_value() == ''
         await page.click('[data-mode="start_end"]')
@@ -193,12 +196,12 @@ async def browser_checks():
         reject=True
         await page.fill("#videoPrompt","keep on error")
         await page.fill('#videoName', 'keep name on error')
-        await page.select_option("#videoCount","5")
+        await page.select_option("#videoCount","10")
         await page.click("#generateBtn")
         await page.wait_for_function("!document.querySelector('#generateBtn').disabled")
         assert await page.locator("#videoPrompt").input_value()=="keep on error"
         assert await page.locator('#videoName').input_value() == 'keep name on error'
-        assert "Generate 5 videos" in await page.locator("#generateBtn").inner_text()
+        assert "Generate 10 videos" in await page.locator("#generateBtn").inner_text()
         assert not errors, errors
         await browser.close()
     print("PASS browser: default count, button label, one upload/request, error preserves input")

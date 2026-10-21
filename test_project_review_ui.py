@@ -65,7 +65,26 @@ async def main():
             await page.locator('#projectList').get_by_role('button',name='Riven',exact=True).click()
             await page.wait_for_function("document.querySelector('#projectProgress').textContent.includes('1 / 2 SELECTED')")
             first=page.locator(f'.project-scene[data-scene-id="{scene["id"]}"]')
+            # A failed latest attempt must still preview the latest completed output.
+            assert await first.locator('[data-action="select"]').get_attribute('data-task-id')==completed
+            assert await page.locator('#projectScenes video').count()==2
+            await first.locator('video').evaluate('(v)=>v.play()')
+            other=page.locator('#projectScenes video').last
+            await other.evaluate('(v)=>v.play()')
+            assert await first.locator('video').evaluate('(v)=>v.paused')
+            await page.locator('[data-filter="selected"]').click()
+            assert await page.locator('#projectScenes .project-scene:visible').count()==1
+            await page.locator('[data-filter="all"]').click()
+            await page.locator('#projectSceneSearch').fill('not-a-scene')
+            assert await page.locator('#projectScenes .project-scene:visible').count()==0
+            await page.locator('#projectSceneSearch').fill('')
+            await page.set_viewport_size({'width':390,'height':844})
+            assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+            await page.set_viewport_size({'width':1365,'height':1000})
+            Path('diagnostics').mkdir(exist_ok=True)
+            await page.screenshot(path='diagnostics/project_grid_desktop.png',full_page=True)
             assert 'NEEDS REVIEW' in await first.inner_text()
+            await first.locator('details summary').click()
             assert 'Latest generation: FAILED' in await first.inner_text()
             assert 'References: READY' in await first.inner_text()
             await first.get_by_role('button',name='Review Versions',exact=True).click()

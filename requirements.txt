@@ -3,6 +3,7 @@ uvicorn[standard]
 aiohttp
 pydantic
 patchright
+playwright
 python-dotenv
 pillow
 opencv-python

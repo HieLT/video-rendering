@@ -1,3 +1,4 @@
+from account_risk import AccountRiskBlockedError
 """Persisted ETA scheduling; a waiting task owns an account, not a browser."""
 import asyncio
 import json
@@ -10,6 +11,7 @@ from browser import launch_account_context, cookie_value, ensure_account_session
 from video_worker import POLL_JS, extract_unwatermarked_url, _download
 import video_worker_ui as worker
 import config
+from image_library import ImageLibrary
 
 CHECK_SECONDS = 20
 CHECK_INTERVAL = 300
@@ -28,7 +30,7 @@ def parse_eta(texts):
     minute = r"\u5206(?:\u5206)?(?:\u5f8c|\u540e)?|\u5206\u949f|\u5206\u9418|minutes?|mins?|ph\u00fat"
     second = r"seconds?|\u79d2|gi\u00e2y"
     for text in texts:
-        if not re.search(r"Dreamina\s+Seedance", text, re.I): continue
+        if not re.search(r"\b(?:Dreamina\s+)?Seedance\b", text, re.I): continue
         for sentence in re.split(r"[\u3002\n!?]", text):
             if not re.search(r"\u5f8c|\u540e|\u9884\u8ba1|\u5b8c\u6210|ready|complete|take|wait|generated|finish|ho\u00e0n|sau|m\u1ea5t", sentence, re.I):
                 continue
@@ -43,7 +45,7 @@ def parse_eta(texts):
             if total>0: return total,text
     return DEFAULT_ETA,""
 
-async def inspect_page(page, context, conversation_id, after_index, seconds, stop_on_accept=False):
+async def inspect_page(page, context, conversation_id, after_index, seconds, stop_on_accept=False, confirmed_submission=False):
     deadline = time.monotonic() + seconds
     previous_rejection = None
     last = None
@@ -55,6 +57,7 @@ async def inspect_page(page, context, conversation_id, after_index, seconds, sto
                 cookies = await context.cookies("https://www.dola.com")
                 return await page.evaluate(POLL_JS, {
                     "conversationId":conversation_id, "afterIndex":after_index,
+                    "confirmedSubmission":confirmed_submission,
                     "msToken":cookie_value(cookies,"msToken"),
                     "fp":cookie_value(cookies,"s_v_web_id")})
             result = await asyncio.wait_for(read(), remaining)
@@ -74,7 +77,7 @@ async def inspect_page(page, context, conversation_id, after_index, seconds, sto
                     return {"kind":"accepted", "poll":result}
             else:
                 previous_rejection = None
-        except (asyncio.CancelledError, AccountSessionExpiredError):
+        except (asyncio.CancelledError, AccountSessionExpiredError, AccountRiskBlockedError):
             raise
         except Exception as exc:
             if stop_on_accept and (is_browser_closed_error(exc) or page.is_closed()):
@@ -89,9 +92,72 @@ async def inspect_conversation(row):
         try:
             page = context.pages[0] if context.pages else await context.new_page()
             await page.goto("https://www.dola.com/chat/"+row["conversation_id"], timeout=60000, wait_until="domcontentloaded")
-            return await inspect_page(page,context,row["conversation_id"],row.get("after_index") or 0,CHECK_SECONDS)
+            return await inspect_page(page,context,row["conversation_id"],row.get("after_index") or 0,CHECK_SECONDS,
+                                      confirmed_submission=bool(row.get("accepted_at")))
         finally:
             await context.close()
+
+def match_interrupted_submission(messages, row):
+    """Match one exact user prompt in the dispatch window; never guess by title."""
+    submitted = row.get("submitted_at")
+    if not submitted:
+        return None
+    normalize = lambda value: " ".join(value.split())
+    matches = []
+    users = [m for m in messages if str(m.get("user_type")) == "1"]
+    for message in users:
+        try:
+            created = float(message.get("create_time") or 0)
+            if created > 1e12:
+                created /= 1000
+            if not submitted - 5 <= created <= submitted + 120:
+                continue
+            blocks = message.get("content") or message.get("content_block") or []
+            if isinstance(blocks, str):
+                blocks = json.loads(blocks)
+            if not isinstance(blocks, list):
+                continue
+            text = "\n".join(b.get("content", {}).get("text_block", {}).get("text", "") for b in blocks)
+            # Dola serializes video-composer requests with this UI wrapper.
+            prefix = "\u751f\u6210\u3055\u308c\u305f\u52d5\u753b\uff1a"
+            suffix = "\u3001" + str(row.get("ratio") or "")
+            if text.startswith(prefix) and row.get("ratio") and text.endswith(suffix):
+                text = text[len(prefix):-len(suffix)]
+            if normalize(text) == normalize(row["prompt"]):
+                matches.append(message)
+        except (ValueError, TypeError, AttributeError):
+            continue
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    index = int(match.get("index_in_conv") or 0)
+    if not index or any(int(m.get("index_in_conv") or 0) > index for m in users):
+        return None
+    return index
+
+
+async def recover_interrupted_conversation(row):
+    # Reuse the same authenticated read endpoints as normal polling.
+    recent_js = worker.BALANCE_JS.split("  const ids = cells.map", 1)[0] + "return {ids: cells.map(c => (c.conversation || {}).conversation_id || c.id).filter(Boolean)}; }"
+    messages_js = POLL_JS.split("  const latestIndex =", 1)[0] + "return {messages: allMessages}; }"
+    async with async_playwright() as p:
+        context = await launch_account_context(p, row["account"], headless=False, use_extension=True)
+        try:
+            page = context.pages[0] if context.pages else await context.new_page()
+            await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")
+            cookies = await context.cookies("https://www.dola.com")
+            auth = {"msToken":cookie_value(cookies,"msToken"), "fp":cookie_value(cookies,"s_v_web_id")}
+            recent = await asyncio.wait_for(page.evaluate(recent_js, auth), 30)
+            matches = []
+            for conversation_id in dict.fromkeys(recent.get("ids", [])):
+                data = await asyncio.wait_for(page.evaluate(messages_js, {**auth, "conversationId":str(conversation_id), "afterIndex":0}), 20)
+                index = match_interrupted_submission(data.get("messages", []), row)
+                if index:
+                    matches.append((str(conversation_id), index))
+            return matches[0] if len(matches) == 1 else None
+        finally:
+            await context.close()
+
 
 class VideoScheduler:
     def __init__(self,store,pool):
@@ -138,7 +204,7 @@ class VideoScheduler:
         owners = self.reservation_ids(account['name'])
         if len(owners) >= 2:
             return False
-        # Pending assignments also hold quota before on_submit charges it.
+        # Unfinished jobs reserve capacity without counting as received videos.
         unclaimed = sum(not self.pool._conn.execute(
             "SELECT 1 FROM video_job_account_claims WHERE task_id=? AND account=?",
             (owner, account['name'])).fetchone() for owner in owners)
@@ -175,38 +241,60 @@ class VideoScheduler:
             if other: self.reserved[row["account"]]=other[0]
 
     async def references(self,row,uploaded):
-        saved=json.loads(row.get("reference_paths") or "[]")
-        if saved:
-            if not all(Path(p).is_file() for p in saved): raise RuntimeError("Saved reference image is missing")
-            return saved
-        from media import download_reference_images
-        root=Path(".job_media")/row["id"]
-        root.mkdir(parents=True,exist_ok=True)
-        paths=[]
+        library = ImageLibrary(Path(__file__).resolve().parent / ".image_library")
         sources = json.loads(row.get("reference_images") or "[]")
         if row.get("reference_snapshot") is not None:
             from scene_generation import task_reference_paths
-            sources = ["local://" + path for path in task_reference_paths(row)]
-        for source in sources:
-            cleanup=None
-            if source.startswith("local://"):
-                originals=[source[8:]]
-            elif source.startswith("uploaded://"):
-                item=uploaded.get(source)
-                if not item: raise RuntimeError("Legacy uploaded reference expired; manual recovery required")
-                originals=item[1]
+            saved = json.loads(row.get("reference_paths") or "[]")
+            if saved:
+                if not all(Path(path).is_file() for path in saved):
+                    raise RuntimeError("Saved reference image is missing")
+                return saved
+            root = Path(".job_media") / row["id"]
+            root.mkdir(parents=True, exist_ok=True)
+            paths = []
+            for index, original in enumerate(task_reference_paths(row)):
+                target = root / (str(index) + Path(original).suffix)
+                shutil.copy2(original, target)
+                paths.append(str(target.resolve()))
+            self.store.update(row["id"], reference_paths=json.dumps(paths))
+            return paths
+        if sources and all(s.startswith("library://") for s in sources):
+            paths = [str(library.path(s[10:])) for s in sources]
+            self.store.update(row["id"], reference_paths=json.dumps(paths))
+            return paths
+        saved = json.loads(row.get("reference_paths") or "[]")
+        originals, cleanups = [], []
+        try:
+            if saved:
+                originals = saved
             else:
-                cleanup,originals=await download_reference_images([source],row["id"])
-            try:
-                for original in originals:
-                    target=root/(str(len(paths)+1)+Path(original).suffix)
-                    if Path(original).resolve()!=target.resolve():
-                        shutil.copy2(original,target)
-                    paths.append(str(target.resolve()))
-            finally:
-                if cleanup: shutil.rmtree(cleanup,ignore_errors=True)
-        self.store.update(row["id"],reference_paths=json.dumps(paths))
-        return paths
+                for source in sources:
+                    if source.startswith("library://"):
+                        originals.append(str(library.path(source[10:])))
+                    elif source.startswith("local://"):
+                        originals.append(source[8:])
+                    elif source.startswith("uploaded://"):
+                        item = uploaded.get(source)
+                        if not item:
+                            raise RuntimeError("Legacy uploaded reference expired; manual recovery required")
+                        originals.extend(item[1])
+                    else:
+                        from media import download_reference_images
+                        cleanup, downloaded = await download_reference_images([source], row["id"])
+                        if cleanup:
+                            cleanups.append(cleanup)
+                        originals.extend(downloaded)
+            # Import and persist together after all network awaits.
+            identities = [library.import_path(path)["id"] for path in originals]
+            paths = [str(library.path(identity)) for identity in identities]
+            self.store.update(row["id"],
+                              reference_images=json.dumps(["library://" + i for i in identities]),
+                              reference_paths=json.dumps(paths))
+            return paths
+        finally:
+            for cleanup in cleanups:
+                shutil.rmtree(cleanup, ignore_errors=True)
 
     def claim_once(self,row):
         # Quota ledger and counter use the same transaction, so a restart cannot double charge.
@@ -215,8 +303,6 @@ class VideoScheduler:
         db.commit()
         if db.execute("SELECT 1 FROM video_job_account_claims WHERE task_id=? AND account=?",(row["id"],row["account"])).fetchone(): return
         used=self.pool.used_today(row["account"])
-        if self.dual_requests and used >= 2:
-            raise worker.AccountLimitedError("Account has reached its two-video quota")
         now=time.time()
         with db:
             inserted=db.execute("INSERT OR IGNORE INTO video_job_account_claims VALUES (?,?)",(row["id"],row["account"])).rowcount
@@ -319,7 +405,6 @@ class VideoScheduler:
             return self.retry(self.store.get(task_id), poll.get("rejection"))
         def before_dispatch():
             self.store.update(task_id,phase="dispatching",dispatch_uncertain=1,submitted_at=time.time())
-            self.claim_once(self.store.get(task_id))
         def conversation(account,conversation_id,deadline):
             self.store.update(task_id,conversation_id=conversation_id,last_poll_at=time.time())
         async with self.pool.account_activity(row["account"],"generating"):
@@ -343,6 +428,8 @@ class VideoScheduler:
         prefix = sanitize_filename_prefix(row.get("name") or "")[:100]
         target=Path(local).with_name(prefix+row["id"]+Path(local).suffix)
         Path(local).replace(target)
+        # Count only a received video; the durable ledger makes download retries idempotent.
+        self.claim_once(row)
         self.store.update(row["id"],status="completed",phase="completed",error=None,
                           video_url=f"{config.PUBLIC_BASE}/videos/{target.name}",finished_at=time.time(),next_check_at=None)
         self.release(row)
@@ -365,8 +452,20 @@ class VideoScheduler:
                 self.store.update(task_id, started_at=time.time())
             if phase=="dispatching":
                 if not row.get("conversation_id"):
-                    self.review(task_id,"Uncertain submission after interruption; inspect account history before resubmitting")
-                    return
+                    try:
+                        async with self.pool.account_activity(row["account"],"checking"):
+                            recovered = await recover_interrupted_conversation(row)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        self.review(task_id,"Unable to recover interrupted conversation: "+str(exc))
+                        return
+                    if not recovered:
+                        self.review(task_id,"Cannot uniquely match interrupted submission in recent account history; manual review required")
+                        return
+                    conversation_id, index = recovered
+                    self.store.update(task_id,conversation_id=conversation_id,after_index=index)
+                    row=self.store.get(task_id)
                 self.store.update(task_id,phase="checking")
                 phase="checking"
             if phase=="waiting":
@@ -410,7 +509,9 @@ class VideoScheduler:
                     if not self.retry(self.store.get(task_id),poll.get("rejection")): return
                     # Exit the browser session first; next attempt joins FIFO at its tail.
                     continue
-                if kind=="accepted" or (not row.get("accepted_at") and poll.get("accepted")):
+                if kind=="accepted" or (not row.get("accepted_at") and poll.get("accepted")
+                        and poll.get("responseFinished") and not poll.get("responseGenerating")
+                        and not poll.get("rejection")):
                     eta,raw=parse_eta(poll.get("texts") or [])
                     accepted_at=row.get("accepted_at") or time.time()
                     self.store.update(task_id,phase="waiting",status="processing",accepted_at=accepted_at,
@@ -426,6 +527,9 @@ class VideoScheduler:
                     self.review(task_id,"No video after first check and 3 rechecks (5 minutes apart)")
                     return
                 self.store.update(task_id,phase="waiting",status="processing",check_round=rounds+1,next_check_at=time.time()+CHECK_INTERVAL)
+            except AccountRiskBlockedError as exc:
+                self.review(task_id, str(exc))
+                return
             except AccountSessionExpiredError as exc:
                 row=self.store.get(task_id)
                 self.pool.auth_result(row["account"], "expired", str(exc))
@@ -460,8 +564,13 @@ class VideoScheduler:
                     return
                 if row.get("dispatch_uncertain"):
                     if row.get("conversation_id"):
-                        self.store.update(task_id,phase="checking",next_check_at=None)
-                        await asyncio.sleep(1)
+                        rounds=row.get("check_round") or 0
+                        if rounds>=MAX_RECHECKS:
+                            self.review(task_id,"Unable to inspect uncertain submission after 3 rechecks: "+str(exc))
+                            return
+                        self.store.update(task_id,status="processing",phase="waiting",
+                                          check_round=rounds+1,next_check_at=time.time()+CHECK_INTERVAL,
+                                          error=str(exc))
                     else:
                         self.review(task_id,"Uncertain dispatch: "+str(exc))
                         return

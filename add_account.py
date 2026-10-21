@@ -176,12 +176,18 @@ async def add_account_flow(account: str, email: str, password: str, secret: str)
         kwargs = {"headless": False, "channel": "chromium",
                   "args": account_launch_args(profile_dir),
                   "locale": "ja-JP", "timezone_id": "Asia/Tokyo"}
+        if config.BROWSER_EXECUTABLE:
+            kwargs.pop("channel", None)
+            kwargs["executable_path"] = config.BROWSER_EXECUTABLE
         from account_connections import browser_proxy
         proxy = browser_proxy(account)
         if proxy:
             kwargs["proxy"] = proxy
         log(f"[{account}] launching Chromium proxy={'configured' if proxy else 'disabled'}")
+        from session_tracking import trace_disk, track_session
+        tracking_run = trace_disk(account, profile_dir, 'before_launch')
         context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+        await track_session(context, account, profile_dir, tracking_run)
         context.on("page", lambda opened: track_page(account, opened))
         context.on("close", lambda: log(f"[{account}] browser context closed"))
         try:
@@ -269,7 +275,7 @@ async def add_account_flow(account: str, email: str, password: str, secret: str)
                 cookies = await context.cookies("https://www.dola.com")
                 if any(c["name"] == "sessionid" and c["value"] for c in cookies):
                     await capture_identity(context, page, account)
-                    log(f"[{account}] Login successful, sessionid saved to {profile_dir}")
+                    log(f"[{account}] Login successful, sessionid present in browser; disk persistence tracked separately")
                     await asyncio.sleep(3)
                     return True
             screenshot = f"dbg_add_account_{account}.png"

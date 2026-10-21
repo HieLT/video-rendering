@@ -1,5 +1,14 @@
 # Dola Pro Engine (Chromium Extension)
 
+Version 1.0.3 adds the Seedance 2.5 option to Dola's action-bar model selector
+when 2.0 is present and 2.5 is absent. It preserves the current default and
+existing options, including server-provided 2.5 metadata. It does not modify
+Doubao's model menu or silently substitute a selected model. The backend trial
+accepted `seedance_v2.5`; account availability and final generation can vary.
+The background entrypoint is now `service-worker-v3.js` to invalidate cached
+workers; restart the gateway and reopen account browsers after updating.
+Run `node test_extension_model.cjs` to check the model patch offline.
+
 This extension provides duration unlock (`15s`, `30s`) and master unwatermarked resource extraction for Dola and Doubao.
 
 ## Key Notes
