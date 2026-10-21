@@ -171,6 +171,9 @@ class ImportTests(unittest.TestCase):
     def test_resolve_atomic_on_link_failure(self):
         scene=self.submit([item(references=[dict(name='A',alias='A'),dict(name='B',alias='B')])])['scenes'][0]
         self.asset('A');b=self.asset('B')
+        # Recreate legacy unresolved links; uploads now resolve them automatically.
+        self.store._conn.execute('DELETE FROM scene_assets WHERE scene_id=?',(scene['id'],))
+        self.store._conn.execute('UPDATE scene_reference_requirements SET asset_id=NULL WHERE scene_id=?',(scene['id'],))
         self.store._conn.execute("CREATE TRIGGER fail_resolve BEFORE INSERT ON scene_assets WHEN NEW.position=2 BEGIN SELECT RAISE(ABORT,'injected'); END")
         self.store._conn.commit()
         self.assertEqual(self.http.post('/api/admin/scenes/'+scene['id']+'/references/resolve').status_code,409)

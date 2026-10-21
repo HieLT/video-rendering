@@ -1,0 +1,9 @@
+.pw-workspace {max-width:1200px;margin:auto}
+.pw-workspace textarea {width:100%;min-height:190px;box-sizing:border-box;padding:12px;border:1px solid #cedbd7;border-radius:8px;line-height:1.6;resize:vertical}
+.pw-workspace #pwPrompt {min-height:300px}
+.pw-workspace pre {white-space:pre-wrap;overflow-wrap:anywhere;max-height:420px;overflow:auto;background:#f4f7f6;padding:12px}
+.pw-workspace details {margin:14px 0}
+.pw-workspace summary {cursor:pointer}
+.pw-workspace .project-form {margin:14px 0}
+.pw-workspace #pwStatus {background:#edf5f2;padding:12px;border-radius:8px}
+.pw-workspace #pwNotice {position:sticky;top:0;background:white;z-index:2;padding:8px 0;white-space:pre-wrap}

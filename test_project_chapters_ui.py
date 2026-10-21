@@ -98,8 +98,8 @@ async def main():
             endpoint=f"/api/admin/scenes/{retry_scene['id']}/generate"
             assert fixture.http.post(endpoint,json={'count':1}).status_code==202
             old=fixture.store._conn.execute('SELECT id FROM tasks WHERE scene_id=?',(retry_scene['id'],)).fetchone()[0]
-            fixture.store.update(old,status='stopped',phase='stopped')
-            await page.add_script_tag(content="const retryBox=document.createElement('div');retryBox.id='retryFixture';retryBox.innerHTML=taskControls("+json.dumps({'id':old,'scene_id':retry_scene['id'],'status':'stopped'})+");document.body.prepend(retryBox);")
+            fixture.store.update(old,status='needs_recovery',phase='review')
+            await page.add_script_tag(content="const retryBox=document.createElement('div');retryBox.id='retryFixture';retryBox.innerHTML=taskControls("+json.dumps({'id':old,'scene_id':retry_scene['id'],'status':'needs_recovery'})+");document.body.prepend(retryBox);")
             await page.locator('#retryFixture').get_by_role('button',name='Try again',exact=True).click()
             await page.locator('#retryFixture').get_by_role('button',name='Queued',exact=True).wait_for()
             assert len(fixture.store.scene_generations(retry_scene['id'])['generations'])==1

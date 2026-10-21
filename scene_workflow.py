@@ -110,22 +110,65 @@ class SceneWorkflowMixin:
             report = self._import_plan(project_id, payload)
             if not report['valid']:
                 raise ImportValidationError(report)
-            now = time.time()
-            identifiers = []
-            for item in sorted(report['scenes'], key=lambda row:row['scene_number']):
-                identifier = uuid.uuid4().hex
-                self._conn.execute("""INSERT INTO scenes
-                    (id,project_id,scene_number,scene_name,prompt,model,ratio,duration,start_end,created_at,updated_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (identifier,project_id,item['scene_number'],item['scene_name'],
-                    item['prompt'],item['model'],item['ratio'],item['duration'],int(item['start_end']),now,now))
-                for ref in item['references']:
-                    self._conn.execute('INSERT INTO scene_reference_requirements VALUES (?,?,?,?,?)',
-                                       (identifier,ref['position'],ref['name'],ref['alias'],ref['asset_id']))
-                    if ref['asset_id'] is not None:
-                        self._conn.execute('INSERT INTO scene_assets VALUES (?,?,?,?)',
-                                           (identifier,ref['asset_id'],ref['position'],ref['alias']))
-                identifiers.append(identifier)
+            identifiers = self._insert_import_report(project_id, report)
             return {**report, 'imported_count':len(identifiers), 'scenes':[self._scene_details(i) for i in identifiers]}
+
+    def _insert_import_report(self, project_id, report):
+        now = time.time()
+        identifiers = []
+        for item in sorted(report['scenes'], key=lambda row:row['scene_number']):
+            identifier = uuid.uuid4().hex
+            self._conn.execute("""INSERT INTO scenes
+                (id,project_id,scene_number,scene_name,prompt,model,ratio,duration,start_end,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (identifier,project_id,item['scene_number'],item['scene_name'],
+                item['prompt'],item['model'],item['ratio'],item['duration'],int(item['start_end']),now,now))
+            for ref in item['references']:
+                self._conn.execute('INSERT INTO scene_reference_requirements VALUES (?,?,?,?,?)',
+                                   (identifier,ref['position'],ref['name'],ref['alias'],ref['asset_id']))
+                if ref['asset_id'] is not None:
+                    self._conn.execute('INSERT INTO scene_assets VALUES (?,?,?,?)',
+                                       (identifier,ref['asset_id'],ref['position'],ref['alias']))
+            identifiers.append(identifier)
+        return identifiers
+
+    def import_scenes_to_chapter_group(self, project_id, group_name, payload):
+        """Create/reuse one child project for the selected T3 group and import its T5 JSON."""
+        if not isinstance(group_name, str) or not group_name.strip():
+            raise ValueError('A Chapter group name is required')
+        if not isinstance(payload, dict) or set(payload) != {'scenes'}:
+            raise ValueError('Expected scenes array')
+        raw_scenes = payload['scenes']
+        if not isinstance(raw_scenes, list) or not raw_scenes:
+            raise ValueError('A non-empty scenes array is required')
+
+        chapter_project_name = f'Chapter {group_name.strip()}'
+        with self._lock, self._conn:
+            self._conn.execute('BEGIN IMMEDIATE')
+            parent = self._require('projects', project_id)
+            if parent.get('parent_project_id'):
+                raise ValueError('Open Prompt Workshop from the parent project to create the Chapter group project')
+            target_row = self._conn.execute(
+                'SELECT id FROM projects WHERE parent_project_id=? AND name=? COLLATE NOCASE LIMIT 1',
+                (project_id, chapter_project_name)).fetchone()
+            if target_row is None:
+                target = uuid.uuid4().hex
+                now = time.time()
+                self._conn.execute(
+                    'INSERT INTO projects(id,name,created_at,updated_at,parent_project_id) VALUES (?,?,?,?,?)',
+                    (target, chapter_project_name, now, now, project_id))
+            else:
+                target = target_row['id']
+
+            report = self._import_plan(target, payload)
+            if not report['valid']:
+                raise ImportValidationError(report)
+            self._insert_import_report(target, report)
+            return {
+                'imported_count': report['scene_count'],
+                'chapter_group': chapter_project_name,
+                'chapter_project_id': target,
+                'missing_reference_count': report['missing_reference_count'],
+            }
 
     def resolve_scene_references(self, scene_id):
         with self._lock, self._conn:

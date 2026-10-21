@@ -18,7 +18,6 @@ const fetchPatterns = [
 ];
 
 const attachedTabs = new Set();
-const responseFileBodyPromises = new Map();
 
 chrome.runtime.onInstalled.addListener(attachExistingTabs);
 chrome.runtime.onStartup.addListener(attachExistingTabs);
@@ -641,7 +640,7 @@ function patchJsonStringDuration(text) {
   }
 }
 
-function patchDurationSelector(value, seen = new Set()) {
+function patchDurationSelector(value, seen = new Set(), currentModel = "") {
   if (value == null || typeof value !== "object" || seen.has(value)) {
     return false;
   }
@@ -651,39 +650,62 @@ function patchDurationSelector(value, seen = new Set()) {
 
   if (Array.isArray(value)) {
     for (const item of value) {
-      changed = patchDurationSelector(item, seen) || changed;
+      changed = patchDurationSelector(item, seen, currentModel) || changed;
     }
     return changed;
   }
 
   const selectorKey = String(value.key || value.value_key || value.value || "");
   const options = Array.isArray(value.option_list) ? value.option_list : [];
-  // Keyed controls must match exactly: Japanese labels are shared by page size.
-  const looksLikeDuration = selectorKey === "video-duration"
-    || selectorKey === "duration"
-    || (!selectorKey && options.some(option => /^10\s*(s|\u79d2)$/i.test(String(option?.display_text || "")))
-      && options.some(option => String(option?.option_key || option?.value || "") === "5"));
+  // Dola has used hyphenated and underscored duration keys across action-bar
+  // versions. Only fall back to labels when they explicitly carry a time unit.
+  const normalizedSelectorKey = selectorKey.toLowerCase().replace(/[^a-z]/g, "");
+  const hasDurationKey = normalizedSelectorKey.includes("duration");
+  const hasTimeLabeledOptions = options.some(option => /^5\s*(s|\u79d2)$/i.test(String(option?.display_text || option?.show_name || "")))
+    && options.some(option => /^10\s*(s|\u79d2)$/i.test(String(option?.display_text || option?.show_name || "")));
+  const looksLikeDuration = hasDurationKey || hasTimeLabeledOptions;
 
   // New action-bar slider templates (confirmed in the frontend adapter).
   if (looksLikeDuration) {
-    changed = extendDurationRange(value, "lower_bound", "upper_bound", "step_length") || changed;
+    changed = capDurationRange(value, "lower_bound", "upper_bound", "step_length") || changed;
   }
   if (value.supported_duration_range && typeof value.supported_duration_range === "object") {
-    changed = extendDurationRange(value.supported_duration_range, "lower", "upper", "step") || changed;
+    changed = capDurationRange(value.supported_duration_range, "lower", "upper", "step") || changed;
   }
 
   if (looksLikeDuration && options.length) {
-    const has30s = options.some((option) => String(option?.option_key || option?.value || "") === "30");
-    if (!has30s) {
+    const durationFields = option => [option?.option_key, option?.value, option?.display_text, option?.show_name]
+      .filter(value => value != null).map(value => String(value).trim());
+    for (let i = options.length - 1; i >= 0; i--) {
+      if (durationFields(options[i]).some(value => value === "30" || /^30\s*(?:s|\u79d2)$/i.test(value))) {
+        options.splice(i, 1);
+        changed = true;
+      }
+    }
+    const has15s = options.some(option => durationFields(option)
+      .some(value => value === "15" || /^15\s*(?:s|\u79d2)$/i.test(value)));
+    if (!has15s) {
       const tenSecondIndex = options.findIndex((option) => String(option?.option_key || option?.value || "") === "10");
       const insertIndex = tenSecondIndex >= 0 ? tenSecondIndex + 1 : options.length;
-      options.splice(insertIndex, 0, createThirtySecondOption(options));
+      options.splice(insertIndex, 0, createDurationOption(options, 15));
       changed = true;
     }
   }
 
   for (const key of Object.keys(value)) {
     const child = value[key];
+    const childModel = /seedance[_-]v?2[._-]0/i.test(key) ? "seedance_v2.0" : currentModel;
+    if (key === "supported_durations" && Array.isArray(child)) {
+      const durations = child.filter(seconds => String(seconds) !== "30");
+      if (childModel === "seedance_v2.0" && !durations.some(seconds => String(seconds) === "15")) {
+        durations.push("15");
+      }
+      if (durations.length !== child.length || durations.some((seconds, index) => seconds !== child[index])) {
+        value[key] = durations;
+        changed = true;
+      }
+      continue;
+    }
     if (typeof child === "string") {
       const patchedString = patchJsonStringDuration(child);
       if (patchedString !== child) {
@@ -691,24 +713,24 @@ function patchDurationSelector(value, seen = new Set()) {
         changed = true;
       }
     } else {
-      changed = patchDurationSelector(child, seen) || changed;
+      changed = patchDurationSelector(child, seen, childModel) || changed;
     }
   }
 
   return changed;
 }
 
-function extendDurationRange(range, lowerKey, upperKey, stepKey) {
+function capDurationRange(range, lowerKey, upperKey, stepKey) {
   const lower = range[lowerKey], upper = range[upperKey], step = range[stepKey];
   if (![lower, upper, step].every(Number.isFinite) || step <= 0 || upper < lower
-      || lower > 30 || upper >= 30) return false;
-  // Preserve the server's step and defaults; do not invent off-grid options.
-  if (Math.abs((30 - lower) / step - Math.round((30 - lower) / step)) > 1e-8) return false;
-  range[upperKey] = 30;
+      || lower > 15 || upper <= 15) return false;
+  // Keep only the requested 15s extension and preserve the server's step grid.
+  if (Math.abs((15 - lower) / step - Math.round((15 - lower) / step)) > 1e-8) return false;
+  range[upperKey] = 15;
   return true;
 }
 
-function createThirtySecondOption(optionList) {
+function createDurationOption(optionList, seconds) {
   const maxId = optionList.reduce((maxValue, option) => {
     const id = Number(option?.id);
     return Number.isFinite(id) ? Math.max(maxValue, id) : maxValue;
@@ -716,9 +738,9 @@ function createThirtySecondOption(optionList) {
 
   return {
     id: maxId + 1,
-    display_text: "30s",
+    display_text: `${seconds}s`,
     message_text: "",
-    option_key: "30"
+    option_key: String(seconds)
   };
 }
 
@@ -859,10 +881,7 @@ function responseHeadersForTextBody(headers, body) {
 }
 
 function getResponseFileBody(fileName) {
-  if (!responseFileBodyPromises.has(fileName)) {
-    responseFileBodyPromises.set(fileName, fetch(chrome.runtime.getURL(fileName)).then((response) => response.text()));
-  }
-  return responseFileBodyPromises.get(fileName);
+  return fetch(chrome.runtime.getURL(fileName), { cache: "no-store" }).then((response) => response.text());
 }
 
 function corsHeaders() {

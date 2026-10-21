@@ -382,6 +382,19 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin, SceneInfoMixin)
                 raise sqlite3.IntegrityError("Asset name already exists in this project (case-insensitive)")
             self._conn.execute("INSERT INTO assets (id,project_id,name,type,file_path,created_at) VALUES (?,?,?,?,?,?)",
                                (identifier, project_id, name, asset_type, file_path, time.time()))
+            # Newly uploaded shared assets satisfy missing references across all chapters.
+            missing = self._conn.execute("""SELECT r.* FROM scene_reference_requirements r
+                JOIN scenes s ON s.id=r.scene_id JOIN projects p ON p.id=s.project_id
+                WHERE r.asset_id IS NULL AND (p.id=? OR p.parent_project_id=?)""",
+                (project_id,project_id)).fetchall()
+            for ref in missing:
+                if asset_name_key(ref['name']) != asset_name_key(name):
+                    continue
+                self._conn.execute('UPDATE scene_reference_requirements SET asset_id=? WHERE scene_id=? AND position=?',
+                                   (identifier,ref['scene_id'],ref['position']))
+                self._conn.execute('INSERT INTO scene_assets VALUES (?,?,?,?)',
+                                   (ref['scene_id'],identifier,ref['position'],ref['reference_alias']))
+                self._conn.execute('UPDATE scenes SET updated_at=? WHERE id=?',(time.time(),ref['scene_id']))
             return self._require("assets", identifier)
 
     def get_asset(self, asset_id):

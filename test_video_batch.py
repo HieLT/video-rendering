@@ -19,6 +19,7 @@ from browser_queue import async_playwright
 from reference_aliases import resolve_reference_aliases
 from scene_generation import task_reference_paths
 from project_generation import submit_project_generation
+from video_generation_defaults import normalize_generation_settings
 from store import TaskStore, TaskQuotaExceeded, PendingTaskLimitExceeded, TaskSubmissionConflict
 
 
@@ -114,6 +115,12 @@ async def backend_checks():
     result=await ns["create_video"](request(prompt="single"),None)
     assert isinstance(result,ns["TaskResponse"])
     await asyncio.sleep(0)
+    for source_model,source_duration in (("seedance-2.0",10),("seedance-2.5",30)):
+        normalized=await ns["create_video"](
+            request(prompt="legacy settings",model=source_model,duration=source_duration),None)
+        await asyncio.sleep(0)
+        normalized_row=ns["store"].get(normalized.id)
+        assert (normalized_row["model"],normalized_row["duration"])==("seedance-2.0",15)
     # SQL errors must roll back earlier inserts in the same group.
     db=ns["store"]
     try: db.create_batch(["new",result.id],"model","prompt","16:9",10)

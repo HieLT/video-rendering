@@ -55,9 +55,9 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         queue.enqueue(['0', '1'])
         await queue.task
         self.assertEqual(len(starts), 23)
-        self.assertEqual(maximum[0], 10)
-        self.assertTrue(all(b-a >= 5 for a,b in zip(starts,starts[1:])))
-        self.assertGreaterEqual(starts[10],100)
+        self.assertEqual(maximum[0], 3)
+        self.assertTrue(all(b-a >= 20 for a,b in zip(starts,starts[1:])))
+        self.assertGreaterEqual(starts[3],100)
         self.assertEqual(queue.snapshot()['queued'],0)
 
     async def test_failure_does_not_abort_and_stop_preserves_windows(self):

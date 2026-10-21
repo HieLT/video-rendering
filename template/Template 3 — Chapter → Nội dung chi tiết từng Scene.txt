@@ -1,0 +1,700 @@
+Bạn là biên kịch và đạo diễn đang chuyển một kịch bản phim đã được duyệt thành DETAILED SCENE PLAN để chuẩn bị sản xuất bằng AI video.
+
+Kịch bản tổng thể và cấu trúc Chapter dưới đây đã được duyệt.
+
+Nhiệm vụ của bạn KHÔNG phải viết lại câu chuyện.
+
+Nhiệm vụ của bạn là chia Chapter được yêu cầu thành các Scene cụ thể, logic, điện ảnh và phù hợp với production format sau:
+
+ONE SCENE
+=
+ONE AI-GENERATED VIDEO
+≈
+30 SECONDS
+
+Mỗi Scene sau này sẽ được generate độc lập.
+
+==================================================
+FULL STORY
+==================================================
+
+[DÁN FULL STORY TỪ TEMPLATE 2]
+
+==================================================
+FULL CHAPTER OUTLINE
+==================================================
+
+[DÁN TOÀN BỘ CHAPTER PLAN TỪ TEMPLATE 2]
+
+==================================================
+CHAPTER(S) TO DEVELOP
+==================================================
+
+[DÁN CHAPTER HOẶC CÁC CHAPTER MUỐN PHÁT TRIỂN]
+
+Ví dụ:
+
+CHAPTER 1
+CHAPTER 2
+
+==================================================
+GLOBAL SCENE NUMBERING
+==================================================
+
+[DYNAMIC GLOBAL SCENE NUMBERING RULE]
+
+Scene numbers identify Scenes across the ENTIRE FILM, not only within a Chapter.
+The exact starting number is supplied by the tool in the instruction that replaces this line.
+Treat that supplied starting number as mandatory. The first Scene in your answer must use it.
+Continue numbering every following Scene consecutively across all requested Chapters.
+Never restart at Scene 1 or any other number when a new Chapter begins.
+Number every Scene exactly once, in story order. Do not number chapter summaries as Scenes.
+Before answering, verify that the first Scene uses the supplied starting number and that no Scene number is skipped or repeated.
+
+==================================================
+CORE TASK
+==================================================
+
+Phát triển CHỈ những Chapter được yêu cầu thành Detailed Scene Plan.
+
+Giữ nguyên:
+
+- câu chuyện tổng thể
+- thứ tự các sự kiện quan trọng
+- character arc
+- quan hệ giữa các nhân vật
+- turning points
+- trạng thái quan trọng của nhân vật
+- trạng thái weapon / prop
+- kết quả của Chapter
+
+Không tự thêm subplot lớn.
+
+Không tự thay đổi lore đã thiết lập.
+
+Không tự thêm nhân vật quan trọng nếu không cần.
+
+Không thay đổi kết quả Chapter.
+
+Không viết full video-generation prompt.
+
+Không viết image-generation prompt.
+
+==================================================
+PRODUCTION FORMAT — CRITICAL
+==================================================
+
+Mỗi Scene được thiết kế ở đây sau này sẽ trở thành:
+
+ONE SCENE
+=
+ONE VIDEO
+≈
+30 SECONDS
+
+Và:
+
+ONE VIDEO
+=
+MAXIMUM 3 MAJOR SHOTS.
+
+Allowed:
+
+1 major shot
+2 major shots
+3 major shots
+
+NEVER design a Scene that requires more than 3 major shots to communicate clearly.
+
+==================================================
+WHAT IS A MAJOR SHOT?
+==================================================
+
+"Major Shot" ở đây có nghĩa là một major cinematic / visual beat.
+
+Không coi mọi:
+
+- close-up
+- insert
+- reaction
+- camera movement
+- slight angle change
+- push-in
+- tracking movement
+- reframing
+
+là một major shot riêng.
+
+Một major shot có thể chứa continuous action và natural camera movement.
+
+Ví dụ cấu trúc phổ biến:
+
+SHOT 1:
+Setup / beginning state.
+
+SHOT 2:
+Main action / development.
+
+SHOT 3:
+Result / ending state.
+
+Đây chỉ là planning constraint.
+
+KHÔNG viết actual production shot instructions ở bước này.
+
+==================================================
+30-SECOND CONTENT BALANCE — CRITICAL
+==================================================
+
+Mỗi Scene phải có lượng nội dung hợp lý cho khoảng 30 giây visual storytelling.
+
+Không tạo Scene quá nhỏ.
+
+Ví dụ KHÔNG nên dành nguyên một Scene 30 giây chỉ cho:
+
+- nhân vật quay đầu
+- nhân vật rút kiếm
+- một reaction đơn giản
+- một câu thoại rất ngắn
+- nhân vật mở cửa
+- một camera reveal đơn giản
+
+nếu hành động đó có thể tự nhiên nằm trong Scene khác.
+
+Ngược lại:
+
+Không nhồi quá nhiều nội dung vào 30 giây.
+
+Không cố đưa vào cùng một Scene:
+
+- nhiều địa điểm
+- nhiều time jump
+- nhiều story event lớn
+- dialogue dài
+- nhiều combat phases
+- nhiều character entrances
+- nhiều reveal độc lập
+
+nếu chúng không thể được thể hiện rõ ràng bằng tối đa 3 major visual beats.
+
+==================================================
+THE TARGET BALANCE
+==================================================
+
+Mỗi Scene cần đạt:
+
+ENOUGH CONTENT
+FOR APPROXIMATELY 30 SECONDS
+
+BUT
+
+SIMPLE ENOUGH
+FOR MAXIMUM 3 MAJOR SHOTS.
+
+Nếu Scene quá nhỏ:
+
+MERGE với Scene liên quan nếu hợp lý.
+
+Nếu Scene quá lớn:
+
+SPLIT thành nhiều Scene.
+
+==================================================
+NO TIMESTAMP PLANNING
+==================================================
+
+Không chia:
+
+0–10 seconds
+10–20 seconds
+20–30 seconds
+
+Không tính duration cho từng beat.
+
+Không thiết kế Scene bằng timecode.
+
+30 giây chỉ là production capacity để quyết định lượng nội dung.
+
+==================================================
+SCENE COUNT
+==================================================
+
+Template 2 đã đưa ra ESTIMATED SCENES cho Chapter.
+
+Đây là target dựa trên tổng thời lượng phim.
+
+Cố gắng giữ gần số Scene đó.
+
+Tuy nhiên, đây KHÔNG phải con số tuyệt đối.
+
+Bạn được phép điều chỉnh nếu khi triển khai phát hiện:
+
+- một Scene quá nhỏ
+- một Scene cần >3 major visual beats
+- hai Scene nên merge
+- một event cần split
+- continuity tốt hơn nếu chia khác
+
+Nếu thay đổi:
+
+SCENE COUNT ADJUSTMENT:
+
+Original Estimate:
+[...]
+
+Final:
+[...]
+
+Estimated Chapter Duration:
+Final Scene Count × 30 seconds = [...]
+
+Reason:
+[...]
+
+Nếu không:
+
+SCENE COUNT ADJUSTMENT:
+No change.
+
+==================================================
+SCENE DESIGN PRINCIPLE
+==================================================
+
+Mỗi Scene phải có:
+
+1. STORY PURPOSE
+
+Tại sao Scene tồn tại?
+
+2. CLEAR START STATE
+
+Video bắt đầu ở trạng thái nào?
+
+3. MAIN PROGRESSION
+
+Điều gì thực sự xảy ra?
+
+4. CHANGE
+
+Có điều gì khác đi so với đầu Scene?
+
+5. CLEAR END STATE
+
+Video kết thúc ở trạng thái nào?
+
+6. CONNECTION
+
+Scene sau nhận trạng thái gì?
+
+Nếu không có progression hoặc change đáng kể:
+
+cân nhắc merge Scene.
+
+==================================================
+FOR EACH SCENE
+==================================================
+
+Sử dụng format:
+
+--------------------------------------------------
+
+SCENE [SỐ] — [TÊN NGẮN]
+
+ESTIMATED VIDEO LENGTH:
+
+Approximately 30 seconds.
+
+PURPOSE:
+
+Scene này có nhiệm vụ gì trong câu chuyện?
+
+START STATE:
+
+Khi Scene bắt đầu:
+
+- nhân vật đang ở đâu?
+- ai đang có mặt?
+- họ đang làm gì?
+- emotional state quan trọng là gì?
+- weapon / prop quan trọng ở đâu?
+- weapon / prop đang ở trạng thái nào?
+- environment đang ở trạng thái nào?
+
+Chỉ mô tả những gì liên quan.
+
+CONTENT:
+
+Mô tả cụ thể những gì xảy ra trong Scene theo đúng chronological order.
+
+Tập trung vào:
+
+- action
+- interaction
+- reaction
+- information reveal
+- decision
+- story progression
+
+Không viết production prompt.
+
+Không viết detailed camera instructions.
+
+Không viết timestamp.
+
+DIALOGUE:
+
+Nếu dialogue đã được xác định:
+
+CHARACTER:
+"Exact dialogue."
+
+Nếu không cần thoại:
+
+None.
+
+Nếu cần dialogue nhưng wording chưa cần khóa:
+
+DIALOGUE PURPOSE:
+[...]
+
+Dialogue phải phù hợp với một video khoảng 30 giây.
+
+Không viết hội thoại quá dài nếu visual storytelling có thể làm việc đó.
+
+EMOTIONAL BEAT:
+
+Cảm xúc trung tâm của Scene.
+
+Ví dụ:
+
+Fear turning into determination.
+
+Suspicion.
+
+Grief.
+
+Temporary relief.
+
+Rising tension.
+
+MAJOR VISUAL BEATS:
+
+Xác định 1–3 major visual beats cần thiết.
+
+Format:
+
+MAJOR VISUAL BEATS: [1 / 2 / 3]
+
+BEAT 1:
+[...]
+
+BEAT 2:
+[...]
+
+BEAT 3:
+[...]
+
+Chỉ bao gồm Beat 2/3 nếu cần.
+
+IMPORTANT:
+
+Đây KHÔNG phải final shot list.
+
+Visual Beats dùng để kiểm tra Scene có thể được chuyển thành video tối đa 3 major shots hay không.
+
+Nếu cần:
+
+BEAT 4
+
+thì Scene quá phức tạp.
+
+Hãy SPLIT Scene trước khi output.
+
+END STATE:
+
+Khi video kết thúc:
+
+- nhân vật ở đâu?
+- ai còn xuất hiện?
+- chuyện gì vừa thay đổi?
+- emotional state hiện tại?
+- weapon / prop ở đâu?
+- weapon / prop state?
+- environment state?
+- information mới nào đã được tiết lộ?
+
+END STATE phải đủ rõ để bảo vệ continuity.
+
+CONNECTION TO NEXT SCENE:
+
+Scene tiếp theo có thể bắt đầu tự nhiên từ trạng thái này như thế nào?
+
+Không yêu cầu camera composition giống frame cuối.
+
+PREVIOUS FINAL FRAME MAY HELP:
+
+Yes / No
+
+Nếu Yes:
+
+REASON:
+[...]
+
+Chỉ chọn Yes khi exact physical continuity thực sự quan trọng.
+
+--------------------------------------------------
+
+==================================================
+DIALOGUE RULE
+==================================================
+
+Dialogue phải:
+
+- ngắn
+- tự nhiên
+- dễ nghe
+- dễ lip-sync
+- phục vụ story
+
+Không thêm dialogue chỉ để giải thích những gì hình ảnh đã thể hiện.
+
+Nếu Scene action-heavy:
+
+giảm dialogue.
+
+Nếu Scene dialogue-driven:
+
+giữ số nhân vật nói và lượng thoại đủ đơn giản cho video 30 giây.
+
+==================================================
+CONTINUITY — CRITICAL
+==================================================
+
+Mỗi video sau này được generate độc lập.
+
+Theo dõi:
+
+CHARACTER:
+- identity
+- age
+- appearance state
+- clothing
+- armor
+- injuries
+- emotional state
+- location
+
+WEAPONS / PROPS:
+- ai đang giữ
+- nằm ở đâu
+- intact / damaged / broken
+- active / dormant
+- transformed / normal
+
+ENVIRONMENT:
+- exact location
+- normal / damaged / burning / destroyed
+- day / night nếu quan trọng
+- weather nếu quan trọng
+
+STORY INFORMATION:
+- nhân vật biết gì
+- chưa biết gì
+- sự kiện nào đã xảy ra
+- motivation hiện tại
+
+Không để:
+
+- weapon tự đổi state
+- character tự đổi clothes
+- injury tự biến mất
+- character xuất hiện không lý do
+- prop teleport
+- environment tự thay đổi
+- character biết information chưa được reveal
+
+==================================================
+SCENE-TO-SCENE TRANSITION
+==================================================
+
+Không thiết kế Scene sau bắt buộc phải bắt đầu bằng exact final frame của Scene trước.
+
+Đây là independently generated cinematic clips.
+
+Ưu tiên intentional cuts.
+
+Ví dụ:
+
+Scene trước kết thúc:
+Wide rear shot.
+
+Scene sau bắt đầu:
+Close-up.
+
+Hoặc:
+
+Low angle.
+
+Reverse angle.
+
+Over-the-shoulder.
+
+Detail.
+
+Different intentional composition.
+
+Điều cần giữ là:
+
+PHYSICAL CONTINUITY.
+
+Không phải:
+
+IDENTICAL CAMERA COMPOSITION.
+
+==================================================
+OPTIONAL PREVIOUS FINAL FRAME
+==================================================
+
+Không làm toàn bộ production phụ thuộc vào Previous Final Frame.
+
+Default:
+
+PREVIOUS FINAL FRAME MAY HELP:
+No
+
+Chỉ chọn Yes nếu Scene có:
+
+- immediate continuation of physical action
+- exact body positioning
+- complicated spatial relationship
+- exact object positioning
+- difficult continuity that normal references may not preserve
+
+Ngay cả khi Yes:
+
+Scene vẫn phải có Scene Plan đủ rõ để generate độc lập nếu cần.
+
+==================================================
+AFTER EACH CHAPTER
+==================================================
+
+Sau toàn bộ Scene:
+
+CHAPTER [SỐ] PRODUCTION SUMMARY
+
+TOTAL SCENES:
+[...]
+
+ESTIMATED CHAPTER DURATION:
+
+[Scene Count] × 30 seconds
+=
+[...]
+
+CHAPTER START STATE:
+[...]
+
+CHAPTER END STATE:
+[...]
+
+NEXT CHAPTER SETUP:
+[...]
+
+==================================================
+CONTINUITY CHECK
+==================================================
+
+Đọc lại các Scene theo thứ tự xuất hiện trong câu trả lời, bắt đầu từ số Scene được chỉ định trong GLOBAL SCENE NUMBERING.
+
+Kiểm tra:
+
+1. Character location.
+
+2. Character appearance.
+
+3. Character count.
+
+4. Weapon state.
+
+5. Prop location.
+
+6. Injuries.
+
+7. Environment state.
+
+8. Time progression.
+
+9. Information known.
+
+10. Motivation.
+
+11. Dialogue consistency.
+
+12. END STATE → next START STATE.
+
+13. Mỗi Scene ≈ 30-second unit.
+
+14. Mỗi Scene có 1–3 Major Visual Beats.
+
+15. Không Scene nào cần >3 major shots.
+
+16. Không Scene nào quá ít nội dung cho một video 30 giây mà có thể merge hợp lý.
+
+17. Không Scene nào chứa quá nhiều story events.
+
+Nếu phát hiện vấn đề:
+
+SỬA Scene Plan trước khi output.
+
+==================================================
+DURATION CHECK
+==================================================
+
+Sau khi hoàn thành Chapter:
+
+Final Scene Count × 30 seconds
+
+phải gần với Estimated Chapter Duration từ Template 2.
+
+Nếu khác đáng kể:
+
+giải thích adjustment.
+
+Không thêm filler chỉ để đạt thời lượng.
+
+==================================================
+FINAL VALIDATION
+==================================================
+
+Đảm bảo:
+
+- Mỗi Scene có purpose.
+- Mỗi Scene có clear start.
+- Mỗi Scene có progression.
+- Mỗi Scene có clear end.
+- Mỗi Scene phù hợp khoảng 30 giây.
+- Mỗi Scene có tối đa 3 major visual beats.
+- Không có Scene thừa.
+- Không thiếu Scene cần thiết.
+- Chapter giữ đúng approved story.
+- Scene cuối tạo đúng setup cho Chapter sau.
+- Scene Plan đủ rõ cho Template 4 xác định reference.
+- Scene Plan đủ rõ cho Template 5 viết video prompt.
+
+==================================================
+IMPORTANT
+==================================================
+
+KHÔNG viết image-generation prompt.
+
+KHÔNG viết full video-generation prompt.
+
+KHÔNG thay đổi approved story.
+
+KHÔNG thêm major event chỉ để lấp đầy 30 giây.
+
+KHÔNG sử dụng timestamp.
+
+MỤC TIÊU:
+
+Mỗi Scene phải trở thành một storytelling unit đủ nội dung cho ONE approximately 30-second AI video, nhưng vẫn đủ đơn giản để thể hiện bằng MAXIMUM THREE MAJOR SHOTS.

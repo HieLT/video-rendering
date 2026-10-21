@@ -1,0 +1,485 @@
+Bạn là biên kịch và đạo diễn của một bộ phim điện ảnh AI.
+
+Tôi đã chọn ý tưởng phim dưới đây:
+
+==================================================
+SELECTED FILM IDEA
+==================================================
+
+[DÁN TOÀN BỘ Ý TƯỞNG ĐÃ CHỌN TỪ TEMPLATE 1]
+
+==================================================
+TARGET FILM LENGTH
+==================================================
+
+[THỜI LƯỢNG MONG MUỐN, VÍ DỤ: khoảng 20 phút]
+
+==================================================
+PRODUCTION FORMAT — CRITICAL
+==================================================
+
+Bộ phim sau này sẽ được sản xuất bằng nhiều AI-generated videos riêng biệt.
+
+QUY TẮC CỐ ĐỊNH:
+
+ONE SCENE
+=
+ONE AI-GENERATED VIDEO
+≈
+30 SECONDS
+
+Vì vậy số Scene của toàn bộ phim phải được ước lượng dựa trên thời lượng phim.
+
+Công thức:
+
+ESTIMATED TOTAL SCENES
+≈
+TARGET FILM LENGTH / 30 seconds
+
+Ví dụ:
+
+10 phút ≈ 20 Scenes
+15 phút ≈ 30 Scenes
+20 phút ≈ 40 Scenes
+25 phút ≈ 50 Scenes
+30 phút ≈ 60 Scenes
+
+Đây là baseline production quan trọng.
+
+Không được viết một phim 20 phút nhưng chỉ chia thành 15–20 Scene nếu mỗi Scene sau này chỉ tạo được khoảng 30 giây video.
+
+Tương tự:
+
+2 Scenes ≈ 1 phút
+4 Scenes ≈ 2 phút
+6 Scenes ≈ 3 phút
+8 Scenes ≈ 4 phút
+
+Thời lượng Chapter phải được ước lượng từ số Scene theo logic này.
+
+==================================================
+TASK
+==================================================
+
+Phát triển ý tưởng đã chọn thành KỊCH BẢN TỔNG THỂ của một bộ phim hoàn chỉnh.
+
+Sau đó:
+
+1. Xây dựng story structure.
+2. Chia câu chuyện thành các Chapter hợp lý.
+3. Phân bổ số Scene cho từng Chapter.
+4. Kiểm tra tổng Scene có phù hợp với TARGET FILM LENGTH hay không.
+
+Ở bước này:
+
+CHƯA viết chi tiết từng Scene.
+
+CHƯA viết shot list.
+
+CHƯA viết video-generation prompt.
+
+CHƯA viết image-generation prompt.
+
+==================================================
+PART 1 — FULL STORY
+==================================================
+
+Viết toàn bộ câu chuyện từ đầu đến cuối thành một storyline hoàn chỉnh.
+
+Story phải làm rõ:
+
+- trạng thái ban đầu của nhân vật chính
+- thế giới mà nhân vật đang sống
+- mục tiêu hoặc mong muốn của nhân vật
+- biến cố khởi đầu
+- nguyên nhân khiến nhân vật phải hành động
+- các nhân vật quan trọng
+- các mối quan hệ quan trọng
+- xung đột chính
+- antagonist hoặc antagonistic force
+- quá trình xung đột tăng dần
+- những thất bại hoặc mất mát quan trọng
+- những discovery/reveal quan trọng
+- sự thay đổi của nhân vật
+- các turning point lớn
+- low point
+- quyết định quan trọng trước cao trào
+- quá trình tiến đến climax
+- climax
+- hậu quả của climax
+- resolution
+- trạng thái cuối cùng của nhân vật
+
+==================================================
+STORY LOGIC
+==================================================
+
+Câu chuyện phải có logic nhân quả.
+
+Các sự kiện lớn không được xảy ra ngẫu nhiên chỉ vì kịch bản cần chúng.
+
+Ưu tiên:
+
+EVENT
+→ CONSEQUENCE
+→ DECISION
+→ NEW EVENT
+→ CONSEQUENCE
+
+Mỗi bước ngoặt quan trọng phải có nguyên nhân hoặc setup trước đó.
+
+Không kéo dài câu chuyện chỉ để đạt đủ thời lượng.
+
+Ngược lại, không nén một câu chuyện lớn thành quá ít sự kiện khiến phim bị rushed.
+
+==================================================
+PART 2 — STORY STRUCTURE
+==================================================
+
+Sau FULL STORY, phân tích cấu trúc:
+
+OPENING / HOOK:
+
+Phim mở đầu bằng gì?
+
+Điều gì ngay lập tức khiến khán giả tò mò?
+
+Câu hỏi hoặc tension nào được đặt ra?
+
+SETUP:
+
+Thiết lập:
+
+- nhân vật chính
+- thế giới
+- trạng thái hiện tại
+- mối quan hệ quan trọng
+- vấn đề ban đầu
+
+INCITING INCIDENT:
+
+Biến cố nào thực sự khởi động câu chuyện?
+
+EARLY RESPONSE:
+
+Nhân vật phản ứng với biến cố như thế nào?
+
+RISING CONFLICT:
+
+Xung đột phát triển và trở nên nghiêm trọng hơn như thế nào?
+
+MAJOR TURNING POINT:
+
+Sự kiện nào thay đổi hướng đi của câu chuyện?
+
+ESCALATION:
+
+Sau turning point, stakes tăng lên như thế nào?
+
+LOW POINT:
+
+Thời điểm nhân vật chính rơi xuống trạng thái thấp nhất.
+
+Điều gì đã mất?
+
+Điều gì khiến họ gần như thất bại?
+
+RETURN / DECISION:
+
+Điều gì khiến nhân vật thay đổi, đứng dậy hoặc đưa ra quyết định cuối cùng?
+
+FINAL APPROACH:
+
+Nhân vật tiến đến confrontation cuối cùng như thế nào?
+
+CLIMAX:
+
+Cao trào chính của bộ phim.
+
+RESOLUTION:
+
+Hậu quả của climax và câu chuyện kết thúc như thế nào?
+
+==================================================
+PART 3 — CHAPTER DESIGN
+==================================================
+
+Chia bộ phim thành số Chapter phù hợp với câu chuyện.
+
+KHÔNG cố định số Chapter trước.
+
+Hãy để:
+
+- story progression
+- character arc
+- major events
+- pacing
+
+quyết định số Chapter.
+
+Một Chapter phải đại diện cho một giai đoạn có ý nghĩa của câu chuyện.
+
+Không tạo Chapter chỉ vì muốn chia đều thời lượng.
+
+==================================================
+SCENE ALLOCATION — CRITICAL
+==================================================
+
+Sau khi xác định Chapter, phân bổ Scene cho từng Chapter.
+
+Nhớ:
+
+1 Scene ≈ 30 seconds.
+
+Do đó:
+
+CHAPTER ESTIMATED DURATION
+≈
+NUMBER OF SCENES × 30 seconds
+
+Ví dụ:
+
+CHAPTER có 2 Scenes
+≈ 1 phút
+
+CHAPTER có 4 Scenes
+≈ 2 phút
+
+CHAPTER có 6 Scenes
+≈ 3 phút
+
+Không được đưa ra:
+
+Duration: 3 minutes
+Scenes: 3
+
+vì 3 Scenes chỉ tương đương khoảng 1 phút 30 giây.
+
+==================================================
+SCENE COUNT IS STORY-DRIVEN
+==================================================
+
+Không cố ép mọi Chapter có cùng số Scene.
+
+Ví dụ:
+
+Chapter đơn giản:
+2–3 Scenes
+
+Chapter có nhiều development:
+4–6 Scenes
+
+Chapter cao trào:
+có thể cần nhiều Scene hơn nếu câu chuyện thực sự yêu cầu.
+
+Nhưng tổng số Scene cuối cùng phải gần với production target.
+
+Ví dụ:
+
+20-minute target
+→ approximately 40 Scenes.
+
+Không cần chính xác tuyệt đối 40 nếu story structure hợp lý hơn ở 38, 41 hoặc 42.
+
+Nhưng nếu lệch lớn, phải điều chỉnh.
+
+Ví dụ:
+
+20-minute target
+→ 25 Scenes
+
+là không hợp lý với production format 30 seconds / Scene.
+
+==================================================
+FOR EACH CHAPTER
+==================================================
+
+Sử dụng format:
+
+--------------------------------------------------
+
+CHAPTER [SỐ] — [TÊN]
+
+ESTIMATED SCENES:
+[...]
+
+ESTIMATED DURATION:
+[...]
+
+CHAPTER PURPOSE:
+
+Chapter này tồn tại để làm gì trong toàn bộ câu chuyện?
+
+CHAPTER CONTENT:
+
+Mô tả các sự kiện chính xảy ra trong Chapter theo đúng thứ tự.
+
+Không cần chia Scene chi tiết.
+
+CHARACTER DEVELOPMENT:
+
+Nhân vật chính thay đổi, học được, mất đi hoặc nhận ra điều gì?
+
+KEY STORY DEVELOPMENT:
+
+Thông tin, conflict hoặc event quan trọng nào được phát triển?
+
+START STATE:
+
+Chapter bắt đầu trong trạng thái nào?
+
+END STATE:
+
+Chapter kết thúc trong trạng thái nào?
+
+TRANSITION TO NEXT CHAPTER:
+
+Điều gì dẫn câu chuyện sang Chapter tiếp theo?
+
+--------------------------------------------------
+
+==================================================
+IMPORTANT — DO NOT WRITE SCENES YET
+==================================================
+
+Ở bước này:
+
+ESTIMATED SCENES chỉ là phân bổ production.
+
+Ví dụ:
+
+CHAPTER 4
+Estimated Scenes: 5
+
+KHÔNG có nghĩa là phải viết:
+
+Scene 12
+Scene 13
+Scene 14...
+
+Việc chia nội dung cụ thể thành Scene sẽ được thực hiện ở Template 3.
+
+Template 2 chỉ xác định:
+
+Chapter này có lượng story content phù hợp cho khoảng bao nhiêu video 30 giây.
+
+==================================================
+PART 4 — FILM OVERVIEW
+==================================================
+
+Sau khi hoàn thành tất cả Chapter, tạo bảng:
+
+Chapter | Chapter Name | Estimated Scenes | Estimated Duration
+
+Sau đó tính:
+
+TOTAL CHAPTERS:
+[...]
+
+TOTAL ESTIMATED SCENES:
+[...]
+
+ESTIMATED FINAL FILM LENGTH:
+
+TOTAL SCENES × 30 seconds
+=
+[...]
+
+TARGET FILM LENGTH:
+[...]
+
+DIFFERENCE:
+[...]
+
+==================================================
+DURATION VALIDATION
+==================================================
+
+Kiểm tra:
+
+TOTAL ESTIMATED SCENES × 30 seconds
+
+có gần với TARGET FILM LENGTH hay không.
+
+Nếu lệch đáng kể:
+
+KHÔNG chỉ báo lỗi.
+
+Hãy điều chỉnh:
+
+- scene allocation
+- chapter pacing
+- story development
+
+trước khi đưa kết quả cuối cùng.
+
+Không thêm filler chỉ để đạt đúng con số.
+
+Nếu câu chuyện cần điều chỉnh nhẹ số Scene so với target để pacing tốt hơn, được phép.
+
+==================================================
+FINAL STORY CHECK
+==================================================
+
+Trước khi output, kiểm tra:
+
+1. Opening có đủ mạnh không?
+
+2. Nhân vật chính có mục tiêu rõ ràng không?
+
+3. Conflict có phát triển không?
+
+4. Stakes có tăng không?
+
+5. Có turning point rõ ràng không?
+
+6. Có emotional progression không?
+
+7. Có low point không?
+
+8. Climax có được setup từ trước không?
+
+9. Ending có giải quyết core conflict không?
+
+10. Chapter progression có logic không?
+
+11. Chapter duration có khớp với Scene count không?
+
+12. Tổng Scene × 30 seconds có gần Target Film Length không?
+
+13. Có Chapter nào đang tồn tại nhưng không đẩy story hoặc character forward không?
+
+Nếu có vấn đề:
+
+SỬA STRUCTURE trước khi output.
+
+==================================================
+FINAL GOAL
+==================================================
+
+Sau Template 2 tôi phải có:
+
+1. Full Story hoàn chỉnh.
+
+2. Story Structure rõ ràng.
+
+3. Toàn bộ Chapter của phim.
+
+4. Nội dung từng Chapter.
+
+5. Character progression từng Chapter.
+
+6. Estimated Scene Count từng Chapter.
+
+7. Estimated Duration từng Chapter dựa trên:
+   1 Scene ≈ 30 seconds.
+
+8. Tổng Scene dự kiến của toàn bộ phim.
+
+9. Tổng thời lượng dự kiến dựa trên số Scene.
+
+Không viết detailed Scene Plan.
+
+Không viết video prompts.
+
+Không viết image prompts.

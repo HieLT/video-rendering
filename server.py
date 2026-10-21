@@ -35,6 +35,7 @@ import config
 import account_connections
 from asset_api import register_asset_routes
 from scene_generation import task_reference_paths
+from video_generation_defaults import normalize_generation_settings
 from project_generation import submit_project_generation
 from account_import import parse_netscape, imported_account_flow, cookie_identity
 from add_account import add_account_flow
@@ -339,17 +340,16 @@ async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, 
     """Shared admission, task snapshots and scheduling for legacy and scene inputs."""
     if project_id is not None:
         return await submit_project_generation(project_id, client, store, VideoGenRequest, _submit_video, _run_task, config.MAX_PENDING_TASKS, candidates_per_scene, generation_request_id)
-    duration = req.duration or 10
-    if duration not in SUPPORTED_DURATIONS:
-        raise HTTPException(422, "Currently supports durations of 10s, 15s, and 30s")
-    if duration not in client["allowed_durations"]:
-        raise HTTPException(422, f"Current API Key is not allowed to generate {duration}s videos")
     model_key = req.model.lower().replace("-", "_")
     if model_key not in (
         "seedance_2.0", "seedance_2.5", "seedance_v2.0", "seedance_v2.5",
         "seedance_20", "seedance_25", "seedance_v20", "seedance_v25",
     ):
         raise HTTPException(422, "Supported models are seedance-2.0 and seedance-2.5")
+    req.model, duration = normalize_generation_settings(req.model, req.duration)
+    req.duration = duration
+    if duration not in client["allowed_durations"]:
+        raise HTTPException(422, f"Current API Key is not allowed to generate {duration}s videos")
     try:
         reference_images = []
         image_count = 0
@@ -560,7 +560,10 @@ async def admin_accounts(x_admin_key: str | None = Header(default=None)):
             scheduler.eligible(account)
             and JOBS.get(account["name"], {}).get("status") != "running"
         )
-        public["active_requests"] = len(scheduler.reservation_ids(account['name']))
+        counts = store._conn.execute("SELECT status,COUNT(*) FROM tasks WHERE account=? AND deleted_at IS NULL AND status IN ('queued','processing','needs_recovery') GROUP BY status", (account['name'],)).fetchall()
+        counts = dict(counts)
+        public["active_requests"] = counts.get('queued',0) + counts.get('processing',0)
+        public["recovery_requests"] = counts.get('needs_recovery',0)
         public['connection_id'] = routing['accounts'].get(account['name'], 'direct')
         accounts.append(public)
     return {"accounts": accounts, "dual_requests": scheduler.dual_requests,
@@ -574,10 +577,15 @@ class AccountConnectionAssignment(BaseModel):
 
 
 @app.post('/api/admin/account-connections/distribute')
-async def distribute_account_connections(preview: bool = False,
+async def distribute_account_connections(preview: bool = False, domain: str | None = None,
                                          x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
     accounts = pool.list_accounts()
+    if domain is not None:
+        domain = domain.strip().lower().lstrip('@')
+        accounts = [a for a in accounts if pool.email_domain(a.get('email')) == domain]
+        if not accounts:
+            raise HTTPException(422, 'No accounts in the selected domain')
     busy = set()
     for account in accounts:
         name = account['name']
@@ -635,11 +643,6 @@ async def assign_account_connections(body: AccountConnectionAssignment,
     for name in names:
         if name not in existing:
             raise HTTPException(404, 'Account not found')
-        lock = pool._locks.get(name)
-        if (name in WEB_SESSIONS or (lock and lock.locked())
-                or scheduler.reservation_ids(name)
-                or JOBS.get(name, {}).get('status') == 'running'):
-            raise HTTPException(409, 'Close the account browser and finish or stop its video tasks before changing connection')
     account_connections.assign(names, body.connection_id)
     return {'ok': True, 'count': len(names), 'connection_id': body.connection_id}
 
@@ -1137,7 +1140,7 @@ async def admin_task_delete(task_id: str, x_admin_key: str | None = Header(defau
 @app.post("/api/admin/tasks/{task_id}/{action}")
 async def admin_task_action(task_id: str, action: str, x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    if action not in ("open", "resume", "check", "stop", "retry"):
+    if action not in ("open", "resume", "check", "stop", "retry", "retry-other", "continue-proxy"):
         raise HTTPException(404, "Unknown task action")
     async with TASK_ACTION_LOCKS.setdefault(task_id, asyncio.Lock()):
         row = store.get(task_id)
@@ -1166,11 +1169,25 @@ async def admin_task_action(task_id: str, action: str, x_admin_key: str | None =
                 await runner
             except asyncio.CancelledError:
                 pass
-        if action == "retry":
+        if action == "continue-proxy":
+            if row.get('failure_code') != 'PROXY_CONNECTION_FAILED':
+                raise HTTPException(409, 'Task is not waiting for a proxy change')
+            if row.get('result_url'):
+                next_phase='downloading'
+            elif row.get('conversation_id'):
+                next_phase='checking'
+            elif row.get('dispatch_uncertain') or row.get('accepted_at') or row.get('submitted_at'):
+                raise HTTPException(409, 'Submission uncertain and chat missing; inspect account history before retrying')
+            else:
+                next_phase='ready'
+            store.update(task_id,status='queued',phase=next_phase,error=None,failure_code=None,next_check_at=None)
+            TASK_RUNNERS[task_id]=asyncio.create_task(_run_task(task_id))
+            return {'ok':True,'status':'queued'}
+        if action in ("retry", "retry-other"):
             try:
                 if row.get('reference_snapshot') is not None:
                     task_reference_paths(row)
-                store.retry_task(task_id, max_pending=config.MAX_PENDING_TASKS)
+                store.retry_task(task_id, max_pending=config.MAX_PENDING_TASKS, different_account=action == "retry-other")
             except (ValueError, FileNotFoundError) as exc:
                 raise HTTPException(409, str(exc)) from exc
             scheduler.release(row)
@@ -1272,6 +1289,8 @@ async def admin_key_delete(key: str, x_admin_key: str | None = Header(default=No
 # Dashboard single-file frontend
 # Register API routes before the dashboard catch-all mount.
 register_asset_routes(app, store, _admin_auth, _auth, VideoGenRequest, _submit_video)
+from prompt_workflow import register_prompt_routes
+register_prompt_routes(app, store, _admin_auth)
 
 app.mount("/", StaticFiles(directory="web", html=True), name="web")
 

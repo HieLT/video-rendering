@@ -100,6 +100,51 @@ class ChapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.store.retry_task(ids[0])
         self.assertEqual(len(json.loads(self.store.get(ids[0])['retry_history'])),1)
 
+    def test_retry_needs_recovery_in_place(self):
+        import json
+        chapter=self.chapter('Recovery')
+        self.asset('Garen')
+        scene=self.import_scene(chapter)
+        response=self.http.post(f"/api/admin/scenes/{scene['id']}/generate",json={'count':1})
+        self.assertEqual(response.status_code,202,response.text)
+        task_id=self.store._conn.execute('SELECT id FROM tasks WHERE scene_id=?',(scene['id'],)).fetchone()[0]
+        for chat in (None,'previous-chat'):
+            self.store.update(task_id,status='needs_recovery',phase='review',error='fixture error',conversation_id=chat)
+            self.store.retry_task(task_id)
+            row=self.store.get(task_id)
+            self.assertEqual(row['status'],'queued')
+            self.assertEqual(row['scene_id'],scene['id'])
+            self.assertIsNone(row['conversation_id'])
+            self.assertEqual(json.loads(row['retry_history'])[-1]['status'],'needs_recovery')
+        self.assertEqual(len(self.store.scene_generations(scene['id'])['generations']),1)
+
+    def test_retry_other_account_persists_exclusion(self):
+        chapter=self.chapter('Other account')
+        self.asset('Garen')
+        scene=self.import_scene(chapter)
+        self.http.post(f"/api/admin/scenes/{scene['id']}/generate",json={'count':1})
+        task_id=self.store._conn.execute('SELECT id FROM tasks WHERE scene_id=?',(scene['id'],)).fetchone()[0]
+        self.store.update(task_id,status='failed',account='old',account_uuid='uuid-old')
+        self.store.retry_task(task_id,different_account=True)
+        self.assertEqual(self.store.get(task_id)['retry_excluded_account'],'uuid-old')
+        self.assertIsNone(self.store.get(task_id)['account'])
+        self.store.update(task_id,status='stopped')
+        self.store.retry_task(task_id)
+        self.assertIsNone(self.store.get(task_id)['retry_excluded_account'])
+
+    def test_upload_resolves_missing_references_in_sibling_chapters(self):
+        a=self.chapter('A');b=self.chapter('B')
+        first=self.import_scene(a);second=self.import_scene(b)
+        other=self.store.create_project('Unrelated')
+        third=self.import_scene(other)
+        self.assertFalse(first['ready'])
+        asset=self.upload('Garen',project_id=a['id']).json()
+        for scene in (first,second):
+            details=self.store.scene_details(scene['id'])
+            self.assertTrue(details['ready'])
+            self.assertEqual(details['references'][0]['asset_id'],asset['id'])
+        self.assertFalse(self.store.scene_details(third['id'])['ready'])
+
     def test_task_names_include_scene_number_and_chapter(self):
         chapter=self.chapter('chapter1+2')
         self.asset('Garen')

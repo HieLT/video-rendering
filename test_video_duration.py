@@ -15,29 +15,36 @@ async def run():
         try:
             page = await browser.new_page()
             page.screenshot = noop
-            for mode in ('selected', 'duplicate_history', 'detached_popup', 'ambiguous'):
+            for mode in ('selected', 'duplicate_history', 'detached_popup', 'overlay', 'overlay_15', 'ambiguous'):
                 await page.set_content('<div>30s</div><div id="composer"><button id="duration">10s</button></div>')
                 await page.evaluate("""mode => {
                     let opens = 0;
                     const control = document.getElementById('duration');
-                    if (mode === 'selected') control.textContent = '30s';
+                    const target = mode === 'overlay_15' ? 15 : 30;
+                    if (mode === 'selected') control.textContent = `${target}s`;
                     control.addEventListener('click', () => {
                         opens++;
                         const menu = document.createElement('div');
                         menu.id = 'menu-' + opens;
                         menu.setAttribute('role', 'menu');
+                        if (mode === 'overlay' || mode === 'overlay_15') Object.assign(menu.style, {position:'fixed', left:'10px', bottom:'0', zIndex:'2', padding:'20px'});
                         control.setAttribute('aria-controls', menu.id);
                         control.dataset.opens = opens;
                         const item = document.createElement('div');
                         item.setAttribute('role', 'menuitem');
-                        item.innerHTML = '<span>30s</span>';
+                        item.innerHTML = `<span>${target}s</span>`;
                         item.addEventListener('click', () => {
-                            control.textContent = '30s';
+                            control.textContent = `${target}s`;
                             menu.remove();
                         });
                         menu.append(item);
                         if (mode === 'ambiguous') menu.append(item.cloneNode(true));
                         document.body.append(menu);
+                        if (mode === 'overlay' || mode === 'overlay_15') {
+                            const overlay = document.createElement('div');
+                            Object.assign(overlay.style, {position:'fixed', inset:'0', zIndex:'3'});
+                            document.body.append(overlay);
+                        }
                         if (mode === 'detached_popup' && opens === 1) {
                             menu.animate([{transform:'translateX(0px)'}, {transform:'translateX(100px)'}], {duration:1000, iterations:Infinity});
                             setTimeout(() => menu.remove(), 450);
@@ -47,13 +54,14 @@ async def run():
                         if (e.key === 'Escape') document.querySelectorAll('[role="menu"]').forEach(e => e.remove());
                     });
                 }""", mode)
+                requested = 15 if mode == 'overlay_15' else 30
                 try:
-                    await worker._select_video_duration(page, 30, 'test')
+                    await worker._select_video_duration(page, requested, 'test')
                 except RuntimeError as exc:
                     assert mode == 'ambiguous' and 'Multiple visible' in str(exc), str(exc)
                 else:
                     assert mode != 'ambiguous'
-                    assert await page.locator('#duration').inner_text() == '30s'
+                    assert await page.locator('#duration').inner_text() == f'{requested}s'
                     if mode == 'detached_popup':
                         assert await page.locator('#duration').get_attribute('data-opens') == '2'
                     if mode == 'selected':

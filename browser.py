@@ -125,8 +125,8 @@ async def _ready_extension(context):
             if worker.url.startswith('chrome-extension://') and worker.url.endswith('/service-worker-v2.js'):
                 if await worker.evaluate("""() => {
                     if (typeof ensureAttached !== 'function' || typeof patchActionBarDuration !== 'function') return false;
-                    const probe = {key:'video-duration', lower_bound:4, upper_bound:10, step_length:1};
-                    return JSON.parse(patchActionBarDuration(JSON.stringify(probe))).upper_bound === 30;
+                    const probe = {key:'video-duration', lower_bound:4, upper_bound:30, step_length:1};
+                    return JSON.parse(patchActionBarDuration(JSON.stringify(probe))).upper_bound === 15;
                 }"""):
                     return worker
         await asyncio.sleep(0.2)
@@ -235,15 +235,8 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
                 worker = await _ready_extension(context)
                 await _attach_extension_before_navigation(context, worker)
             except Exception as first_error:
-                print(f"[{account}] Dola30 startup failed ({type(first_error).__name__}); reload and reopen once", flush=True)
+                print(f"[{account}] Dola30 startup failed ({type(first_error).__name__}); reload extension once", flush=True)
                 await _reload_extension(context)
-                await context.close()
-                proxy, bridge = await prepare_browser_proxy(upstream_proxy)
-                if proxy:
-                    kwargs['proxy'] = proxy
-                context = await p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
-                if bridge:
-                    context.on('close', lambda *_, relay=bridge: relay.close())
                 worker = await _ready_extension(context)
                 await _attach_extension_before_navigation(context, worker)
         except Exception as exc:

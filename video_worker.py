@@ -101,12 +101,23 @@ async ({conversationId, msToken, fp, afterIndex = 0}) => {
       // English/Japanese confirmation: the model name is inside bold markup.
       const bold = [...text.matchAll(/\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi)];
       if (bold.some(m => /Dreamina\s+Seedance\b/i.test(m[1] || m[2] || m[3] || ""))) accepted = true;
+      // Dola sometimes omits "Dreamina" from its Japanese acknowledgement:
+      // 動画は**Seedance 2.0 モデル**を使って生成されます。
+      if (/(?:動画|ビデオ)\s*(?:は|を)?[\s\S]{0,120}\bSeedance\s*2\.[05]\s*(?:モデル|model)[\s\S]{0,80}(?:を使って|を使用して|で)\s*(?:生成|作成)され(?:ます|る)/i.test(text)) {
+        accepted = true;
+      }
     }
     // Some delayed copyright refusals contain only text, without tool error metadata.
     // Match a complete refusal sentence, not keywords in the echoed user prompt.
     const copyrightText = messageTexts.find(text => /(?:^|[\n\r])\s*\u8457\u4f5c\u6a29\u3092\u4fdd\u8b77\u3059\u308b\u305f\u3081[\u3001,\s]*\u751f\u6210\u3055\u308c\u305f\u52d5\u753b\u3092\u8868\u793a\u3067\u304d\u307e\u305b\u3093[\u3002.!]/u.test(text));
     if (copyrightText) {
       terminalRejection = {code: "copyright_text", reason: copyrightText, terminal: true};
+    }
+    // Dola's Japanese policy refusal can arrive as plain text after an earlier
+    // generation acknowledgement; treat it as terminal so we refund and fail.
+    const policyText = messageTexts.find(text => /\u5f53\u793e\u306e\u30dd\u30ea\u30b7\u30fc\u306b\u9055\u53cd\u3059\u308b\u53ef\u80fd\u6027\u304c\u3042\u308b\u5185\u5bb9\u304c\u5165\u529b\u3055\u308c\u3066\u3044\u308b\u305f\u3081\u3001\u52d5\u753b\u3092\u751f\u6210\u3067\u304d\u307e\u305b\u3093\u3002\u4fee\u6b63\u3057\u3066\u3082\u3046\u4e00\u5ea6\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002/u.test(text));
+    if (policyText) {
+      terminalRejection = {code: "policy_text", reason: policyText, terminal: true};
     }
     const promptRefusal = messageTexts.find(text => /(?:^|[\n\r])\s*ご希望のコンテンツを生成できません。他の内容をお試しください。/u.test(text));
     if (promptRefusal) {

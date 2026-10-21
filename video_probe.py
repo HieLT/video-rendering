@@ -124,7 +124,7 @@ async ({prompt, ratio, duration, msToken, fp}) => {
 async def main():
     account = sys.argv[1] if len(sys.argv) > 1 else "acc1"
 
-    async with async_playwright() as p:
+    async with async_playwright(video=True) as p:
         context = await launch_account_context(p, account)
         page = context.pages[0] if context.pages else await context.new_page()
         await page.goto("https://www.dola.com/chat", timeout=60000, wait_until="domcontentloaded")

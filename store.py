@@ -78,6 +78,7 @@ class TaskStore(ProductionStoreMixin):
                 # Legacy migration: add missing columns for task recovery, client usage, and timing stats.
                 for column, definition in (
                     ("retry_history", "TEXT DEFAULT '[]'"),
+                    ("retry_excluded_account", "TEXT"),
                     ("name", "TEXT DEFAULT ''"),
                     ("edit_selected", "INTEGER NOT NULL DEFAULT 0"),
                     ("tag_filename", "TEXT"),
@@ -343,23 +344,26 @@ class TaskStore(ProductionStoreMixin):
                           batch_id=batch_id, candidates_per_scene=candidates_per_scene, created_scenes=len({p['scene_id'] for p in accepted}), tasks=[dict(scene_id=p['scene_id'],scene_number=p['scene_number'],task_id=p['task_id']) for p in accepted], skipped_scenes=skipped)
             return result, accepted
 
-    def retry_task(self, task_id, max_pending=0):
+    def retry_task(self, task_id, max_pending=0, different_account=False):
         """Restart a terminal scene candidate in place, preserving its inputs and identity."""
         with _LOCK, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             row = dict(self._require('tasks', task_id))
-            if row['status'] not in ('failed', 'stopped') or row.get('deleted_at') or not row.get('scene_id') or row.get('edit_selected'):
-                raise ValueError('Only failed or stopped scene tasks can be retried')
+            if row['status'] not in ('failed', 'stopped', 'needs_recovery') or row.get('deleted_at') or not row.get('scene_id') or row.get('edit_selected'):
+                raise ValueError('Only failed, stopped or needs-recovery scene tasks can be retried')
             if max_pending and self._conn.execute("SELECT COUNT(*) FROM tasks WHERE deleted_at IS NULL AND status IN ('queued','processing','needs_recovery')").fetchone()[0] >= max_pending:
                 raise ValueError('Pending task queue is full')
+            excluded = (row.get('account_uuid') or row.get('account')) if different_account else None
+            if different_account and not excluded:
+                raise ValueError('Task has no previous account to exclude')
             history = json.loads(row.get('retry_history') or '[]')
             history.append({key: row.get(key) for key in ('status','error','failure_code','account','conversation_id','started_at','finished_at','accepted_at','result_url')})
             self._conn.execute("""UPDATE tasks SET status='queued', phase='ready', updated_at=?,
-                retry_history=?, error=NULL, failure_code=NULL, account=NULL, account_uuid=NULL,
+                retry_history=?, retry_excluded_account=?, error=NULL, failure_code=NULL, account=NULL, account_uuid=NULL,
                 conversation_id=NULL, deadline_at=NULL, last_poll_at=0, started_at=NULL, finished_at=NULL,
                 next_check_at=NULL, accepted_at=NULL, eta_seconds=NULL, eta_raw=NULL, check_round=0,
                 retry_count=0, after_index=0, dispatch_uncertain=0, submitted_at=NULL,
-                result_url=NULL, video_url=NULL WHERE id=?""", (time.time(),json.dumps(history),task_id))
+                result_url=NULL, video_url=NULL WHERE id=?""", (time.time(),json.dumps(history),excluded,task_id))
 
     def update(self, task_id, **fields):
         if not fields:

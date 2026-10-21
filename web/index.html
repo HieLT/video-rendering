@@ -324,6 +324,7 @@ main.accounts-view{max-width:1440px}
 .project-scene-summary.collapsed{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .project-summary-empty{opacity:.65;font-size:12px}
 </style>
+<link rel="stylesheet" href="/prompt-workflow.css">
 </head>
 <body>
 <div id="loginMask" class="mask" style="display:none">
@@ -425,7 +426,7 @@ main.accounts-view{max-width:1440px}
         <div class="studio-footer">
           <div class="field"><label for="videoModel">Model</label><select id="videoModel"><option value="seedance-2.0">Seedance 2.0</option><option value="seedance-2.5">Seedance 2.5</option></select></div>
           <div class="field"><label for="videoRatio">Ratio</label><select id="videoRatio"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="3:4">3:4</option></select></div>
-          <div class="field"><label for="videoDuration">Duration</label><select id="videoDuration"><option value="10">10s</option><option value="15">15s</option><option value="30">30s</option></select></div>
+          <div class="field"><label for="videoDuration">Duration</label><select id="videoDuration"><option value="10">10s</option><option value="15" selected>15s</option><option value="30">30s</option></select></div>
           <div class="field"><label for="videoCount">Videos</label><select id="videoCount" onchange="updateVideoCount()"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
           <button class="btn btn-p" id="generateBtn" onclick="submitVideoTask()">Generate Video &rarr;</button>
         </div>
@@ -471,7 +472,7 @@ main.accounts-view{max-width:1440px}
       <div id="projectChapters" class="card"></div>
       <div id="projectProgress" class="project-progress" aria-live="polite"></div>
       <div id="projectSummary" class="project-summary"></div>
-      <div class="project-actions"><button class="btn" data-action="import">Import Scenes</button><button class="btn" data-action="import-info">Import Scene Info</button><button class="btn" data-action="library">Reference Library</button><button class="btn" data-action="project-accounts">Run Accounts (optional)</button><button class="btn" data-action="outputs">View Selected Outputs</button><button class="btn" data-action="rename">Rename</button><button class="btn" data-action="refresh">Refresh project</button><label>Candidates per Scene <select id="projectCandidateCount"><option value="1">x1</option><option value="2">x2</option><option value="3">x3</option><option value="4">x4</option><option value="5">x5</option></select></label><button class="btn btn-p" id="projectGenerateAll">Generate All Ready</button><button class="btn" id="projectSelectLatest" data-loading="Selecting...">Select latest completed for unselected scenes</button></div>
+      <div class="project-actions"><button class="btn btn-p" data-action="prompt-workflow">Prompt Workshop</button><button class="btn" data-action="import">Import Scenes</button><button class="btn" data-action="import-info">Import Scene Info</button><button class="btn" data-action="library">Reference Library</button><button class="btn" data-action="project-accounts">Run Accounts (optional)</button><button class="btn" data-action="outputs">View Selected Outputs</button><button class="btn" data-action="rename">Rename</button><button class="btn" data-action="refresh">Refresh project</button><label>Candidates per Scene <select id="projectCandidateCount"><option value="1">x1</option><option value="2">x2</option><option value="3">x3</option><option value="4">x4</option><option value="5">x5</option></select></label><button class="btn btn-p" id="projectGenerateAll">Generate All Ready</button><button class="btn" id="projectSelectLatest" data-loading="Selecting...">Select latest completed for unselected scenes</button></div>
       <details class="project-key"><summary>Gateway API Key (optional)</summary><label for="projectGatewayKey">Only if generation API authentication is enabled</label><br><input id="projectGatewayKey" type="password" autocomplete="off"></details>
       <div id="projectMissing"></div><div id="projectScenes"></div>
     </div>
@@ -589,8 +590,12 @@ async function loadDash(){
 }
 
 function accLabel(x){return `<div>${esc(x.display_name||x.email||'?')}</div>`;}
-function statusBadge(a){
-  if(a.busy){
+function statusBadge(a,hideRecovery=false){
+  const idleRecovery=a.recovery_requests&&!a.active_requests&&(!a.activity||a.activity==='waiting_video');
+  if(!hideRecovery&&idleRecovery){
+    return '<span class="badge b-orange">Needs recovery</span>';
+  }
+  if(a.busy&&!(hideRecovery&&idleRecovery)){
     const labels={verifying:'Verifying',browser_open:'Browser open',generating:'Generating',adding:'Adding'};
     return '<span class="badge b-blue">'+(labels[a.activity]||'Busy')+'</span>';
   }
@@ -722,16 +727,21 @@ function accountTime(timestamp){
 function autoProxyResult(result){
   return `<p>${Number(result.eligible)} account rảnh · ${Number(result.proxy_count)} proxy · ${Number(result.changed)} account đổi kết nối.</p>${result.distribution.map(p=>`<div>${esc(p.label)}: <b>${Number(p.count)}</b> account</div>`).join('')}${result.skipped.length?`<p>${result.skipped.length} account đang bận được giữ nguyên kết nối. Chạy lại sau khi các account này rảnh để chia tiếp.</p><details><summary>Xem account bỏ qua</summary>${result.skipped.map(a=>`<div>${esc(a.label)}</div>`).join('')}</details>`:''}`;
 }
-async function openAutoProxy(){
+function domainProxyButton(domain){
+  return `<button class="btn" data-proxy-domain="${esc(domain)}" onclick="openAutoProxy(this.dataset.proxyDomain)">T\u1ef1 chia proxy cho domain n\u00e0y</button>`;
+}
+async function openAutoProxy(domain=null){
+  const scope=domain===null?'to\u00e0n b\u1ed9 account':(domain?'account @'+domain:'account Unknown domain');
+  const domainQuery=domain===null?'':'&domain='+encodeURIComponent(domain);
   showDlg(`<h2>Tự chia proxy</h2><p>Chia đều toàn bộ account giữa các proxy đã lưu. Không chọn Mạng hiện tại. Account đang bận giữ nguyên kết nối.</p><div id="autoProxySummary">Đang tính…</div><p id="autoProxyError" role="status"></p><div class="row"><button class="btn" onclick="hide('dlg')">Đóng</button><button class="btn btn-p" id="autoProxyApply" disabled>Áp dụng</button></div>`);
   const summary=q('#autoProxySummary'),button=q('#autoProxyApply'),error=q('#autoProxyError');
   try{
-    const preview=await api('/api/admin/account-connections/distribute?preview=true',{method:'POST'});
+    const preview=await api('/api/admin/account-connections/distribute?preview=true'+domainQuery,{method:'POST'});
     summary.innerHTML=autoProxyResult(preview);button.disabled=preview.eligible===0;
     button.onclick=async()=>{
       button.disabled=true;error.textContent='';
       try{
-        const result=await api('/api/admin/account-connections/distribute',{method:'POST'});
+        const result=await api('/api/admin/account-connections/distribute?preview=false'+domainQuery,{method:'POST'});
         summary.innerHTML='<p>Đã lưu phân bổ proxy.</p>'+autoProxyResult(result);
         button.hidden=true;await loadAccounts();
       }catch(e){error.textContent=e.message;button.disabled=false;}
@@ -879,14 +889,14 @@ function renderAccounts(){
     const addFailed=jb&&jb.kind==='add'&&jb.status==='failed'&&x.login_ok!==1;
     const badge=(jb&&jb.kind==='add'&&jb.status==='running')?'<span class="badge b-blue">Adding</span>'
       :addFailed?'<span class="badge b-red">Add Failed</span>'
-      :statusBadge(x);
+      :statusBadge(x,true);
     const warn=(jb&&jb.status==='failed'&&(jb.kind!=='add'||addFailed))?' <span class="tiny" title="'+esc(jb.error)+'">⚠</span>':'';
     return [
       selectionBox('accounts',x.name,deleteVisible.accounts.includes(x.name)),
       index+1,
       `<span class="account-name" title="${esc(x.email||x.display_name||x.name)}">${esc(x.display_name||x.email||x.name)}${warn}</span><span class="account-secondary">${esc(({google:'Google',facebook:'Facebook',cookies:'Cookies',unknown:'Unknown'})[x.account_type]||'Unknown')}</span>`,
-      `<select class="account-connection-select" aria-label="Kết nối account ${esc(x.email||x.name)}" data-account-connection="${esc(x.name)}" title="${esc(connectionChoices.find(c=>c.id===(x.connection_id||'direct'))?.label||'Kết nối không khả dụng')}" ${x.busy||x.active_requests||jb?.status==='running'||connectionUpdates.has(x.name)?'disabled':''} onchange="changeAccountConnection(this.dataset.accountConnection,this)">${connectionChoices.some(c=>c.id===(x.connection_id||'direct'))?'':`<option value="${esc(x.connection_id)}" selected disabled>Kết nối không khả dụng</option>`}${connectionOptions(x.connection_id||'direct')}</select>`,
-      badge+(x.active_requests?`<div class="tiny">${Number(x.active_requests)} request đang chạy</div>`:''),
+      `<select class="account-connection-select" aria-label="Kết nối account ${esc(x.email||x.name)}" data-account-connection="${esc(x.name)}" title="${esc(connectionChoices.find(c=>c.id===(x.connection_id||'direct'))?.label||'Kết nối không khả dụng')}" ${connectionUpdates.has(x.name)?'disabled':''} onchange="changeAccountConnection(this.dataset.accountConnection,this)">${connectionChoices.some(c=>c.id===(x.connection_id||'direct'))?'':`<option value="${esc(x.connection_id)}" selected disabled>Kết nối không khả dụng</option>`}${connectionOptions(x.connection_id||'direct')}</select>`,
+      badge+(x.active_requests?`<div class="tiny">${Number(x.active_requests)} request ?ang ch?y</div>`:''),
       `<label class="sw"><input type="checkbox" ${x.scheduling?'checked':''} onchange="setSched('${x.name}',this.checked)"><i></i></label>`,
       `<b>${x.used_today}</b> / ${x.limit}<span class="account-secondary" title="Last used: ${esc(fmt(x.last_used_at))}">${x.last_used_at?'Last '+esc(fmtHM(x.last_used_at)):'Chưa dùng'}</span>`,
       accountTime(x.created_at),
@@ -902,16 +912,15 @@ function renderAccounts(){
       const members=visible.filter(x=>accountEmailDomain(x)===domain);
       const ready=members.filter(x=>x.ready_to_generate&&jobs[x.name]?.status!=='running').length;
       const enabled=members.filter(x=>x.scheduling).length;
-      return `<section class="account-domain" data-account-domain="${esc(domain)}"><div class="toolbar"><h3>${esc(domain?'@'+domain:'Unknown domain')}</h3>${domainWebButton(domain)}</div><p>${members.length} t\u00e0i kho\u1ea3n &middot; ${ready} s\u1eb5n s\u00e0ng gen &middot; ${enabled}/${members.length} Dispatch b\u1eadt</p>${accountTable(members)}</section>`;
+      return `<section class="account-domain" data-account-domain="${esc(domain)}"><div class="toolbar"><h3>${esc(domain?'@'+domain:'Unknown domain')}</h3><div class="row">${domainProxyButton(domain)}${domainWebButton(domain)}</div></div><p>${members.length} t\u00e0i kho\u1ea3n &middot; ${ready} s\u1eb5n s\u00e0ng gen &middot; ${enabled}/${members.length} Dispatch b\u1eadt</p>${accountTable(members)}</section>`;
     }).join('');
   }else{
-    q('#accountsTable').innerHTML=domainWebButton('gmail.com')+accountTable(visible,true);
+    q('#accountsTable').innerHTML=domainProxyButton('gmail.com')+domainWebButton('gmail.com')+accountTable(visible,true);
   }
   updateDeleteSelection('accounts');
 }
 
 async function resetQuota(name,btn){
-  if(!confirm('Reset quota for this account?'))return;
   btn.disabled=true;
   try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/reset-quota',{method:'POST'});await refresh();}
   catch(e){alert(e.message);}finally{btn.disabled=false;}
@@ -1245,16 +1254,16 @@ async function taskAction(id,action){
   catch(e){alert(e.message);}
 }
 const sceneRetryPending=new Set();
-async function retrySceneTask(taskId,button){
+async function retrySceneTask(taskId,button,differentAccount=false){
   if(sceneRetryPending.has(taskId))return;
   sceneRetryPending.add(taskId);button.disabled=true;button.textContent='Queuing...';
   try{
-    await api('/api/admin/tasks/'+encodeURIComponent(taskId)+'/retry',{method:'POST'});
+    await api('/api/admin/tasks/'+encodeURIComponent(taskId)+(differentAccount?'/retry-other':'/retry'),{method:'POST'});
     button.dataset.retrySubmitted='1';button.textContent='Queued';
     ProjectReview.invalidate();
     await loadTasks();
   }catch(e){alert(e.message);}
-  finally{sceneRetryPending.delete(taskId);if(button.isConnected&&!button.dataset.retrySubmitted){button.disabled=false;button.textContent='Try again';}}
+  finally{sceneRetryPending.delete(taskId);if(button.isConnected&&!button.dataset.retrySubmitted){button.disabled=false;button.textContent=differentAccount?'Th\u1eed account kh\u00e1c':'Try again';}}
 }
 function taskRetryHistory(t){
   let history=[];try{history=JSON.parse(t.retry_history||'[]');}catch(e){}
@@ -1298,8 +1307,12 @@ function taskControls(t){
   if(t.account&&(t.conversation_id||t.result_url)&&t.status!=='completed'){
     controls.push('<button class="btn" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;check&quot;)">Check now</button>');
   }
-  if(t.scene_id&&['failed','stopped'].includes(t.status)&&!t.deleted_at){
+  if(t.failure_code==='PROXY_CONNECTION_FAILED'){
+    controls.push('<button class="btn btn-p" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;continue-proxy&quot;)">Continue after proxy change</button>');
+  }
+  if(t.scene_id&&['failed','stopped','needs_recovery'].includes(t.status)&&!t.deleted_at){
     controls.push('<button class="btn btn-p" title="Retry this task in place using its original prompt, references and settings" data-scene-retry="'+esc(t.id)+'" onclick="retrySceneTask(this.dataset.sceneRetry,this)">Try again</button>');
+    if(t.account||t.account_uuid)controls.push('<button class="btn" title="Skip the previous account and wait for another eligible account" data-task-id="'+esc(t.id)+'" onclick="retrySceneTask(this.dataset.taskId,this,true)">Th\u1eed account kh\u00e1c</button>');
   }
   if(['queued','processing','needs_recovery'].includes(t.status)){
     controls.push('<button class="btn btn-danger" onclick="taskAction(&quot;'+esc(t.id)+'&quot;,&quot;stop&quot;)">Stop</button>');
@@ -1528,7 +1541,7 @@ timer=setInterval(()=>{if(autoRefresh)refresh();},10000);
 /* Project review shares the dashboard auth/API helper and ten-second polling timer. */
 window.ProjectReview = (() => {
   const state = {projects:null, project:null, data:null, scene:null, dirty:true,
-    loading:false, request:0, versionsRequest:0, signature:null, home:{}, panel:null, panelRequest:0, blobs:[], busy:false, validated:null, assets:[], staging:[], sceneCounts:{}, replaceFile:null};
+    loading:false, request:0, versionsRequest:0, signature:null, home:{}, panel:null, panelRequest:0, blobs:[], busy:false, validated:null, assets:[], staging:[], sceneCounts:{}, replaceFile:null, bulkGroups:null};
   const root = document.getElementById('tab-projects');
   const el = id => document.getElementById(id);
   const path = id => encodeURIComponent(id);
@@ -1580,7 +1593,7 @@ window.ProjectReview = (() => {
     const chapters=state.projects.filter(p=>p.parent_project_id===(parent ? parent.id : state.project));
     el('projectChapters').innerHTML=parent
       ? `<p>Chapter: <strong>${esc(project.name)}</strong> &middot; References shared from <strong>${esc(parent.name)}</strong>.</p><p>Import, Generate All and selected outputs below apply to this chapter only.</p><div class="project-actions">${chapters.map(c=>`<button class="btn ${c.id===state.project ? 'btn-p' : ''}" data-action="open" data-project-id="${esc(c.id)}">${esc(c.name)}</button>`).join('')}</div>`
-      : `<div class="toolbar"><h4>Chapters</h4><button class="btn btn-p" data-action="create-chapter">+ Create Chapter</button></div><p>All chapters share this project's Reference Library. Open a chapter to import and generate its scenes.</p><div class="project-actions">${chapters.map(c=>`<button class="btn" data-action="open" data-project-id="${esc(c.id)}">${esc(c.name)}</button>`).join('') || '<span>No chapters yet.</span>'}</div>${chapters.length ? '<p>Scenes and Generate All below belong directly to this project; they do not include chapter scenes.</p>' : ''}`;
+      : `<div class="toolbar"><h4>Chapters</h4><button class="btn btn-p" data-action="create-chapter">+ Create Chapter</button>${chapters.length ? '<button class="btn" data-action="bulk">Bulk Upload Shared Missing References</button>' : ''}</div><p>All chapters share this project's Reference Library. Upload a missing reference once here; it resolves matching scenes across every chapter.</p><div class="project-actions">${chapters.map(c=>`<button class="btn" data-action="open" data-project-id="${esc(c.id)}">${esc(c.name)}</button>`).join('') || '<span>No chapters yet.</span>'}</div>${chapters.length ? '<p>Scenes and Generate All below belong directly to this project; they do not include chapter scenes.</p>' : ''}`;
 
     el('projectProgress').textContent=`${data.summary.selected} / ${data.summary.total_scenes} SELECTED${data.production_complete ? ' - Production complete' : ''}`;
     el('projectSummary').innerHTML=`<span class="badge b-gray">Scenes: ${data.summary.total_scenes}</span>`+Object.entries(data.summary).filter(([key])=>key!=='total_scenes')
@@ -1674,6 +1687,7 @@ window.ProjectReview = (() => {
     } catch(e) { if(request===state.request)error(e); }
     finally { if(request===state.request)state.loading=false; }
   }
+  window.addEventListener('prompt-workflow-scenes-imported',()=>{void refresh(true);});
   async function act(button, operation) {
     if(state.busy)return;state.busy=true;
     const caption=button.textContent;button.disabled=true;
@@ -1776,6 +1790,7 @@ window.ProjectReview = (() => {
   }
   function closePanel(){
     state.panel=null;state.panelRequest++;state.validated=null;state.replaceFile=null;
+    state.bulkGroups=null;
     state.staging.forEach(entry=>URL.revokeObjectURL(entry.url));state.staging=[];
     state.blobs.forEach(URL.revokeObjectURL);state.blobs=[];
     el('projectPanel').hidden=true;el('projectPanelBody').replaceChildren();el('projectPanelError').textContent='';
@@ -1789,6 +1804,7 @@ window.ProjectReview = (() => {
     el('projectPanel').scrollIntoView({block:'start',behavior:'smooth'});
   }
   function missingGroups(){
+    if(state.panel==='bulk' && state.bulkGroups)return state.bulkGroups;
     const groups=new Map();
     for(const scene of (state.data && state.data.scenes || []))for(const ref of scene.missing_references || []){
       const key=ref.name.trim().toLocaleLowerCase();
@@ -1796,6 +1812,21 @@ window.ProjectReview = (() => {
       groups.get(key).scenes.push(scene.scene_number);
     }
     return [...groups.values()];
+  }
+  async function loadBulkMissingGroups(projectId){
+    const current=state.projects.find(p=>p.id===projectId);
+    const parentId=current && current.parent_project_id || projectId;
+    const projects=current && current.parent_project_id
+      ? [current]
+      : [state.projects.find(p=>p.id===parentId), ...state.projects.filter(p=>p.parent_project_id===parentId)].filter(Boolean);
+    const results=await Promise.all(projects.map(async project=>({project,status:await projectRequest(`/api/admin/projects/${path(project.id)}/generation-status`)})));
+    const groups=new Map();
+    for(const {project,status} of results)for(const scene of status.scenes||[])for(const ref of scene.missing_references||[]){
+      const key=ref.name.trim().toLocaleLowerCase();
+      if(!groups.has(key))groups.set(key,{name:ref.name,scenes:[]});
+      groups.get(key).scenes.push(`${project.parent_project_id ? project.name+' · ' : ''}Scene ${scene.scene_number}`);
+    }
+    state.bulkGroups=[...groups.values()];
   }
   function renderMissing(){
     const groups=missingGroups();
@@ -1855,10 +1886,12 @@ window.ProjectReview = (() => {
   async function libraryPanel(){
     panel('library','Shared Project Reference Library','<p>Loading...</p>');const ticket=state.panelRequest;
     const projectId=state.project;
+    const selectedProject=state.projects.find(p=>p.id===projectId);
+    const isChapter=!!(selectedProject&&selectedProject.parent_project_id);
     const result=await projectRequest(`/api/admin/projects/${path(projectId)}/assets`);
     if(ticket!==state.panelRequest || projectId!==state.project)return;
     state.assets=result.assets;
-    el('projectPanelBody').innerHTML=`<button class="btn" data-action="bulk">Bulk Upload References</button><button class="btn btn-p" data-action="upload">+ Upload Reference</button><button class="btn" data-action="resolve-references" data-loading="Resolving...">Refresh references</button><div class="project-assets">${result.assets.map(asset=>{
+    el('projectPanelBody').innerHTML=`<button class="btn" data-action="bulk">${isChapter?'Bulk Upload Missing References':'Bulk Upload Missing References Across Chapters'}</button><button class="btn btn-p" data-action="upload">+ Upload Reference</button><button class="btn" data-action="resolve-references" data-loading="Resolving...">Refresh references</button><div class="project-assets">${result.assets.map(asset=>{
       const used=state.data.scenes.filter(scene=>(scene.references||[]).some(r=>r.asset_id===asset.id)).map(s=>s.scene_number);
       return `<article class="project-asset"><img data-asset-image="${esc(asset.id)}" alt="${esc(asset.name)}"><h4>${esc(asset.name)}</h4><p>Type: ${esc(label(asset.type).toUpperCase())}</p><p>Used by: ${used.length ? 'Scenes '+used.join(', ') : 'No scenes yet'}</p><span data-image-error></span><div class="project-actions"><button class="btn" data-action="replace-asset" data-asset-id="${esc(asset.id)}">Replace Image</button><button class="btn btn-danger" data-action="remove-asset" data-asset-id="${esc(asset.id)}">Delete</button></div></article>`;
     }).join('') || '<p>No references yet. Upload your first reference.</p>'}</div>`;
@@ -1885,7 +1918,14 @@ window.ProjectReview = (() => {
   const candidateOptions=value=>[1,2,3,4,5].map(n=>`<option value="${n}" ${n===Number(value) ? 'selected' : ''}>x${n}</option>`).join('');
   const imageFile=file=>/\.(jpe?g|png|webp)$/i.test(file.name);
   const matchName=name=>name.replace(/\.(jpe?g|png|webp)$/i,'').replace(/[\s_-]+/g,' ').trim().toLocaleLowerCase();
-  function bulkPanel(){panel('bulk','Bulk Upload References','');renderBulk();}
+  async function bulkPanel(){
+    panel('bulk','Shared Missing References','<p>Checking missing references across this project and its chapters...</p>');
+    const ticket=state.panelRequest, projectId=state.project;
+    try{
+      await loadBulkMissingGroups(projectId);
+      if(ticket===state.panelRequest && projectId===state.project)renderBulk();
+    }catch(e){if(ticket===state.panelRequest)error(e);}
+  }
   function stageFiles(files,explicitName=null){
     if(explicitName && files.length!==1){error(new Error('Drop one image onto each reference, or use the multi-file drop zone.'));return;}
     const names=missingGroups().map(r=>r.name);
@@ -1924,7 +1964,9 @@ window.ProjectReview = (() => {
     }
     let resolutionError=null;
     if(successful){try{await resolveReferences(projectId);}catch(e){resolutionError=e;}}
-    await refresh(true);message(`Uploaded ${successful} references; ${entries.length-successful} failed. Results are shown per file.`);
+    await refresh(true);
+    if(state.panel==='bulk')try{await loadBulkMissingGroups(projectId);}catch(e){resolutionError=resolutionError||e;}
+    message(`Uploaded ${successful} references; ${entries.length-successful} failed. Results are shown per file.`);
     if(resolutionError)error(new Error('Uploads preserved. Refresh references to retry resolution. '+resolutionError.message));
     // Release the action lock before the final render so failed entries can be retried.
     state.busy=false;renderBulk();
@@ -2008,6 +2050,7 @@ window.ProjectReview = (() => {
     if(action==='confirm-replace'){await confirmReplace(button.dataset.assetId);return true;}
     if(action==='confirm-remove'){const result=await projectRequest(`/api/admin/assets/${path(button.dataset.assetId)}/remove`,{method:'POST'});await refresh(true);await libraryPanel();message(result.cleanup_warning || 'Reference removed from current usage. History preserved.');return true;}
     if(action==='confirm-scene-generate'){await projectRequest(`/api/admin/scenes/${path(button.dataset.sceneId)}/generate`,{method:'POST',body:{count:Number(button.dataset.count),request_id:button.dataset.requestId},headers:auth()});closePanel();message(`${button.dataset.count} candidates queued.`);await refresh(true);return true;}
+    if(action==='prompt-workflow'){panel('prompt-workflow','Prompt Workshop','<div id="promptWorkshop"></div>');await PromptWorkflowUI.open(state.project,el('promptWorkshop'));return true;}
     if(action==='project-accounts'){await projectAccountsPanel();return true;}
     if(action==='run-account-domain'){runAccountDomain=button.dataset.domain;filterRunAccounts();return true;}
     if(action==='accounts-clear'){if(el('projectAccountInherit'))el('projectAccountInherit').checked=false;filterRunAccounts();el('projectAccountChoices').querySelectorAll('input').forEach(x=>x.checked=false);updateProjectAccountCount();return true;}
@@ -2020,7 +2063,7 @@ window.ProjectReview = (() => {
     if(action==='create-chapter'){projectForm(false,true);return true;}
     if(action==='create'){projectForm();return true;}
     if(action==='rename'){projectForm(true);return true;}
-    if(action==='close-panel'){closePanel();el(state.project ? 'projectDetail' : 'projectHome').scrollIntoView({block:'start',behavior:'smooth'});return true;}
+    if(action==='close-panel'){if(state.panel==='prompt-workflow')await PromptWorkflowUI.flush();closePanel();el(state.project ? 'projectDetail' : 'projectHome').scrollIntoView({block:'start',behavior:'smooth'});return true;}
     if(action==='import'){importPanel();return true;}
     if(action==='library'){await libraryPanel();return true;}
     if(action==='outputs'){await outputsPanel();return true;}
@@ -2075,5 +2118,6 @@ window.ProjectReview = (() => {
 })();
 </script>
 
+<script src="/prompt-workflow.js?v=20261021-2"></script>
 </body>
 </html>

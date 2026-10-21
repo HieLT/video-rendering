@@ -1,0 +1,92 @@
+Bạn là một biên kịch và đạo diễn chuyên xây dựng phim điện ảnh AI dựa trên các nhân vật có sẵn.
+
+Tôi muốn làm một bộ phim AI về nhân vật sau:
+
+NHÂN VẬT:
+[TÊN NHÂN VẬT]
+
+THỜI LƯỢNG MONG MUỐN:
+[VÍ DỤ: khoảng 20 phút]
+
+PHONG CÁCH HÌNH ẢNH:
+[VÍ DỤ: realistic cinematic live-action, dark fantasy]
+
+YÊU CẦU:
+
+Hãy đề xuất 10 Ý TƯỞNG PHIM khác nhau xoay quanh nhân vật này.
+
+Mỗi ý tưởng phải đủ nội dung để có thể phát triển thành một bộ phim hoàn chỉnh với thời lượng đã yêu cầu, không phải chỉ là một tình huống hoặc một trận chiến.
+
+Có thể lấy cảm hứng từ lore/cốt truyện gốc của nhân vật, nhưng không bắt buộc phải bám sát hoàn toàn.
+
+Có thể thêm:
+- nhân vật phụ
+- phản diện
+- bí ẩn
+- biến cố
+- mối quan hệ
+- xung đột mới
+
+nhưng câu chuyện vẫn phải giữ được bản chất và đặc trưng quan trọng của nhân vật chính.
+
+Ưu tiên những câu chuyện:
+- có hook mạnh ngay đầu phim
+- có mục tiêu rõ ràng cho nhân vật chính
+- có xung đột phát triển xuyên suốt phim
+- có yếu tố cảm xúc
+- có bí ẩn hoặc câu hỏi khiến khán giả muốn xem tiếp
+- có những bước ngoặt đáng nhớ
+- có cao trào đủ mạnh
+- có ending thỏa mãn
+- phù hợp để kể bằng hình ảnh điện ảnh
+- phù hợp để sản xuất bằng AI video theo nhiều scene riêng biệt
+- có tiềm năng thu hút người xem YouTube
+
+Không thiết kế Chapter.
+Không chia Scene.
+Không viết video prompt ở bước này.
+
+VỚI MỖI Ý TƯỞNG, HÃY TRẢ VỀ:
+
+IDEA [SỐ] — [TÊN PHIM / TÊN Ý TƯỞNG]
+
+GENRE:
+Thể loại chính.
+
+CORE CONCEPT:
+Tóm tắt ý tưởng trung tâm trong 2–4 câu.
+
+HOOK:
+Điều khiến khán giả tò mò và muốn tiếp tục xem.
+
+STORY:
+Trình bày câu chuyện từ đầu → phát triển → cao trào → kết thúc ở mức tổng thể.
+
+MAIN CONFLICT:
+Xung đột chính của bộ phim.
+
+EMOTIONAL CORE:
+Trọng tâm cảm xúc của câu chuyện.
+
+MAIN ANTAGONISTIC FORCE:
+Nhân vật, thế lực hoặc vấn đề đối đầu với nhân vật chính.
+
+WHY IT WORKS AS A FILM:
+Giải thích ngắn tại sao ý tưởng này phù hợp với một bộ phim có thời lượng đã yêu cầu.
+
+VIRAL / CINEMATIC POTENTIAL:
+Những yếu tố có thể tạo ra các khoảnh khắc điện ảnh mạnh hoặc thu hút người xem.
+
+Cuối cùng:
+
+COMPARE ALL 10 IDEAS
+
+Chọn ra:
+- 3 ý tưởng mạnh nhất
+- ý tưởng bạn đánh giá tốt nhất
+
+Giải thích ngắn lý do.
+
+QUAN TRỌNG:
+Không tự quyết định thay tôi.
+Tôi sẽ là người chọn ý tưởng nào được phát triển tiếp.

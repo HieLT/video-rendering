@@ -4,7 +4,7 @@ import time
 
 
 class AccountWebQueue:
-    def __init__(self, open_account, session_count, interval=5, capacity=10, clock=time.monotonic, sleep=asyncio.sleep):
+    def __init__(self, open_account, session_count, interval=20, capacity=3, clock=time.monotonic, sleep=asyncio.sleep):
         self.open_account = open_account
         self.session_count = session_count
         self.interval = interval

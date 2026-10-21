@@ -289,7 +289,7 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(self.project_generate()['created'],3)
     def test_missing_skipped_and_snapshot_exact(self):
         a=self.asset('Hero');b=self.asset('Cabin')
-        def row(n,refs): return dict(scene_number=n,scene_name='exact',prompt='@Hero enters',model='seedance-2.5',ratio='9:16',duration=15,start_end=False,references=refs)
+        def row(n,refs): return dict(scene_number=n,scene_name='exact',prompt='@Hero enters',model='seedance-2.5',ratio='9:16',duration=30,start_end=False,references=refs)
         refs=[dict(name='Cabin',alias='Cabin'),dict(name='Hero',alias='Hero')]
         payload={'scenes':[row(1,refs),row(2,[dict(name='Absent',alias='Hero')])]}
         imported=self.http.post('/api/admin/projects/'+self.project_id+'/scenes/import',json=payload).json()['scenes']
@@ -298,7 +298,7 @@ class ProjectTests(unittest.TestCase):
         self.assertIn('MISSING_REFERENCES',[r['reason'] for r in result['skipped_scenes']])
         task=self.store.get(result['tasks'][0]['task_id'])
         self.assertEqual(task['prompt'],'@Image2 enters')
-        self.assertEqual((task['ratio'],task['duration'],task['model']),('9:16',15,'seedance-2.5'))
+        self.assertEqual((task['ratio'],task['duration'],task['model']),('9:16',15,'seedance-2.0'))
         snapshot=json.loads(task['reference_snapshot'])
         self.assertEqual([r['asset_id'] for r in snapshot],[b['id'],a['id']])
         self.assertEqual([self.store.scene_details(s['id']) for s in imported],before)

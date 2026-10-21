@@ -1,20 +1,18 @@
 # Dola Pro Engine (Chromium Extension)
 
-This extension provides duration unlock (`15s`, `30s`) and master unwatermarked resource extraction for Dola and Doubao.
+This extension adds the requested `15s` duration option and master unwatermarked resource extraction for Dola and Doubao.
 
 ## Key Notes
 1. **Incognito Mode**: If running in incognito or headless browser profiles, enable "Allow in Incognito" in `chrome://extensions/`.
-2. **Prompt Guidelines**: When starting a new conversation for 30s generation, avoid putting duration words (e.g. "30s", "30 seconds") directly in the prompt text. The engine attaches duration capability via protocol.
+2. **Prompt Guidelines**: The engine attaches duration capability via protocol; the current UI exposes the standard durations plus 15s.
 3. **Mock Data**: `dola-skill-pack-response.json` and `doubao-skill-pack-response.json` are intercepted by the debugger to inject duration parameters.
 
 ## Legacy and combined video settings
 
 The action-bar response patch supports both legacy duration `option_list` menus
-and combined ratio/duration panels. For the latter it extends duration templates
-(`lower_bound`, `upper_bound`, `step_length`) and `supported_duration_range`
-(`lower`, `upper`, `step`) to 30 seconds when 30 lies on the existing step grid.
-Other controls, defaults, and larger ranges are preserved. JSON-encoded nested
-templates and plain JSON objects are both supported.
+and combined ratio/duration panels. It inserts 15s after 10s, removes the 30s
+choice, and caps supported duration ranges at 15s when the existing step grid
+allows it. JSON-encoded nested templates and plain JSON objects are both supported.
 
 The UI worker closes persistent ratio panels explicitly, reads seconds from
 combined labels, and supports both option menus and sliders. Indexed sliders are

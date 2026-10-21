@@ -1,12 +1,22 @@
 """Single-process launcher with subprocess support for Patchright on Windows."""
 import argparse
 import asyncio
+import logging
 import os
 from pathlib import Path
 import sys
 
 import uvicorn
 
+
+class LocalAddressLogFilter(logging.Filter):
+    """Show a browser-usable local URL when binding to all interfaces."""
+    def filter(self, record):
+        args = record.args
+        if (record.getMessage().startswith('Uvicorn running on ')
+                and isinstance(args, tuple) and len(args) == 3 and args[1] == '0.0.0.0'):
+            record.args = (args[0], '127.0.0.1', args[2])
+        return True
 
 def create_loop():
     if sys.platform == 'win32':
@@ -24,6 +34,9 @@ def main():
         'server:app', host=args.host, port=args.port, workers=1, reload=False))
     loop = create_loop()
     asyncio.set_event_loop(loop)
+    logging_filter = LocalAddressLogFilter()
+    uvicorn_logger = logging.getLogger('uvicorn.error')
+    uvicorn_logger.addFilter(logging_filter)
     try:
         print(f'Server event loop: {type(loop).__name__}', flush=True)
         loop.run_until_complete(server.serve())
@@ -37,6 +50,7 @@ def main():
         loop.run_until_complete(loop.shutdown_default_executor())
         asyncio.set_event_loop(None)
         loop.close()
+        uvicorn_logger.removeFilter(logging_filter)
 
 
 if __name__ == '__main__':

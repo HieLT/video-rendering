@@ -12,7 +12,7 @@ async def run():
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             try:
-                for mode in ('sidebar', 'fallback', 'combined', 'combined_stays_open', 'sticky', 'sticky_ignored', 'ambiguous', 'lost_image', 'missing_before', 'ignored', 'reset'):
+                for mode in ('sidebar', 'fallback', 'combined', 'combined_stays_open', 'sticky', 'sticky_ignored', 'overlay', 'ambiguous', 'lost_image', 'missing_before', 'ignored', 'reset'):
                     page = await browser.new_page()
                     try:
                         await page.set_content('''<aside><button id="draft">=== TECHNICAL === 16:9 cinematic</button><button>16:9</button></aside>
@@ -37,6 +37,7 @@ async def run():
                             control.onclick = () => {
                                 const popup = document.createElement('div');
                                 popup.id = 'ratio-menu'; popup.setAttribute('role', 'menu');
+                                if (mode === 'overlay') Object.assign(popup.style, {position:'fixed', left:'10px', bottom:'0', zIndex:'2', padding:'20px'});
                                 if (mode !== 'fallback') control.setAttribute('aria-controls', popup.id);
                                 const option = document.createElement('div'); option.setAttribute('role', 'menuitem');
                                 option.innerHTML = '<span>16:9</span>';
@@ -52,6 +53,11 @@ async def run():
                                 popup.append(option);
                                 if (mode === 'ambiguous') popup.append(option.cloneNode(true));
                                 document.body.append(popup);
+                                if (mode === 'overlay') {
+                                    const overlay = document.createElement('div');
+                                    Object.assign(overlay.style, {position:'fixed', inset:'0', zIndex:'3'});
+                                    document.body.append(overlay);
+                                }
                             };
                         }""", mode)
                         failures = {'ambiguous': 'Multiple visible', 'lost_image': 'images changed',

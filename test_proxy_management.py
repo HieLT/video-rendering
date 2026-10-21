@@ -9,6 +9,25 @@ class ManagementTests(ConnectionTests):
         return self.http.post('/api/admin/account-connections/distribute'+('?preview=true' if preview else ''),
                               headers={'X-Admin-Key': 'fixture-admin'} if auth else {})
 
+    def test_domain_distribution_isolated_preview_and_apply(self):
+        from unittest.mock import patch
+        accounts=[{'name':'one','uuid':'one','email':'a@ntto.us'},
+                  {'name':'two','uuid':'two','email':'b@other.us'}]
+        headers={'X-Admin-Key':'fixture-admin'}
+        url='/api/admin/account-connections/distribute?domain=%40NTTO.US'
+        with patch.object(self.pool,'list_accounts',return_value=accounts):
+            before=self.path.read_bytes()
+            preview=self.http.post(url+'&preview=true',headers=headers)
+            self.assertEqual(preview.status_code,200,preview.text)
+            self.assertEqual(preview.json()['eligible'],1)
+            self.assertEqual(self.path.read_bytes(),before)
+            applied=self.http.post(url,headers=headers)
+            self.assertEqual(applied.status_code,200,applied.text)
+            self.assertEqual(connections.account_connection('one'),'fixture')
+            self.assertEqual(connections.account_connection('two'),'direct')
+            self.assertEqual(self.http.post(url.replace('%40NTTO.US','missing.us'),headers=headers).status_code,422)
+            self.assertEqual(self.http.post(url).status_code,401)
+
     def test_auto_distribution_balances_all_accounts_and_never_selects_direct(self):
         self.import_paste('203.0.113.10:8080:u:p | ID: 100\n203.0.113.11:8080:u:p | ID: 101')
         for index in range(8):

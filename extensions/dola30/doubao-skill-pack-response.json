@@ -7,168 +7,216 @@
 		},
 		"video_generation": {
 			"meta": {
-				"title": "视频生成",
-				"desc": "自由运镜，图片文字一键成片",
-				"option_list": [{
-					"type": 3,
-					"value": "duration",
-					"show_name": "",
-					"options": [{
-						"show_name": "5s",
-						"value": "5",
-						"is_default": false,
-						"sub_display": ""
-					}, {
-						"show_name": "10s",
-						"value": "10",
-						"is_default": true,
-						"sub_display": ""
-					}, {
-						"show_name": "30s",
-						"value": "30",
-						"is_default": false,
-						"sub_display": ""
-					}]
-				}, {
-					"type": 3,
-					"value": "model",
-					"show_name": "",
-					"options": [{
-						"show_name": "Seedance2.0",
-						"value": "seedance_v2.0_std",
-						"is_default": false,
-						"after_key": "https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/samantha/creation/member_badge_enhanced.svg",
-						"sub_display": "",
-						"icon_url": "https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/samantha/creation/member_badge_enhanced.svg",
-						"subscription_tag": "none"
-					}, {
-						"show_name": "Seedance2.0Fast",
-						"value": "seedance_v2.0",
-						"is_default": false,
-						"sub_display": "",
-						"subscription_tag": "none"
-					}, {
-						"show_name": "Seedance2.0Mini",
-						"value": "seedance_v2.0_mini",
-						"is_default": true,
-						"sub_display": "",
-						"subscription_tag": "none"
-					}]
-				}, {
-					"type": 3,
-					"value": "movement",
-					"show_name": "",
-					"options": [{
-						"show_name": "固定镜头",
-						"value": "固定镜头",
-						"is_default": false,
-						"sub_display": ""
-					}, {
-						"show_name": "镜头环绕",
-						"value": "镜头环绕${cameraMove_panAround_subject}拍摄",
-						"is_default": false,
-						"sub_display": ""
-					}, {
-						"show_name": "镜头移动",
-						"value": "镜头往${cameraMove_moveTowards_direction}移动",
-						"is_default": false,
-						"sub_display": ""
-					}, {
-						"show_name": "镜头变焦",
-						"value": "镜头聚焦在${cameraMove_focusOn_subject}",
-						"is_default": false,
-						"sub_display": ""
-					}]
-				}, {
-					"type": 1,
-					"value": "shot_newShot_desc",
-					"show_name": "",
-					"placeholder": {
-						"placeholder": "[描述下一幕的画面]",
-						"default_text": ""
+				"title": "\u00e8\u00a7\u0086\u00e9\u00a2\u0091\u00e7\u0094\u009f\u00e6\u0088\u0090",
+				"desc": "\u00e8\u0087\u00aa\u00e7\u0094\u00b1\u00e8\u00bf\u0090\u00e9\u0095\u009c\u00ef\u00bc\u008c\u00e5\u009b\u00be\u00e7\u0089\u0087\u00e6\u0096\u0087\u00e5\u00ad\u0097\u00e4\u00b8\u0080\u00e9\u0094\u00ae\u00e6\u0088\u0090\u00e7\u0089\u0087",
+				"option_list": [
+					{
+						"type": 3,
+						"value": "duration",
+						"show_name": "",
+						"options": [
+							{
+								"show_name": "5s",
+								"value": "5",
+								"is_default": false,
+								"sub_display": ""
+							},
+							{
+								"show_name": "10s",
+								"value": "10",
+								"is_default": false,
+								"sub_display": ""
+							},
+							{
+								"show_name": "15s",
+								"value": "15",
+								"is_default": true,
+								"sub_display": ""
+							}
+						]
+					},
+					{
+						"type": 3,
+						"value": "model",
+						"show_name": "",
+						"options": [
+							{
+								"show_name": "Seedance2.0",
+								"value": "seedance_v2.0_std",
+								"is_default": false,
+								"after_key": "https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/samantha/creation/member_badge_enhanced.svg",
+								"sub_display": "",
+								"icon_url": "https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/samantha/creation/member_badge_enhanced.svg",
+								"subscription_tag": "none"
+							},
+							{
+								"show_name": "Seedance2.0Fast",
+								"value": "seedance_v2.0",
+								"is_default": false,
+								"sub_display": "",
+								"subscription_tag": "none"
+							},
+							{
+								"show_name": "Seedance2.0Mini",
+								"value": "seedance_v2.0_mini",
+								"is_default": true,
+								"sub_display": "",
+								"subscription_tag": "none"
+							}
+						]
+					},
+					{
+						"type": 3,
+						"value": "movement",
+						"show_name": "",
+						"options": [
+							{
+								"show_name": "\u00e5\u009b\u00ba\u00e5\u00ae\u009a\u00e9\u0095\u009c\u00e5\u00a4\u00b4",
+								"value": "\u00e5\u009b\u00ba\u00e5\u00ae\u009a\u00e9\u0095\u009c\u00e5\u00a4\u00b4",
+								"is_default": false,
+								"sub_display": ""
+							},
+							{
+								"show_name": "\u00e9\u0095\u009c\u00e5\u00a4\u00b4\u00e7\u008e\u00af\u00e7\u00bb\u0095",
+								"value": "\u00e9\u0095\u009c\u00e5\u00a4\u00b4\u00e7\u008e\u00af\u00e7\u00bb\u0095${cameraMove_panAround_subject}\u00e6\u008b\u008d\u00e6\u0091\u0084",
+								"is_default": false,
+								"sub_display": ""
+							},
+							{
+								"show_name": "\u00e9\u0095\u009c\u00e5\u00a4\u00b4\u00e7\u00a7\u00bb\u00e5\u008a\u00a8",
+								"value": "\u00e9\u0095\u009c\u00e5\u00a4\u00b4\u00e5\u00be\u0080${cameraMove_moveTowards_direction}\u00e7\u00a7\u00bb\u00e5\u008a\u00a8",
+								"is_default": false,
+								"sub_display": ""
+							},
+							{
+								"show_name": "\u00e9\u0095\u009c\u00e5\u00a4\u00b4\u00e5\u008f\u0098\u00e7\u0084\u00a6",
+								"value": "\u00e9\u0095\u009c\u00e5\u00a4\u00b4\u00e8\u0081\u009a\u00e7\u0084\u00a6\u00e5\u009c\u00a8${cameraMove_focusOn_subject}",
+								"is_default": false,
+								"sub_display": ""
+							}
+						]
+					},
+					{
+						"type": 1,
+						"value": "shot_newShot_desc",
+						"show_name": "",
+						"placeholder": {
+							"placeholder": "[\u00e6\u008f\u008f\u00e8\u00bf\u00b0\u00e4\u00b8\u008b\u00e4\u00b8\u0080\u00e5\u00b9\u0095\u00e7\u009a\u0084\u00e7\u0094\u00bb\u00e9\u009d\u00a2]",
+							"default_text": ""
+						}
+					},
+					{
+						"type": 1,
+						"value": "story_board",
+						"show_name": "",
+						"placeholder": {
+							"placeholder": "\u00e9\u0095\u009c\u00e5\u00a4\u00b4\u00e5\u0088\u0087\u00e6\u008d\u00a2\u00ef\u00bc\u008c${shot_newShot_desc}",
+							"default_text": ""
+						}
+					},
+					{
+						"type": 1,
+						"value": "cameraMove_moveTowards_direction",
+						"show_name": "",
+						"placeholder": {
+							"placeholder": "[\u00e6\u0096\u00b9\u00e5\u0090\u0091]",
+							"default_text": ""
+						}
+					},
+					{
+						"type": 1,
+						"value": "cameraMove_panAround_subject",
+						"show_name": "",
+						"placeholder": {
+							"placeholder": "[\u00e4\u00b8\u00bb\u00e4\u00bd\u0093]",
+							"default_text": ""
+						}
+					},
+					{
+						"type": 3,
+						"value": "ratio",
+						"show_name": "",
+						"options": [
+							{
+								"show_name": "1:1",
+								"value": "1:1",
+								"is_default": true,
+								"sub_display": ""
+							},
+							{
+								"show_name": "3:4",
+								"value": "3:4",
+								"is_default": false,
+								"sub_display": ""
+							},
+							{
+								"show_name": "4:3",
+								"value": "4:3",
+								"is_default": false,
+								"sub_display": ""
+							},
+							{
+								"show_name": "9:16",
+								"value": "9:16",
+								"is_default": false,
+								"sub_display": ""
+							},
+							{
+								"show_name": "16:9",
+								"value": "16:9",
+								"is_default": false,
+								"sub_display": ""
+							},
+							{
+								"show_name": "21:9",
+								"value": "21:9",
+								"is_default": false,
+								"sub_display": ""
+							}
+						]
+					},
+					{
+						"type": 1,
+						"value": "cameraMove_focusOn_subject",
+						"show_name": "",
+						"placeholder": {
+							"placeholder": "[\u00e4\u00b8\u00bb\u00e4\u00bd\u0093]",
+							"default_text": ""
+						}
 					}
-				}, {
-					"type": 1,
-					"value": "story_board",
-					"show_name": "",
-					"placeholder": {
-						"placeholder": "镜头切换，${shot_newShot_desc}",
-						"default_text": ""
-					}
-				}, {
-					"type": 1,
-					"value": "cameraMove_moveTowards_direction",
-					"show_name": "",
-					"placeholder": {
-						"placeholder": "[方向]",
-						"default_text": ""
-					}
-				}, {
-					"type": 1,
-					"value": "cameraMove_panAround_subject",
-					"show_name": "",
-					"placeholder": {
-						"placeholder": "[主体]",
-						"default_text": ""
-					}
-				}, {
-					"type": 3,
-					"value": "ratio",
-					"show_name": "",
-					"options": [{
-						"show_name": "1:1",
-						"value": "1:1",
-						"is_default": true,
-						"sub_display": ""
-					}, {
-						"show_name": "3:4",
-						"value": "3:4",
-						"is_default": false,
-						"sub_display": ""
-					}, {
-						"show_name": "4:3",
-						"value": "4:3",
-						"is_default": false,
-						"sub_display": ""
-					}, {
-						"show_name": "9:16",
-						"value": "9:16",
-						"is_default": false,
-						"sub_display": ""
-					}, {
-						"show_name": "16:9",
-						"value": "16:9",
-						"is_default": false,
-						"sub_display": ""
-					}, {
-						"show_name": "21:9",
-						"value": "21:9",
-						"is_default": false,
-						"sub_display": ""
-					}]
-				}, {
-					"type": 1,
-					"value": "cameraMove_focusOn_subject",
-					"show_name": "",
-					"placeholder": {
-						"placeholder": "[主体]",
-						"default_text": ""
-					}
-				}],
+				],
 				"model_capability": {
 					"seedance_v2.0": {
-						"supported_durations": ["5", "10", "30"],
-						"supported_resolutions": ["720p"],
+						"supported_durations": [
+							"5",
+							"10",
+							"15"
+						],
+						"supported_resolutions": [
+							"720p"
+						],
 						"support_video_ref": false
 					},
 					"seedance_v2.0_mini": {
-						"supported_durations": ["5", "10", "30"],
-						"supported_resolutions": ["720p"],
+						"supported_durations": [
+							"5",
+							"10",
+							"15"
+						],
+						"supported_resolutions": [
+							"720p"
+						],
 						"support_video_ref": false
 					},
 					"seedance_v2.0_std": {
-						"supported_durations": ["5", "10", "30"],
-						"supported_resolutions": ["720p"],
+						"supported_durations": [
+							"5",
+							"10",
+							"15"
+						],
+						"supported_resolutions": [
+							"720p"
+						],
 						"support_video_ref": false
 					}
 				}

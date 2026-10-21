@@ -10,6 +10,7 @@ from browser import launch_account_context, cookie_value, ensure_account_session
 from video_worker import POLL_JS, extract_unwatermarked_url, _download
 import video_worker_ui as worker
 import config
+from video_generation_defaults import normalize_generation_settings
 
 CHECK_SECONDS = 20
 CHECK_INTERVAL = 300
@@ -18,9 +19,15 @@ MAX_RETRIES = 10
 DEFAULT_ETA = 1800
 EARLY_CHECK_SECONDS = 300
 
+def is_proxy_failure(error):
+    text = str(error).upper()
+    return any(code in text for code in ('ERR_TUNNEL_CONNECTION_FAILED', 'ERR_PROXY_CONNECTION_FAILED',
+        'ERR_PROXY_AUTH', 'ERR_NO_SUPPORTED_PROXIES', 'ERR_SOCKS_CONNECTION_FAILED',
+        '407 PROXY AUTHENTICATION', '402 PAYMENT REQUIRED'))
+
 def is_policy_rejection(error):
     return isinstance(error, dict) and str(error.get("code")) in {
-        "copyright_text", "prompt_refusal_text", "710082022", "710092007",
+        "copyright_text", "prompt_refusal_text", "policy_text", "710082022", "710092007",
     }
 
 def parse_eta(texts):
@@ -28,7 +35,7 @@ def parse_eta(texts):
     minute = r"\u5206(?:\u5206)?(?:\u5f8c|\u540e)?|\u5206\u949f|\u5206\u9418|minutes?|mins?|ph\u00fat"
     second = r"seconds?|\u79d2|gi\u00e2y"
     for text in texts:
-        if not re.search(r"Dreamina\s+Seedance", text, re.I): continue
+        if not re.search(r"(?:Dreamina\s+)?Seedance", text, re.I): continue
         for sentence in re.split(r"[\u3002\n!?]", text):
             if not re.search(r"\u5f8c|\u540e|\u9884\u8ba1|\u5b8c\u6210|ready|complete|take|wait|generated|finish|ho\u00e0n|sau|m\u1ea5t", sentence, re.I):
                 continue
@@ -266,6 +273,8 @@ class VideoScheduler:
             return False
         # Prefer unused daily quota; stable sort preserves pool order for ties.
         for acc in sorted(accounts, key=lambda a: a.get("used_today", 0)):
+            if row.get("retry_excluded_account") in (acc["name"], acc.get("uuid")) and row.get("retry_excluded_account"):
+                continue
             if (allowed is None or acc.get("uuid") in allowed) and self.eligible(acc):
                 self.reserved.setdefault(acc["name"],row["id"])
                 self.store.update(row["id"],account=acc["name"],account_uuid=self.pool.account_uuid(acc["name"]))
@@ -277,10 +286,17 @@ class VideoScheduler:
                           error=reason,finished_at=time.time())
         self.release(row)
 
+    def fail_policy(self,row,error):
+        reason = error.get('reason') if isinstance(error,dict) else str(error)
+        self.store.update(row['id'],status='failed',phase='failed',failure_code='POLICY_REJECTED',
+                          next_check_at=None,error=reason or 'Dola rejected this video for policy reasons',
+                          finished_at=time.time())
+        self.release(row)
+
     def retry(self,row,error):
         if is_policy_rejection(error):
             self.refund_rejected_claim(row)
-            self.stop(row,'Dola policy rejection; automatic retry stopped: '+str(error))
+            self.fail_policy(row,error)
             return False
         if (row.get("retry_count") or 0)>=MAX_RETRIES:
             self.review(row["id"],"Exhausted 10 generation retries: "+str(error))
@@ -292,6 +308,10 @@ class VideoScheduler:
 
     async def submit(self,row,paths):
         task_id=row["id"]
+        model, duration = normalize_generation_settings(row.get("model"), row.get("duration"))
+        if row.get("model") != model or row.get("duration") != duration:
+            self.store.update(task_id, model=model, duration=duration)
+            row = self.store.get(task_id)
         async def monitor(account,page,context,conversation_id,timeout,on_poll=None,on_balance=None,after_index=0):
             # Unknown/streaming replies keep this browser open; never resubmit blindly.
             while True:
@@ -400,8 +420,7 @@ class VideoScheduler:
                     return
                 if kind=="rejected":
                     if is_policy_rejection(poll.get("rejection")):
-                        self.refund_rejected_claim(row)
-                        self.stop(row,'Dola policy rejection; automatic retry stopped: '+str(poll['rejection']))
+                        self.retry(row,poll.get("rejection"))
                         return
                     if row.get("dispatch_uncertain") and (poll.get("latestIndex") or 0)<=(row.get("after_index") or 0):
                         self.review(task_id,"Cannot identify the interrupted submission; inspect conversation")
@@ -448,6 +467,10 @@ class VideoScheduler:
                 raise
             except Exception as exc:
                 row=self.store.get(task_id)
+                if is_proxy_failure(exc):
+                    self.store.update(task_id,status='needs_recovery',failure_code='PROXY_CONNECTION_FAILED',
+                        error='Proxy connection failed; change proxy then Continue. '+str(exc),next_check_at=None)
+                    return
                 if row.get("accepted_at") and row.get("phase")=="waiting":
                     # A cleanup error after acceptance is not a failed generation.
                     self.store.update(task_id,error="Browser cleanup after acceptance: "+str(exc))

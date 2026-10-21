@@ -1,4 +1,4 @@
-"""Process-shared FIFO admission for every managed Playwright session."""
+"""Separate process-shared FIFO queues for video and account browser sessions."""
 import asyncio
 import os
 import sqlite3
@@ -9,7 +9,7 @@ from pathlib import Path
 from patchright.async_api import async_playwright as _playwright
 
 ROOT = Path(__file__).resolve().parent / ".runtime"
-LIMIT = 10
+LIMIT = 7
 START_INTERVAL = 0.5
 VIDEO_START_INTERVAL = 20.0
 
@@ -100,11 +100,13 @@ class BrowserQueue:
             unlock_file(guard)
             path.unlink(missing_ok=True)
 
-QUEUE = BrowserQueue()
+QUEUE = BrowserQueue()  # Video queue; preserve existing durable tickets.
+ACCOUNT_QUEUE = BrowserQueue(ROOT / "account_browsers")
 
 @asynccontextmanager
 async def async_playwright(*, video=False):
     # No Node driver or Chromium is started while waiting for the FIFO ticket.
-    async with QUEUE.slot(video=video):
+    queue = QUEUE if video else ACCOUNT_QUEUE
+    async with queue.slot(video=video):
         async with _playwright() as p:
             yield p

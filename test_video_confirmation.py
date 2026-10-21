@@ -4,10 +4,12 @@ import json
 from unittest.mock import patch
 from browser_queue import async_playwright
 from video_worker import POLL_JS, GenerationRejectedError
+from video_schedule import is_policy_rejection
 import video_worker_ui as worker
 
 EN = 'The video will be generated using **the Dreamina Seedance 2.5 model. It will use 2 credits. You still have 0 video credits remaining today.**'
 JA = '\u52d5\u753b\u306f**Dreamina Seedance 2.5 \u30e2\u30c7\u30eb**\u3092\u4f7f\u7528\u3057\u3066\u751f\u6210\u3055\u308c\u307e\u3059\u3002'
+JA_NO_DREAMINA = '\u52d5\u753b\u306f**Seedance 2.0 \u30e2\u30c7\u30eb**\u3092\u4f7f\u3063\u3066\u751f\u6210\u3055\u308c\u307e\u3059\u30023 \u30dd\u30a4\u30f3\u30c8\u3092\u6d88\u8cbb\u3057\u3066\u300110 \u5206\u5f8c\u306b\u5b8c\u6210\u3057\u307e\u3059\u3002\u5b8c\u6210\u6b21\u7b2c\u304a\u77e5\u3089\u305b\u3057\u307e\u3059\u3002\u672c\u65e5\u306f\u307e\u30601 \u52d5\u753b\u30af\u30ec\u30b8\u30c3\u30c8\u304c\u6b8b\u3063\u3066\u3044\u307e\u3059\u3002'
 
 def user(index=1):
     return {'user_type': 1, 'index_in_conv': str(index)}
@@ -36,6 +38,7 @@ async def run():
             cases = [
                 ('English confirmation', [user(), reply(EN)], True, False),
                 ('Japanese confirmation', [user(), reply(JA)], True, False),
+                ('Japanese 2.0 confirmation without Dreamina', [user(), reply(JA_NO_DREAMINA)], True, False),
                 ('unbolded model', [user(), reply('Dreamina Seedance 2.5 failed')], False, True),
                 ('generic error', [user(), reply('An error occurred. Please try again.')], False, True),
                 ('still streaming despite finished block', [user(), reply('Error', done=False)], False, False),
@@ -87,10 +90,16 @@ async def run():
             assert not (await classify([user(), reply(EN), text_only], after=12))['rejection']
             assert not (await classify([user(), reply(EN), text_only, user(13)]))['rejection']
             assert not (await classify([user(), reply(EN), text_only, reply('Thinking', index=14, done=False)]))['rejection']
+            policy_message = '\u5f53\u793e\u306e\u30dd\u30ea\u30b7\u30fc\u306b\u9055\u53cd\u3059\u308b\u53ef\u80fd\u6027\u304c\u3042\u308b\u5185\u5bb9\u304c\u5165\u529b\u3055\u308c\u3066\u3044\u308b\u305f\u3081\u3001\u52d5\u753b\u3092\u751f\u6210\u3067\u304d\u307e\u305b\u3093\u3002\u4fee\u6b63\u3057\u3066\u3082\u3046\u4e00\u5ea6\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002'
+            policy_reply = reply(policy_message, index=12)
+            result = await classify([user(), reply(EN), policy_reply])
+            assert result['accepted'] and result['rejection']['code'] == 'policy_text'
+            assert result['rejection']['terminal']
+            assert is_policy_rejection(result['rejection'])
+            assert not (await classify([user(), reply(EN), policy_reply], after=12))['rejection']
             for code in ('710082031', '710082041'):
                 refusal = reply('Refused', index=12, ext={'is_finish':'1','ai_creation_res_code':code})
                 assert (await classify([user(),reply(EN),refusal]))['rejection']['code'] == code
-            from video_schedule import is_policy_rejection
             prompt_refusal = 'ご希望のコンテンツを生成できません。他の内容をお試しください。'
             for messages in ([user(),reply(prompt_refusal)], [user(),reply(EN),reply(prompt_refusal,index=12)]):
                 result=await classify(messages)
@@ -106,7 +115,6 @@ I'll proceed with:
 - Duration: 12 seconds
 - Task type: r2v (using the five reference images for character, faction, and environment identity)
 Confirm with "Generate" and I'll create it."""
-            from video_schedule import is_policy_rejection
             for code in (None, '710082031', '710082041'):
                 ext={'is_finish':'1'}
                 if code: ext['ai_creation_res_code']=code

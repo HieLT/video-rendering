@@ -74,7 +74,7 @@ PUBLIC_BASE = os.getenv("DOLA_PUBLIC_BASE", f"http://127.0.0.1:{PORT}")
 # Admin web dashboard password (empty = no auth)
 ADMIN_KEY = os.getenv("DOLA_ADMIN_KEY", "")
 
-# Dola 30s / Watermark Removal Chromium extension path
+# Dola duration / watermark-removal Chromium extension path
 EXTENSION_DIR = os.getenv("DOLA_EXTENSION_DIR", "extensions/dola30")
 EXTENSION_ENABLED = os.getenv("DOLA_EXTENSION_ENABLED", "1") == "1"
 

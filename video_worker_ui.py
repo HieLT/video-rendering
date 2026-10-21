@@ -190,13 +190,19 @@ def start_generation_capture(context, account):
 
 
 async def attach_reference_images(page, image_paths: list[str]) -> None:
-    """Upload once; preserve attachments for manual recovery on failure."""
+    """Upload references sequentially; preserve attachments for manual recovery."""
     if not image_paths:
         return
     root = page.locator('.guidance-input-surface:visible').filter(has=page.locator('[contenteditable="true"]')).last
     try:
-        _log(f"[upload] single attempt files={json.dumps([Path(p).name for p in image_paths])}")
-        await _upload_reference_attempt(page, image_paths, len(image_paths))
+        _log(f"[upload] sequential files={json.dumps([Path(p).name for p in image_paths])}")
+        for index, path in enumerate(image_paths, 1):
+            _log(f"[upload] image {index}/{len(image_paths)}: {Path(path).name}")
+            await _upload_reference_attempt(page, [path], index)
+            names = await root.locator('[data-kind="image"] img').evaluate_all("imgs => imgs.map(e => e.alt)")
+            expected = [Path(item).name for item in image_paths[:index]]
+            if names != expected:
+                raise RuntimeError(f"Attachment order/name mismatch: expected={expected}, actual={names}")
         names = await root.locator('[data-kind="image"] img').evaluate_all("imgs => imgs.map(e => e.alt)")
         expected = [Path(path).name for path in image_paths]
         if names != expected:
@@ -703,6 +709,15 @@ async def _clear_composer_draft(page, account: str):
 VIDEO_DURATION_RE = re.compile(r"(?:^|[\s\u00b7])\d+\s*(?:s|\u79d2)(?:$|\s)")
 
 
+def _model_menu_item_matches(label: str, model_key: str) -> bool:
+    """Match a Seedance menu item by its stable model number, not localized copy."""
+    version = "2.5" if model_key == "seedance_v2.5" else "2.0"
+    normalized = " ".join((label or "").split()).casefold()
+    return "seedance" in normalized and re.search(
+        rf"(?<!\d){re.escape(version)}(?!\d)", normalized
+    ) is not None
+
+
 async def _video_composer_ready(root, needs_upload: bool):
     model = root.get_by_role("button", name=re.compile(r"\u30e2\u30c7\u30eb|Model|Seedance", re.I)).first
     # Older layouts expose the model label outside the button's accessible name.
@@ -891,7 +906,15 @@ async def _select_video_ratio_once(page, ratio: str, account: str, expected_imag
         'or @role="menuitemradio" or @role="option"][1]'
     )
     target = row if await row.count() == 1 else option
-    await target.click(timeout=3000)
+    try:
+        await target.click(timeout=1500)
+    except PlaywrightTimeoutError:
+        # The fixed chat composer can cover the lower part of the open popup.
+        # Keep the target scoped to this popup and activate it directly in the
+        # DOM so the overlay cannot intercept the click; the retained ratio is
+        # verified below before the task is allowed to continue.
+        _log(f"[{account}] ratio option is covered by chat UI; activating scoped popup option directly")
+        await target.evaluate("element => element.click()")
     # The combined ratio/duration menu may intentionally stay open on selection.
     # Dismiss it, then verify the actual retained ratio and references below.
     if await popup.is_visible():
@@ -955,8 +978,45 @@ async def _set_duration_slider(page, popup, duration: int):
         await slider.press("ArrowRight", timeout=3000)
     raise RuntimeError(
         f"Duration slider cannot select {duration}s (last committed value={current}s); "
-        "check the Dola30 extension and duration range configuration"
+        "check the duration extension and range configuration"
     )
+
+
+async def _raise_duration_popup(popup):
+    """Keep duration choices above Dola's fixed composer/chat overlays."""
+    await popup.evaluate("""el => {
+      const key = '__codexDurationPopupStyles';
+      const saved = window[key] || (window[key] = new Map());
+      for (let node = el, depth = 0; node && node !== document.body && depth < 16;
+           node = node.parentElement, depth++) {
+        if (!saved.has(node)) {
+          saved.set(node, {
+            position: [node.style.getPropertyValue('position'), node.style.getPropertyPriority('position')],
+            zIndex: [node.style.getPropertyValue('z-index'), node.style.getPropertyPriority('z-index')]
+          });
+        }
+        if (node === el && getComputedStyle(node).position === 'static') {
+          node.style.setProperty('position', 'relative', 'important');
+        }
+        node.style.setProperty('z-index', '2147483647', 'important');
+      }
+    }""")
+
+
+async def _restore_duration_popup(page):
+    await page.evaluate("""() => {
+      const saved = window.__codexDurationPopupStyles;
+      if (!saved) return;
+      for (const [node, styles] of [...saved.entries()].reverse()) {
+        for (const [name, [value, priority]] of Object.entries(styles)) {
+          const property = name === 'zIndex' ? 'z-index' : 'position';
+          if (value) node.style.setProperty(property, value, priority);
+          else node.style.removeProperty(property);
+        }
+      }
+      saved.clear();
+      delete window.__codexDurationPopupStyles;
+    }""")
 
 
 async def _select_video_duration(page, duration: int, account: str):
@@ -983,12 +1043,20 @@ async def _select_video_duration(page, duration: int, account: str):
                     await page.wait_for_timeout(350)
                     if await popup.count() != 1:
                         raise RuntimeError("Could not identify a unique duration popup")
+                    await _raise_duration_popup(popup.first)
                     sliders = popup.locator('[role="slider"]:visible, input[type="range"]:visible')
                     if await sliders.count():
                         await _set_duration_slider(page, popup, duration)
                     else:
                         options = popup.get_by_text(expected).locator("visible=true")
-                        await options.first.wait_for(state="visible", timeout=5000)
+                        try:
+                            await options.first.wait_for(state="visible", timeout=5000)
+                        except PlaywrightTimeoutError as exc:
+                            available = await popup.first.inner_text(timeout=2000)
+                            raise RuntimeError(
+                                f"Requested {duration}s option is absent from duration menu; "
+                                f"menu text={available[:300]!r}"
+                            ) from exc
                         if await options.count() != 1:
                             raise RuntimeError("Multiple visible duration options in duration popup")
                         row = options.locator(
@@ -996,7 +1064,15 @@ async def _select_video_duration(page, duration: int, account: str):
                             'or @role="menuitemradio" or @role="option"][1]'
                         )
                         target = row if await row.count() == 1 else options
-                        await target.click(timeout=5000)
+                        try:
+                            await target.click(timeout=1500)
+                        except PlaywrightTimeoutError:
+                            # The fixed chat composer may cover the duration
+                            # option just as it covers the lower ratio options.
+                            # Activate only the exact option found in this
+                            # popup, then verify the committed duration below.
+                            _log(f"[{account}] duration option is covered by chat UI; activating scoped popup option directly")
+                            await target.evaluate("element => element.click()")
                 await page.keyboard.press("Escape")
                 stable = 0
                 for _ in range(20):
@@ -1025,6 +1101,8 @@ async def _select_video_duration(page, duration: int, account: str):
             f"Failed to preserve requested duration: {duration}: "
             f"{type(exc).__name__}: {str(exc)[:500]}"
         ) from exc
+    finally:
+        await _restore_duration_popup(page)
 
 
 async def generate_video(account: str, prompt: str, ratio: str = None,
@@ -1098,30 +1176,42 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                             _, root = await _composer(page)
                             current_model = root.get_by_role(
                                 "button", name=re.compile(r"\u30e2\u30c7\u30eb\s|Model\b|Seedance", re.I)
-                            )
-                            await current_model.click(timeout=5000)
-                            await page.wait_for_timeout(500)
-                            await model_ui_snapshot("menu")
-                            options = (("Dreamina Seedance 2.5",)
-                                       if model_key == "seedance_v2.5"
-                                       else ("Dreamina Seedance 2.0高速", "Dreamina Seedance 2.0", "Seedance2.0Fast"))
-                            # Conversation titles can exactly match a model name.
-                            # Only select entries inside the currently open model menu.
-                            menu = page.locator('[role="menu"][data-state="open"]:visible')
-                            await menu.wait_for(state="visible", timeout=5000)
-                            selected = False
-                            for option_text in options:
-                                loc = menu.get_by_role("menuitem").filter(
-                                    has=page.get_by_text(option_text, exact=True)
-                                )
-                                if await loc.count() and await loc.is_visible():
-                                    await loc.click(timeout=5000)
-                                    selected = True
-                                    break
-                            if not selected:
-                                raise RuntimeError("Model option not found in open model menu")
-                            await menu.wait_for(state="hidden", timeout=5000)
+                            ).first
                             expected_version = "2.5" if model_key == "seedance_v2.5" else "2.0"
+                            current_label = await current_model.inner_text()
+                            if expected_version not in current_label:
+                                await current_model.click(timeout=5000)
+                                await page.wait_for_timeout(500)
+                                await model_ui_snapshot("menu")
+                                # Conversation titles can exactly match model labels.
+                                # Prefer menu items, then fall back to visible model text
+                                # because Dola does not expose the same ARIA role in every UI.
+                                menu = page.locator('[role="menu"][data-state="open"]:visible')
+                                if await menu.count():
+                                    menu_items = menu.locator(
+                                        '[role="menuitem"], [role="option"], [role="menuitemradio"], button'
+                                    )
+                                    matches = []
+                                    for index in range(await menu_items.count()):
+                                        item = menu_items.nth(index)
+                                        if (await item.is_visible()
+                                                and _model_menu_item_matches(await item.inner_text(), model_key)):
+                                            matches.append(item)
+                                    if len(matches) != 1:
+                                        raise RuntimeError(
+                                            f"Expected one Seedance {expected_version} option; found {len(matches)}"
+                                        )
+                                    await matches[0].click(timeout=5000)
+                                else:
+                                    option = page.get_by_text(
+                                        re.compile(rf"Dreamina\s+Seedance\s+{re.escape(expected_version)}", re.I)
+                                    ).locator("visible=true")
+                                    if await option.count() != 1:
+                                        raise RuntimeError(
+                                            f"Expected one visible Dreamina Seedance {expected_version} option; "
+                                            f"found {await option.count()}"
+                                        )
+                                    await option.click(timeout=5000)
                             for _ in range(20):
                                 _, root = await _composer(page)
                                 control = root.get_by_role(

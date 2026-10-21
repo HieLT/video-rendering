@@ -316,7 +316,7 @@ class LibraryApiTests(unittest.TestCase):
         after = self.store.get(result['id'])
         self.assertEqual(after['reference_snapshot'], before['reference_snapshot'])
         self.assertEqual(after['prompt'], before['prompt'])
-        self.assertEqual(after['duration'], 30)
+        self.assertEqual(after['duration'], 15)
         captured = []
         async def worker(prompt, ratio, duration, model, **kwargs):
             captured.extend(kwargs['reference_image_paths'])
