@@ -74,7 +74,20 @@ export DOLA_API_KEYS="sk-your-secret-key"
 
 # Concurrency limits
 export DOLA_MAX_CONCURRENCY=5
+
+# Optional strict per-account environment for controlled High Demand tests.
+# Assign every enabled account a proxy in the dashboard before turning this on.
+export DOLA_STRICT_ACCOUNT_ENVIRONMENT=1
+export DOLA_MIN_SUBMIT_INTERVAL_SECONDS=15
+export DOLA_EGRESS_CHANGE_COOLDOWN_SECONDS=1800
 ```
+
+Strict mode keeps each existing `accounts/<account>` persistent profile bound
+to its assigned proxy. Before the profile visits Dola for a generation it
+checks the public IP through that browser context. A changed IP stops the run
+and cools the account instead of silently continuing. Exact `710022002`
+responses preserve the login session and apply increasing account and public-IP
+backoff; they are not retried on another account.
 
 ### 4. Start Server
 ```bash

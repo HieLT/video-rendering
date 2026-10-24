@@ -42,6 +42,15 @@ IMAGE_MAX_CONCURRENCY = max(1, int(os.getenv("DOLA_IMAGE_MAX_CONCURRENCY", "20")
 # Enable a headed, extension-backed image worker for controlled parity tests.
 IMAGE_INTERACTIVE_WORKER = os.getenv("DOLA_IMAGE_INTERACTIVE_WORKER", "1") == "1"
 
+# Controlled account-environment isolation.  When enabled, a browser account
+# must have an explicitly assigned proxy, records its observed public egress,
+# and refuses to visit Dola immediately after that egress changes.
+STRICT_ACCOUNT_ENVIRONMENT = os.getenv("DOLA_STRICT_ACCOUNT_ENVIRONMENT", "0") == "1"
+MIN_SUBMIT_INTERVAL_SECONDS = max(0, int(os.getenv("DOLA_MIN_SUBMIT_INTERVAL_SECONDS", "15")))
+EGRESS_CHANGE_COOLDOWN_SECONDS = max(
+    0, int(os.getenv("DOLA_EGRESS_CHANGE_COOLDOWN_SECONDS", "1800")))
+EGRESS_PROBE_URL = os.getenv("DOLA_EGRESS_PROBE_URL", "https://api.ipify.org?format=json").strip()
+
 # Global pending task queue limit (queued + processing), 0 = unlimited
 MAX_PENDING_TASKS = int(os.getenv("DOLA_MAX_PENDING_TASKS", "500"))
 

@@ -27,6 +27,10 @@ DAILY_LIMIT = 2
 COOLDOWN_SEC = 1800  # 30-minute cooldown on risk control
 
 
+class EnvironmentChangedError(RuntimeError):
+    """A strict account changed public egress and must cool before Dola use."""
+
+
 class AllAccountsLimitedError(RuntimeError):
     """All active schedulable accounts have reached daily video limit."""
 
@@ -96,6 +100,11 @@ class BrowserPool:
             ("quota_reason", "TEXT DEFAULT ''"),
             ("credit_balance", "INTEGER"),
             ("credit_checked_at", "REAL DEFAULT 0"),
+            ("egress_ip", "TEXT DEFAULT ''"),
+            ("egress_checked_at", "REAL DEFAULT 0"),
+            ("throttle_streak", "INTEGER DEFAULT 0"),
+            ("throttle_last", "REAL DEFAULT 0"),
+            ("last_submit_at", "REAL DEFAULT 0"),
         ):
             try:
                 self._conn.execute(f"ALTER TABLE accounts_meta ADD COLUMN {column} {definition}")
@@ -114,6 +123,13 @@ class BrowserPool:
         for row in self._conn.execute("SELECT name FROM accounts_meta").fetchall():
             self._usage_key(row["name"])
         self._init_rolling_usage()
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS egress_throttle ("
+            "egress_ip TEXT PRIMARY KEY, blocked_until REAL DEFAULT 0, "
+            "streak INTEGER DEFAULT 0, last_failure REAL DEFAULT 0, "
+            "last_submit_at REAL DEFAULT 0)"
+        )
+        self._conn.commit()
 
     def _init_account_uuids(self):
         # Additive migration: profile paths, task references and usage keys stay intact.
@@ -309,6 +325,11 @@ class BrowserPool:
             m = self._meta(a)
             used = self.used_today(a)
             lock = self._locks.get(a)
+            egress_ip = (m["egress_ip"] or "") if m else ""
+            egress = (self._conn.execute(
+                "SELECT blocked_until FROM egress_throttle WHERE egress_ip=?", (egress_ip,)
+            ).fetchone() if egress_ip else None)
+            egress_blocked_until = float(egress["blocked_until"] or 0) if egress else 0
             out.append({
                 "name": a,
                 "uuid": m["uuid"],
@@ -333,6 +354,11 @@ class BrowserPool:
                 "quota_reason": m["quota_reason"] if m else "",
                 "credit_balance": m["credit_balance"] if m else None,
                 "credit_checked_at": m["credit_checked_at"] if m else 0,
+                "egress_ip": egress_ip,
+                "egress_checked_at": m["egress_checked_at"] if m else 0,
+                "throttle_streak": m["throttle_streak"] if m else 0,
+                "egress_blocked_until": egress_blocked_until,
+                "egress_cooling": egress_blocked_until > now,
                 "used_today": used,
                 "usage_reset_at": (m["last_used_at"] or 0) + 86400 if used else 0,
                 "limit": DAILY_LIMIT,
@@ -490,8 +516,97 @@ class BrowserPool:
 
     def _schedulable(self, a: dict, *, allow_reserved: bool = False) -> bool:
         return ((allow_reserved or a["name"] not in self.reservations) and a["scheduling"] and a.get("login_ok") == 1 and a.get("auth_state") == "active" and not a["cooling"] and not a["rate_limited"]
-                and not a["quota_blocked"] and a["used_today"] < DAILY_LIMIT
+                and not a["quota_blocked"] and not a.get("egress_cooling") and a["used_today"] < DAILY_LIMIT
                 and (a["credit_balance"] is None or a["credit_balance"] >= 2))
+
+    def observe_egress(self, account: str, egress_ip: str):
+        """Persist real egress and stop before Dola if an established profile moved."""
+        now = time.time()
+        row = self._meta(account)
+        previous = (row["egress_ip"] or "").strip() if row else ""
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO egress_throttle(egress_ip) VALUES (?)", (egress_ip,))
+            self._conn.execute(
+                "UPDATE accounts_meta SET egress_ip=?, egress_checked_at=? WHERE name=?",
+                (egress_ip, now, account))
+            if previous and previous != egress_ip:
+                self._conn.execute(
+                    "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
+                    (now + config.EGRESS_CHANGE_COOLDOWN_SECONDS, account))
+        if previous and previous != egress_ip:
+            raise EnvironmentChangedError(
+                f"Public egress changed for {account}: {previous} -> {egress_ip}; cooling down")
+
+    async def _pace_submit(self, account: str):
+        """Serialize and space submits by both account and observed public IP."""
+        if not hasattr(self, "_submit_gate"):
+            self._submit_gate = asyncio.Lock()
+        async with self._submit_gate:
+            row = self._meta(account)
+            egress_ip = (row["egress_ip"] or "").strip() if row else ""
+            now = time.time()
+            last = float(row["last_submit_at"] or 0) if row else 0
+            egress = None
+            if egress_ip:
+                egress = self._conn.execute(
+                    "SELECT * FROM egress_throttle WHERE egress_ip=?", (egress_ip,)).fetchone()
+                if egress and float(egress["blocked_until"] or 0) > now:
+                    raise AccountTemporarilyUnavailable("Public egress is cooling down")
+                last = max(last, float(egress["last_submit_at"] or 0) if egress else 0)
+            wait = config.MIN_SUBMIT_INTERVAL_SECONDS - (now - last)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            submitted = time.time()
+            with self._conn:
+                self._conn.execute(
+                    "UPDATE accounts_meta SET last_submit_at=? WHERE name=?", (submitted, account))
+                if egress_ip:
+                    self._conn.execute(
+                        "UPDATE egress_throttle SET last_submit_at=? WHERE egress_ip=?",
+                        (submitted, egress_ip))
+
+    def _mark_throttled(self, account: str):
+        """Apply exponential account and egress backoff for exact 710022002."""
+        now = time.time()
+        row = self._meta(account)
+        previous = int(row["throttle_streak"] or 0) if row else 0
+        last = float(row["throttle_last"] or 0) if row else 0
+        streak = 1 if now - last > 86400 else previous + 1
+        account_delay = min(8 * 3600, 1800 * (2 ** (streak - 1)))
+        egress_ip = (row["egress_ip"] or "").strip() if row else ""
+        with self._conn:
+            self._conn.execute(
+                "UPDATE accounts_meta SET cooldown_until=?, throttle_streak=?, throttle_last=? WHERE name=?",
+                (now + account_delay, streak, now, account))
+            if egress_ip:
+                egress = self._conn.execute(
+                    "SELECT streak,last_failure FROM egress_throttle WHERE egress_ip=?", (egress_ip,)).fetchone()
+                egress_streak = 1 if not egress or now - float(egress["last_failure"] or 0) > 86400 else int(egress["streak"] or 0) + 1
+                egress_delay = min(2 * 3600, 120 * (2 ** (egress_streak - 1)))
+                self._conn.execute(
+                    "INSERT INTO egress_throttle(egress_ip,blocked_until,streak,last_failure) VALUES (?,?,?,?) "
+                    "ON CONFLICT(egress_ip) DO UPDATE SET blocked_until=excluded.blocked_until,streak=excluded.streak,last_failure=excluded.last_failure",
+                    (egress_ip, now + egress_delay, egress_streak, now))
+        return account_delay
+
+    def _clear_throttle_success(self, account: str):
+        # Some lightweight embedders/tests construct a legacy minimal pool
+        # without running BrowserPool migrations.
+        columns = {item[1] for item in self._conn.execute("PRAGMA table_info(accounts_meta)")}
+        if "egress_ip" not in columns:
+            return
+        row = self._conn.execute(
+            "SELECT egress_ip FROM accounts_meta WHERE name=?", (account,)).fetchone()
+        egress_ip = (row[0] or "").strip() if row else ""
+        with self._conn:
+            self._conn.execute(
+                "UPDATE accounts_meta SET throttle_streak=0, throttle_last=0 WHERE name=?",
+                (account,))
+            if egress_ip:
+                self._conn.execute(
+                    "UPDATE egress_throttle SET blocked_until=0,streak=0,last_failure=0 WHERE egress_ip=?",
+                    (egress_ip,))
 
     @property
     def all_accounts_limited(self) -> bool:
@@ -620,15 +735,19 @@ class BrowserPool:
                             account, prompt, ratio, duration, model=model,
                             on_conversation_id=on_conversation_id, on_poll=on_poll,
                             on_balance=on_balance, reference_image_paths=reference_image_paths,
-                            on_submit=on_submit, name=name)
+                            on_submit=on_submit, before_submit=self._pace_submit,
+                            on_egress=self.observe_egress, name=name)
+                        self._clear_throttle_success(account)
                         self._claim(account)
                         self._conn.execute(
                             "UPDATE accounts_meta SET last_used_at=? WHERE name=?",
                             (time.time(), account))
                         self._conn.commit()
                         return result
-                    except AccountRiskBlockedError:
-                        raise  # Never rotate accounts or retry a risk-blocked submission.
+                    except AccountRiskBlockedError as e:
+                        delay = self._mark_throttled(account)
+                        _log(f"[pool] {account} SHARK_BLOCKED; cooling account for {int(delay)}s without rotating")
+                        raise  # Never rotate accounts or retry the rejected submission.
                     except CreditInsufficientError as e:
                         _log(f"[pool] {account} insufficient points before generation, skipping: {e}")
                         self._mark_quota_blocked(account, str(e))
@@ -645,7 +764,11 @@ class BrowserPool:
                         last_err = e
                         continue
                     except RiskControlError as e:
-                        _log(f"[pool] {account} risk control triggered (30m cooldown), rotating: {e}")
+                        if "710022002" in str(e):
+                            delay = self._mark_throttled(account)
+                            _log(f"[pool] {account} rate limited; cooling for {int(delay)}s without rotating")
+                            raise
+                        _log(f"[pool] {account} captcha risk control triggered (30m cooldown): {e}")
                         self._conn.execute(
                             "UPDATE accounts_meta SET cooldown_until=? WHERE name=?",
                             (time.time() + COOLDOWN_SEC, account))
@@ -666,7 +789,7 @@ class BrowserPool:
                           and not a["rate_limited"] and not a["quota_blocked"]
                           and a["used_today"] < DAILY_LIMIT
                           and (a["credit_balance"] is None or a["credit_balance"] >= 2)]
-            if any(a["cooling"] or a["busy"] for a in candidates):
+            if any(a["cooling"] or a.get("egress_cooling") or a["busy"] for a in candidates):
                 raise AccountTemporarilyUnavailable("Waiting for account release/cooldown")
             if self.all_accounts_quota_blocked:
                 raise AllAccountsQuotaBlockedError(

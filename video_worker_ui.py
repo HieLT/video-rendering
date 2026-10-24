@@ -1034,7 +1034,8 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                          model: str = "seedance_v2.0", use_extension: bool = True,
                          on_conversation_id=None, on_poll=None, on_balance=None,
                          reference_image_paths: list[str] | None = None,
-                         on_submit=None, name: str = "", single_attempt=False, monitor=None, on_rejected=None,
+                         on_submit=None, before_submit=None, on_egress=None,
+                         name: str = "", single_attempt=False, monitor=None, on_rejected=None,
                          start_conversation_id=None, after_index_start=0) -> dict:
     """Full generation flow via UI automation."""
     timeout = timeout or config.VIDEO_TIMEOUT
@@ -1064,6 +1065,12 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             page = context.pages[0] if context.pages else await context.new_page()
             finish_composer_trace = await _start_composer_trace(page, account)
             _log(f"[{account}] Playwright context opened for generation")
+            if config.STRICT_ACCOUNT_ENVIRONMENT:
+                from browser import detect_public_egress
+                egress_ip = await detect_public_egress(page)
+                if on_egress:
+                    on_egress(account, egress_ip)
+                _log(f"[{account}] strict environment public egress={egress_ip}")
             await page.goto("https://www.dola.com/chat" + ("/" + start_conversation_id if start_conversation_id else ""), timeout=60000, wait_until="domcontentloaded")
             await page.wait_for_timeout(5000)
             cookies = await context.cookies("https://www.dola.com")
@@ -1198,6 +1205,8 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
                         _log(f"[{account}] video composer reset; rebuilding setup attempt={setup_attempt + 2}/3")
                         await _composer_snapshot(page, account, "setup_reset")
                 box = await _fill_video_prompt(page, prompt, account)
+                if before_submit:
+                    await before_submit(account)
                 # Mark the attempt before Enter: a timeout may occur after dispatch.
                 if on_submit:
                     on_submit()

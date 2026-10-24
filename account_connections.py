@@ -52,6 +52,14 @@ def account_connection(account):
     return _read()['accounts'].get(account, 'direct')
 
 
+def require_dedicated_proxy(account):
+    """Reject direct/default routing before a strict profile reaches Dola."""
+    identifier = account_connection(account)
+    if identifier == 'direct':
+        raise RuntimeError(f'Strict environment requires an assigned proxy for {account}')
+    return identifier
+
+
 def assign(accounts, identifier):
     validate(identifier)
     data = _read()

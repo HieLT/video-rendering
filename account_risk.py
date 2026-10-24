@@ -67,10 +67,6 @@ async def install_risk_monitor(context, account):
             return  # Navigation can make a response body unavailable.
         if contains_shark_block(body) and context._dola_risk_error is None:
             context._dola_risk_error = REASON
-            try:
-                quarantine(account)
-            except Exception as exc:
-                context._dola_risk_error += '; persistence failed: ' + str(exc)
 
     def received(response):
         task = asyncio.create_task(capture(response))
@@ -79,6 +75,22 @@ async def install_risk_monitor(context, account):
 
     context.on('response', received)
     context.on('close', lambda *_: [task.cancel() for task in list(tasks)])
+
+    async def preserve_session(route):
+        # Dola's frontend logs the user out immediately after SHARK_BLOCKED.
+        # Keep the valid session so the scheduler can cool it down and retry
+        # later in the same account/profile environment.
+        if context._dola_risk_error:
+            await route.abort()
+        else:
+            await route.continue_()
+
+    registered = context.route('**/passport/web/logout/**', preserve_session)
+    # Playwright returns an awaitable; lightweight unit-test contexts may
+    # expose a synchronous registration stub.
+    import inspect
+    if inspect.isawaitable(registered):
+        await registered
 
 
 def check_risk(context):

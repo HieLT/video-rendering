@@ -202,6 +202,9 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
             f"Account profile does not exist: {profile_dir} (run python add_account.py {account} first)"
         )
     launch_headless = config.HEADLESS if headless is None else headless
+    if config.STRICT_ACCOUNT_ENVIRONMENT:
+        from account_connections import require_dedicated_proxy
+        require_dedicated_proxy(account)
     args = account_launch_args(profile_dir)
     if not config.PROXY_ENABLED:
         args.append("--no-proxy-server")
@@ -280,6 +283,27 @@ async def launch_account_context(p, account: str, headless: bool = None, use_ext
 
     context.on("close", unregister)
     return context
+
+
+async def detect_public_egress(page) -> str:
+    """Resolve the public IP through the exact browser context/proxy in use."""
+    if not config.EGRESS_PROBE_URL:
+        return ""
+    response = await page.goto(
+        config.EGRESS_PROBE_URL, timeout=30000, wait_until="domcontentloaded")
+    if not response or not response.ok:
+        raise RuntimeError("Could not verify browser public egress")
+    import json
+    try:
+        payload = json.loads(await page.locator("body").inner_text())
+        value = str(payload.get("ip", "")).strip()
+    except (ValueError, AttributeError, TypeError):
+        value = (await page.locator("body").inner_text()).strip()
+    import ipaddress
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError as exc:
+        raise RuntimeError("Egress probe returned an invalid public IP") from exc
 
 
 def cookie_value(cookies: list, name: str) -> str:
