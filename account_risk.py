@@ -47,8 +47,10 @@ def quarantine(account, db_path='pool_usage.db'):
         # A domain-wide disable used to make one bad account remove every
         # otherwise-valid account from dispatch (and looked like mass session
         # loss for shared domains such as azalea.raxio.us).
-        conn.execute('UPDATE accounts_meta SET scheduling=0,dispatch_manual=1,auth_state=?,auth_error=? WHERE name=?',
-                     ('limited', REASON, account))
+        # A provider risk response disables dispatch only. It does not prove that
+        # the browser session or Google login expired, so preserve auth_state.
+        conn.execute('UPDATE accounts_meta SET scheduling=0,dispatch_manual=1 WHERE name=?',
+                     (account,))
 
 
 async def install_risk_monitor(context, account):

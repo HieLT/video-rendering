@@ -101,20 +101,23 @@ class ChatOpenTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(await browser.focus_task_conversation("account","222"))
 
 class SessionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_login_without_session_expires_but_cookie_or_hidden_login_does_not(self):
+    async def test_visible_localized_login_expires_even_with_stale_cookie(self):
         class Locator:
             async def all(self): return [self]
             is_visible=AsyncMock(return_value=True)
         class LoginPage:
             url="https://www.dola.com/chat"
             def get_by_text(self, pattern): return locator
+            def get_by_test_id(self, value): return hidden_locator
         class Context:
             cookies=AsyncMock(return_value=[])
         locator=Locator()
+        hidden_locator=Locator()
+        hidden_locator.is_visible=AsyncMock(return_value=False)
         with self.assertRaises(browser.AccountSessionExpiredError):
             await browser.ensure_account_session(LoginPage(),Context())
-        Context.cookies.return_value=[{"name":"sessionid","value":"fixture"}]
-        await browser.ensure_account_session(LoginPage(),Context())
-        Context.cookies.return_value=[]
+        Context.cookies.return_value=[{"name":"sessionid","value":"stale-fixture"}]
+        with self.assertRaises(browser.AccountSessionExpiredError):
+            await browser.ensure_account_session(LoginPage(),Context())
         locator.is_visible.return_value=False
         await browser.ensure_account_session(LoginPage(),Context())

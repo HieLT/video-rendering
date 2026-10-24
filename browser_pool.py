@@ -202,9 +202,17 @@ class BrowserPool:
             return []
         names = sorted(d.name for d in self.accounts_dir.iterdir()
                        if d.is_dir() and not d.name.startswith("."))
+        valid = []
         for n in names:
             self._ensure_meta(n)
-        return names
+            # A copied/orphan profile can reuse an existing account UUID.  The
+            # unique UUID index then (correctly) rejects its metadata row; do
+            # not let that malformed directory crash the whole server.
+            if self._meta(n) is None:
+                _log(f"Skipping account directory without metadata: {n}")
+                continue
+            valid.append(n)
+        return valid
 
     def _meta(self, name: str):
         return self._conn.execute(

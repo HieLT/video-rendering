@@ -39,6 +39,8 @@ COOKIES_FILE = os.getenv("DOLA_COOKIES_FILE", "cookies.txt")
 # Max concurrent video generation tasks
 MAX_CONCURRENCY = int(os.getenv("DOLA_MAX_CONCURRENCY", "100"))
 IMAGE_MAX_CONCURRENCY = max(1, int(os.getenv("DOLA_IMAGE_MAX_CONCURRENCY", "20")))
+# Enable a headed, extension-backed image worker for controlled parity tests.
+IMAGE_INTERACTIVE_WORKER = os.getenv("DOLA_IMAGE_INTERACTIVE_WORKER", "1") == "1"
 
 # Global pending task queue limit (queued + processing), 0 = unlimited
 MAX_PENDING_TASKS = int(os.getenv("DOLA_MAX_PENDING_TASKS", "500"))

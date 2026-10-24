@@ -185,7 +185,7 @@ class VideoGenRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     size: str | None = None
     ratio: str | None = None
-    duration: int | None = Field(None, ge=10, le=30)
+    duration: int | None = Field(15, ge=10, le=30)
     # Accepts durations: 10, 15, 30 seconds.
     reference_images: list[str] = Field(default_factory=list)
     reference_aliases: list[str] = Field(default_factory=list)
@@ -393,7 +393,7 @@ async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, 
             if previous.get('batch_id') != req.batch_id:
                 raise HTTPException(409, 'Film Studio task belongs to a different batch')
             return BatchTaskResponse(batch_id=req.batch_id, tasks=[TaskResponse(id=studio_task_id, status=previous['status'])])
-    duration = req.duration or 10
+    duration = req.duration or 15
     if duration not in SUPPORTED_DURATIONS:
         raise HTTPException(422, "Currently supports durations of 10s, 15s, and 30s")
     if duration not in client["allowed_durations"]:
@@ -1551,7 +1551,7 @@ from studio_api import register_studio_workflow
 
 async def _studio_submit_video(payload):
     request = VideoGenRequest(batch_id=payload['batch_id'], name=payload['name'],
-                              model='seedance-2.5', ratio='16:9', duration=30, count=1,
+                              model='seedance-2.0', ratio='16:9', duration=15, count=1,
                               prompt=payload['prompt'], reference_images=payload['reference_images'],
                               reference_aliases=payload.get('reference_aliases', []))
     client = {**_anonymous_client(), 'api_key_name': 'Film Studio', 'concurrency_limit': 1}

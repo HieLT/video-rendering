@@ -43,7 +43,7 @@ class FilmStudioTests(unittest.TestCase):
         response = self.client.put('/api/admin/film-studio', json=payload, headers=self.headers)
         self.assertEqual(response.status_code, 200, response.text)
         data = self.make_client().get('/api/admin/film-studio', headers=self.headers).json()
-        self.assertEqual(data['settings'], payload)
+        self.assertEqual(data['settings'], {**payload, 'chatgpt_profile_id': ''})
 
     def test_rejects_invalid_links_duplicates_and_missing_profiles(self):
         for payload in [

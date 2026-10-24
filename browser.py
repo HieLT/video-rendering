@@ -55,15 +55,19 @@ async def ensure_account_session(page, context):
     from account_risk import check_risk
     check_risk(context)
     import re
-    login = page.get_by_text(re.compile(r"^(Log in|Log In|Sign in|Sign In|\u30ed\u30b0\u30a4\u30f3)$"))
+    # Dola can keep the composer visible for signed-out profiles and only
+    # reveal the authentication dialog after a composer action.  Detect the
+    # localized entry points before treating that page as an active session.
+    login = page.get_by_text(re.compile(
+        r"^(?:log\s*in|sign\s*in|\u30ed\u30b0\u30a4\u30f3|\u767b\u5f55|\u767b\u5165|\u0111\u0103ng\s*nh\u1eadp)$", re.I))
     visible = any([await item.is_visible() for item in await login.all()])
     if not visible:
+        visible = await page.get_by_test_id('login_content').is_visible()
+    if not visible:
         return
-    cookies = await context.cookies("https://www.dola.com")
-    url = urlsplit(page.url)
-    login_page = url.hostname == "www.dola.com" and url.path.rstrip("/") in ("/login", "/passport/login")
-    if login_page or not cookie_value(cookies, "sessionid"):
-        raise AccountSessionExpiredError("Dola requires login again")
+    # A stale session cookie can survive after Dola has invalidated its server
+    # session.  The visible sign-in UI is authoritative in that case.
+    raise AccountSessionExpiredError("Dola requires login again")
 
 
 CHAT_OPEN_LOCKS = {}

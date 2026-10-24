@@ -328,7 +328,7 @@ class ProductionStoreMixin(SceneWorkflowMixin, ReviewStoreMixin, SceneInfoMixin)
             return self._require("projects", project_id)
 
     def create_scene(self, project_id, scene_number, scene_name="", prompt="", model="seedance-2.0",
-                     ratio="16:9", duration=10, start_end=False, *, scene_id=None):
+                     ratio="16:9", duration=15, start_end=False, *, scene_id=None):
         fields = self._scene_fields(dict(scene_number=scene_number, scene_name=scene_name, prompt=prompt,
                                          model=model, ratio=ratio, duration=duration, start_end=start_end))
         identifier = scene_id or uuid.uuid4().hex

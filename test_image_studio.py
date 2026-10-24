@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import tempfile
 import unittest
 import io
@@ -14,22 +15,64 @@ from PIL import Image
 
 from image_library import ImageLibrary
 from image_studio import ImageRequest, ImageRetry, ImageStudio, register_image_studio
-from image_worker import parse_image_result, submitted_image_count, submission_structure, download_originals, select_image_ratio, upload_image_references, ImageQuotaExceeded, IMAGE_DAILY_LIMIT_TEXT
+from image_worker import activate_image_mode, parse_image_result, submitted_image_count, submission_structure, download_originals, select_image_ratio, upload_image_references, ImageQuotaExceeded, IMAGE_DAILY_LIMIT_TEXT
 from patchright.async_api import TimeoutError as PlaywrightTimeoutError
 
 
 class RatioDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
+    def test_ratio_option_pattern_accepts_current_dola_labels(self):
+        pattern = re.compile(r'^\s*' + re.escape('16:9') + r'(?:\s|$|[\uFF08(])')
+        for label in ('16:9', '16:9 (Landscape)', '16:9 \u6a2a\u9577', '16:9\uff08\u30c7\u30b9\u30af\u30c8\u30c3\u30d7\uff09'):
+            self.assertRegex(label, pattern)
+        self.assertIsNone(pattern.search('アスペクト比 16:9'))
+
     async def test_missing_button_reports_structure_without_url_query(self):
         button = Mock()
-        button.wait_for = AsyncMock(side_effect=PlaywrightTimeoutError('missing'))
+        button.is_visible = AsyncMock(return_value=False)
         page = Mock()
         page.url = 'https://www.dola.com/chat?private=secret'
         page.get_by_test_id.return_value = button
+        page.get_by_role.return_value = button
+        page.locator.return_value.filter.return_value = button
+        page.wait_for_timeout = AsyncMock()
         page.evaluate = AsyncMock(return_value={'ratio_nodes': 0, 'editors': 1})
-        with self.assertRaises(RuntimeError) as raised:
-            await select_image_ratio(page, '16:9')
+        with patch('image_worker.activate_image_mode', new=AsyncMock(side_effect=PlaywrightTimeoutError('missing'))):
+            with self.assertRaises(RuntimeError) as raised:
+                await select_image_ratio(page, '16:9')
         self.assertIn('"ratio_nodes": 0', str(raised.exception))
         self.assertNotIn('secret', str(raised.exception))
+
+    async def test_labelled_japanese_composer_is_accepted(self):
+        class Control:
+            def __init__(self, page, kind):
+                self.page, self.kind = page, kind
+            async def is_visible(self):
+                return self.kind == 'mode' or (self.kind == 'ratio' and self.page.ratio_visible)
+            async def click(self, **kwargs):
+                if self.kind == 'mode':
+                    self.page.ratio_visible = True
+            def filter(self, **kwargs):
+                return self
+
+        class Page:
+            ratio_visible = False
+            async def wait_for_timeout(self, milliseconds):
+                return None
+            def get_by_test_id(self, name):
+                # The old ids are absent in the new interface.
+                return Control(self, 'hidden')
+            def get_by_role(self, role, **kwargs):
+                name = kwargs.get('name')
+                return Control(self, 'mode' if 'image' in str(name).lower() or '画像' in str(name) else 'ratio')
+            def get_by_text(self, name, **kwargs):
+                return Control(self, 'mode' if 'image' in str(name).lower() or '\u753b\u50cf' in str(name) else 'ratio')
+            def locator(self, selector):
+                return Control(self, 'hidden')
+
+        page = Page()
+        control = await activate_image_mode(page, timeout=1000)
+        self.assertTrue(page.ratio_visible)
+        self.assertEqual(control.kind, 'ratio')
 
 
 class UploadReadinessTests(unittest.IsolatedAsyncioTestCase):

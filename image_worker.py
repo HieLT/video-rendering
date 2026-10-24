@@ -1,6 +1,7 @@
 from account_risk import check_risk
 """Dola image UI submission and original-image downloads (no marked fallback)."""
 import asyncio
+import config
 import io
 import json
 import re
@@ -14,7 +15,7 @@ from PIL import Image
 from patchright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from account_connections import http_proxy
-from browser import ensure_account_session, launch_account_context
+from browser import ACTIVE_CONTEXTS, ensure_account_session, launch_account_context
 from browser_queue import async_playwright
 from video_worker import POLL_JS
 from video_worker_ui import find_captcha_frame, solve_slider
@@ -138,25 +139,95 @@ async def upload_image_references(page, paths):
         page.remove_listener('response', on_response)
 
 
-async def select_image_ratio(page, ratio):
-    """Set and verify the ratio, avoiding an unnecessary obstructed menu click."""
-    button = page.get_by_test_id('chat_input_action_image_creation_ratio')
+_IMAGE_MODE_LABEL = re.compile(r'(?:create\s*image|image\s*create|t[ạa]o\s*[ảa]nh|画像を作成)', re.I)
+_RATIO_LABEL = re.compile(r'(?:aspect\s*ratio|t[ỷy]\s*l[ệe]|アスペクト比)\s*(?:1:1|2:3|3:4|4:3|9:16|16:9)?', re.I)
+
+
+def _image_mode_controls(page):
+    """Support both the old test ids and Dola's labelled composer controls."""
+    return (
+        page.get_by_test_id('skill_bar_button_3'),
+        page.get_by_role('button', name=_IMAGE_MODE_LABEL),
+        page.locator('button').filter(has_text=_IMAGE_MODE_LABEL),
+        # Some current Dola composer variants use a div/span control instead
+        # of a native button.
+        page.locator('[role="button"]').filter(has_text=_IMAGE_MODE_LABEL),
+        page.locator('[aria-haspopup]').filter(has_text=_IMAGE_MODE_LABEL),
+        page.get_by_text(_IMAGE_MODE_LABEL),
+    )
+
+
+def _ratio_controls(page):
+    return (
+        page.get_by_test_id('chat_input_action_image_creation_ratio'),
+        page.get_by_role('button', name=_RATIO_LABEL),
+        page.locator('button').filter(has_text=_RATIO_LABEL),
+        page.locator('[role="button"]').filter(has_text=_RATIO_LABEL),
+        page.locator('[aria-haspopup]').filter(has_text=_RATIO_LABEL),
+        page.get_by_text(_RATIO_LABEL),
+    )
+
+
+async def _first_visible(controls, timeout):
+    """Return the first control that appears within the shared time budget."""
+    deadline = time.monotonic() + timeout / 1000
+    while time.monotonic() < deadline:
+        for control in controls:
+            try:
+                if await control.is_visible():
+                    return control
+            except Exception:
+                continue
+        await asyncio.sleep(.25)
+    raise PlaywrightTimeoutError('Image composer control was not visible')
+
+
+async def activate_image_mode(page, timeout=20000):
+    """Open either Dola image-composer variant and wait until ratio is present."""
     try:
-        await button.wait_for(state='visible', timeout=10000)
-    except PlaywrightTimeoutError as first_exc:
-        # Dola hydrates the image composer asynchronously. Re-activate image
-        # mode once before failing when Seedream exists but ratio is absent.
+        return await _first_visible(_ratio_controls(page), timeout=500)
+    except PlaywrightTimeoutError:
+        pass
+    deadline = time.monotonic() + timeout / 1000
+    last_error = None
+    while time.monotonic() < deadline:
+        for mode in _image_mode_controls(page):
+            try:
+                if not await mode.is_visible():
+                    continue
+                try:
+                    await mode.click(timeout=4000)
+                except PlaywrightTimeoutError:
+                    # A transparent menu overlay can intercept the skill bar.
+                    # This is the intended control, so use its DOM click.
+                    await mode.evaluate('(element) => element.click()')
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
         try:
-            mode = page.get_by_test_id('skill_bar_button_3')
-            if await mode.is_visible():
-                await mode.click(timeout=3000)
-                await page.wait_for_timeout(1200)
-            await button.wait_for(state='visible', timeout=20000)
+            return await _first_visible(_ratio_controls(page), timeout=3500)
+        except PlaywrightTimeoutError:
+            await page.wait_for_timeout(500)
+    if last_error:
+        raise last_error
+    raise PlaywrightTimeoutError('Image composer did not expose an aspect-ratio control')
+
+
+async def select_image_ratio(page, ratio):
+    """Set and verify the ratio across the old and labelled Dola composers."""
+    try:
+        button = await _first_visible(_ratio_controls(page), timeout=10000)
+    except PlaywrightTimeoutError as first_exc:
+        try:
+            button = await activate_image_mode(page, timeout=20000)
         except Exception:
             try:
                 state = await page.evaluate('''() => ({
                     ratio_nodes: document.querySelectorAll('[data-testid=\"chat_input_action_image_creation_ratio\"]').length,
                     image_mode_nodes: document.querySelectorAll('[data-testid=\"skill_bar_button_3\"]').length,
+                    labelled_image_buttons: [...document.querySelectorAll('button')].filter(e => /create\\s*image|image\\s*create|tạo\\s*ảnh|画像を作成/i.test(e.innerText)).length,
+                    labelled_ratio_buttons: [...document.querySelectorAll('button')].filter(e => /aspect\\s*ratio|tỷ\\s*lệ|アスペクト比/i.test(e.innerText)).length,
                     editors: document.querySelectorAll('[contenteditable=\"true\"]').length,
                     seedream_buttons: [...document.querySelectorAll('button')].filter(e => /seedream/i.test(e.innerText)).length,
                     captcha_frames: [...document.querySelectorAll('iframe')].filter(e => /captcha|verify/i.test(e.src)).length
@@ -172,8 +243,16 @@ async def select_image_ratio(page, ratio):
 
     if selected(await button.inner_text()):
         return
-    await button.click()
-    option = page.get_by_text(re.compile(r'^' + re.escape(ratio) + r'\s*[（(]')).filter(visible=True)
+    try:
+        await button.click(timeout=4000)
+    except PlaywrightTimeoutError:
+        await button.evaluate('(element) => element.click()')
+    # Dola variants label menu items as `16:9`, `16:9 (Landscape)`, or
+    # `16:9 横長`. The composer button starts with "Aspect ratio" instead,
+    # so matching a value at the beginning stays unambiguous.
+    option = page.get_by_text(
+        re.compile(r'^\s*' + re.escape(ratio) + r'(?:\s|$|[\uFF08(])')
+    ).filter(visible=True).last
     await option.wait_for(state='visible', timeout=10000)
     try:
         await option.click(timeout=3000)
@@ -287,11 +366,36 @@ async def download_originals(images, account, directory):
     return results
 
 
+async def disable_media_panel_pointer_events(page):
+    """Keep the optional Dola30 media panel from covering the Dola send button."""
+    panel = page.locator('#watermark-free-media-panel')
+    if await panel.count():
+        await panel.evaluate("node => { node.style.pointerEvents = 'none'; }")
+
+
 async def generate_image(account, prompt, model, ratio, style, directory, checkpoint,
                          conversation_id=None, timeout=600, reference_image_paths=None):
-    async with async_playwright() as p:
-        context = await launch_account_context(p, account, headless=True, use_extension=False)
+    # Prefer the user's already-open headed Dola context.  It preserves the
+    # exact browser, extension, network and session that succeeded manually;
+    # do not close it when the image job ends.  Otherwise retain the low-RAM
+    # headless worker path.
+    active = ACTIVE_CONTEXTS.get(account)
+    context = active[0] if active and not active[0].is_closed() and not active[1] else None
+    playwright = None
+    playwright_session = None
+    owns_context = context is None
+    if owns_context:
+        playwright_session = async_playwright()
+        playwright = await playwright_session.__aenter__()
         try:
+            context = await launch_account_context(
+                playwright, account,
+                headless=not config.IMAGE_INTERACTIVE_WORKER,
+                use_extension=config.IMAGE_INTERACTIVE_WORKER)
+        except BaseException:
+            await playwright_session.__aexit__(None, None, None)
+            raise
+    try:
             page = context.pages[0] if context.pages else await context.new_page()
             await page.goto('https://www.dola.com/chat' + ('/' + conversation_id if conversation_id else ''),
                             wait_until='domcontentloaded', timeout=60000)
@@ -304,7 +408,10 @@ async def generate_image(account, prompt, model, ratio, style, directory, checkp
                 cookie = page.get_by_test_id('cookie_banner_notice')
                 if await cookie.is_visible():
                     await cookie.click()
-                await page.get_by_test_id('skill_bar_button_3').click(timeout=15000)
+                # Dola currently serves both the old test-id composer and a
+                # labelled composer ("Create image" / "画像を作成").  Do not
+                # proceed until its aspect-ratio control confirms image mode.
+                await activate_image_mode(page)
                 model_button = page.get_by_role('button').filter(has_text=re.compile('Seedream'))
                 await model_button.click()
                 model_pattern = r'^Seedream\s*4\.5$' if model == MODELS[0] else r'^Seedream\s*5\.0\s*(Pro|プロ)$'
@@ -347,6 +454,7 @@ async def generate_image(account, prompt, model, ratio, style, directory, checkp
                         await route.continue_()
                     await page.route('**/chat/completion*', guard_submission)
                 checkpoint(phase='submitting')
+                await disable_media_panel_pointer_events(page)
                 await page.get_by_test_id('chat_input_send_button').click()
             deadline = time.monotonic() + timeout
             attempts = 0
@@ -361,6 +469,7 @@ async def generate_image(account, prompt, model, ratio, style, directory, checkp
                         submission_error = None
                         checkpoint(phase='reuploading')
                         await upload_image_references(page, reference_image_paths)
+                        await disable_media_panel_pointer_events(page)
                         await page.get_by_test_id('chat_input_send_button').click()
                         continue
                     checkpoint(phase='upload_failed')
@@ -402,5 +511,7 @@ async def generate_image(account, prompt, model, ratio, style, directory, checkp
                             raise RuntimeError(message)
                 await asyncio.sleep(4)
             raise TimeoutError('Chưa nhận được ảnh gốc không watermark trong 10 phút. Có thể tiếp tục kiểm tra nếu đã có hội thoại.')
-        finally:
+    finally:
+        if owns_context:
             await context.close()
+            await playwright_session.__aexit__(None, None, None)

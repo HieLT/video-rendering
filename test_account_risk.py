@@ -22,7 +22,7 @@ class RiskTests(unittest.IsolatedAsyncioTestCase):
      pool.auth_result(name,'active',identity={'identity_hash':name})
     quarantine('bad',root/'pool.db')
     rows={r['name']:r for r in pool.list_accounts()}
-    self.assertEqual(rows['bad']['auth_state'],'limited')
+    self.assertEqual(rows['bad']['auth_state'],'active')
     self.assertTrue(rows['peer']['scheduling'])
     self.assertTrue(rows['other']['scheduling']);self.assertTrue(rows['sub']['scheduling'])
     pool.auth_result('peer','active',identity={'identity_hash':'peer'})
