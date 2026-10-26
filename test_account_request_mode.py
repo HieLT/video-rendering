@@ -86,8 +86,8 @@ class RequestModeTests(unittest.IsolatedAsyncioTestCase):
         self.scheduler.reserved.clear()
         self.store.update('first', account=None)
         self.pool.set_scheduling(name, False)
-        self.assertTrue(await self.assign('first'))
-        self.assertEqual(self.store.get('first')['account'], 'fixture')
+        self.assertFalse(await self.assign('first'))
+        self.assertIsNone(self.store.get('first')['account'])
 
     async def test_project_allowlist_inherits_to_chapters_and_never_falls_back(self):
         name='second_account'
@@ -141,48 +141,71 @@ class RequestModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.pool.set_group_scheduling('other',False),2)
         self.assertEqual(self.pool.set_group_scheduling('other',True,'MAIL8686.US'),1)
 
+    async def test_facebook_group_separate_from_gmail_and_unknown_domain(self):
+        for name, email, account_type in [
+            ('gmail','x@gmail.com','google'),
+            ('fbuid','61595929468879','facebook'),
+            ('fbgmail','fb@gmail.com','facebook'),
+            ('other','a@mail8686.us','google'),
+        ]:
+            (self.pool.accounts_dir / name).mkdir(exist_ok=True)
+            self.pool._ensure_meta(name)
+            self.pool.set_email(name, email)
+            self.pool.set_scheduling(name, True)
+            with self.pool._conn:
+                self.pool._conn.execute(
+                    "UPDATE accounts_meta SET account_type=? WHERE name=?", (account_type, name))
+        rows = {a['name']: a for a in self.pool.list_accounts()}
+        self.assertEqual(self.pool.account_group(rows['gmail']), 'gmail')
+        self.assertEqual(self.pool.account_group(rows['fbuid']), 'facebook')
+        self.assertEqual(self.pool.account_group(rows['fbgmail']), 'facebook')
+        self.assertEqual(self.pool.account_group(rows['other']), 'other')
+        self.assertFalse(self.pool.matches_open_web_domain(rows['fbuid'], ''))
+        self.assertTrue(self.pool.matches_open_web_domain(rows['fbuid'], 'facebook'))
+        self.assertEqual(self.pool.set_group_scheduling('facebook', False), 2)
+        rows = {a['name']: a for a in self.pool.list_accounts()}
+        self.assertFalse(rows['fbuid']['scheduling'])
+        self.assertFalse(rows['fbgmail']['scheduling'])
+        self.assertTrue(rows['gmail']['scheduling'])
+        self.assertTrue(rows['other']['scheduling'])
+
     async def test_default_keeps_one_request(self):
         self.assertFalse(self.scheduler.dual_requests)
         self.assertTrue(await self.assign('first'))
         self.scheduler.claim_once(self.store.get('first'))
         self.assertFalse(await self.assign('second'))
 
-    async def test_two_unfinished_requests_but_no_third(self):
+    async def test_daily_limit_blocks_second_request_even_when_dual_enabled(self):
         self.scheduler.set_dual_requests(True)
         self.assertTrue(await self.assign('first'))
         self.scheduler.claim_once(self.store.get('first'))
         self.store.update('first', status='processing', phase='waiting', conversation_id='chat-1')
-        self.assertTrue(await self.assign('second'))
-        self.scheduler.claim_once(self.store.get('second'))
-        self.store.update('second', status='processing', phase='waiting', conversation_id='chat-2')
-        self.assertFalse(await self.assign('third'))
-        self.assertEqual(self.pool.used_today('fixture'), 2)
-        self.assertEqual(self.scheduler.reservation_ids('fixture'), {'first', 'second'})
+        self.assertFalse(await self.assign('second'))
+        self.assertEqual(self.pool.used_today('fixture'), 1)
+        self.assertEqual(self.scheduler.reservation_ids('fixture'), {'first'})
         self.assertTrue(await self.assign('first'))
-        self.assertTrue(await self.assign('second'))
 
-    async def test_second_dispatches_while_first_waits_for_dola(self):
+    async def test_second_stays_queued_while_first_waits_for_dola(self):
         self.scheduler.set_dual_requests(True)
         submitted = []
-        two_submitted = asyncio.Event()
+        one_submitted = asyncio.Event()
         async def submit(row, paths):
             self.scheduler.claim_once(row)
             submitted.append(row['id'])
             self.store.update(row['id'], conversation_id='chat-' + row['id'])
-            if len(submitted) == 2:
-                two_submitted.set()
+            if len(submitted) == 1:
+                one_submitted.set()
             return {'kind': 'accepted', 'poll': {'accepted': True, 'texts': []}}
         with patch.object(self.scheduler, 'submit', side_effect=submit), \
                 patch.object(self.scheduler, 'references', AsyncMock(return_value=[])):
             tasks = [asyncio.create_task(self.scheduler.run(task, {})) for task in ('first', 'second', 'third')]
             try:
-                await asyncio.wait_for(two_submitted.wait(), 3)
+                await asyncio.wait_for(one_submitted.wait(), 3)
                 await asyncio.sleep(.05)
-                self.assertEqual(submitted, ['first', 'second'])
+                self.assertEqual(submitted, ['first'])
                 self.assertEqual(self.store.get('first')['phase'], 'waiting')
-                self.assertEqual(self.store.get('second')['phase'], 'waiting')
+                self.assertEqual(self.store.get('second')['status'], 'queued')
                 self.assertEqual(self.store.get('third')['status'], 'queued')
-                self.assertNotEqual(self.store.get('first')['conversation_id'], self.store.get('second')['conversation_id'])
             finally:
                 for task in tasks:
                     task.cancel()
@@ -191,44 +214,39 @@ class RequestModeTests(unittest.IsolatedAsyncioTestCase):
     async def test_unclaimed_assignments_hold_slots_and_quota(self):
         self.scheduler.set_dual_requests(True)
         self.assertTrue(await self.assign('first'))
-        self.assertTrue(await self.assign('second'))
+        self.assertFalse(await self.assign('second'))
         self.assertFalse(await self.assign('third'))
         self.scheduler.claim_once(self.store.get('first'))
-        self.scheduler.claim_once(self.store.get('second'))
+        self.scheduler.claim_once(self.store.get('first'))
+        self.assertEqual(self.pool.used_today('fixture'), 1)
+        self.store.update('second', account='fixture')
+        # A video already received must be counted even if the admission quota is full.
         self.scheduler.claim_once(self.store.get('second'))
         self.assertEqual(self.pool.used_today('fixture'), 2)
-        self.store.update('third', account='fixture')
-        # A video already received must be counted even if the admission quota is full.
-        self.scheduler.claim_once(self.store.get('third'))
-        self.assertEqual(self.pool.used_today('fixture'), 3)
 
-    async def test_existing_usage_leaves_only_one_quota_slot(self):
+    async def test_existing_usage_leaves_no_quota_slot(self):
         self.assertTrue(await self.assign('first'))
         self.scheduler.claim_once(self.store.get('first'))
         self.store.update('first', status='completed')
         self.scheduler.release(self.store.get('first'))
         self.scheduler.set_dual_requests(True)
-        self.assertTrue(await self.assign('second'))
+        self.assertFalse(await self.assign('second'))
         self.assertFalse(await self.assign('third'))
 
-    async def test_release_either_task_keeps_other_reservation(self):
+    async def test_release_frees_the_only_reservation(self):
         self.scheduler.set_dual_requests(True)
         await self.assign('first')
-        await self.assign('second')
-        self.store.update('second', status='stopped')
-        self.scheduler.release(self.store.get('second'))
-        self.assertEqual(self.scheduler.reserved, {'fixture': 'first'})
-        self.assertEqual(self.scheduler.reservation_ids('fixture'), {'first'})
-        await self.assign('third')
-        self.store.update('first', status='completed')
+        self.assertFalse(await self.assign('second'))
+        self.store.update('first', status='stopped')
         self.scheduler.release(self.store.get('first'))
-        self.assertEqual(self.scheduler.reserved, {'fixture': 'third'})
+        self.assertEqual(self.scheduler.reserved, {})
+        self.assertTrue(await self.assign('second'))
+        self.assertEqual(self.scheduler.reserved, {'fixture': 'second'})
 
-    async def test_restart_restores_both_and_toggle_off_keeps_running_tasks(self):
+    async def test_restart_restores_unfinished_and_toggle_off_keeps_running_tasks(self):
         self.scheduler.set_dual_requests(True)
         await self.assign('first')
-        await self.assign('second')
-        self.store.update('second', status='needs_recovery', phase='review')
+        self.store.update('second', account='fixture', status='needs_recovery', phase='review')
         restarted = VideoScheduler(self.store, self.pool)
         self.assertTrue(restarted.dual_requests)
         restarted.recover_reservations()
@@ -270,7 +288,7 @@ class RequestModeTests(unittest.IsolatedAsyncioTestCase):
         self.scheduler.claim_once(self.store.get('first'))
         result = client.get('/api/admin/accounts', headers=headers).json()
         self.assertTrue(result['dual_requests'])
-        self.assertTrue(result['accounts'][0]['ready_to_generate'])
+        self.assertFalse(result['accounts'][0]['ready_to_generate'])
         self.assertTrue(result['accounts'][0]['busy'])
         self.assertEqual(result['accounts'][0]['active_requests'], 1)
 

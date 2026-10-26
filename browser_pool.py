@@ -23,7 +23,7 @@ def _log(message: str):
     """Keeps pool diagnostics printable on Windows cp1252 consoles."""
     print(str(message).encode("ascii", "backslashreplace").decode("ascii"), flush=True)
 
-DAILY_LIMIT = 2
+DAILY_LIMIT = 1
 COOLDOWN_SEC = 1800  # 30-minute cooldown on risk control
 
 
@@ -341,13 +341,29 @@ class BrowserPool:
         match = re.fullmatch(r'[^@\s]+@([^@\s]+)', (email or '').strip().lower())
         return match.group(1) if match else ''
 
+    @staticmethod
+    def account_group(account):
+        if str(account.get('account_type') or '').strip().lower() == 'facebook':
+            return 'facebook'
+        if BrowserPool.email_domain(account.get('email')) == 'gmail.com':
+            return 'gmail'
+        return 'other'
+
+    def matches_open_web_domain(self, account, domain):
+        domain = (domain or '').strip().lower().lstrip('@')
+        if domain == 'facebook':
+            return self.account_group(account) == 'facebook'
+        if self.account_group(account) == 'facebook':
+            return False
+        return self.email_domain(account.get('email')) == domain
+
     def set_group_scheduling(self, group: str, enabled: bool, domain=None):
-        if group not in ('gmail', 'other'):
+        if group not in ('gmail', 'other', 'facebook'):
             raise ValueError('Unknown account group')
         domain = domain.strip().lower() if domain is not None else None
         names = [a['name'] for a in self.list_accounts()
-                 if ('gmail' if self.email_domain(a.get('email')) == 'gmail.com' else 'other') == group
-                 and (domain is None or self.email_domain(a.get('email')) == domain)]
+                 if self.account_group(a) == group
+                 and (group == 'facebook' or domain is None or self.email_domain(a.get('email')) == domain)]
         with self._conn:
             self._conn.executemany(
                 'UPDATE accounts_meta SET scheduling=?, dispatch_manual=1 WHERE name=?',

@@ -6,6 +6,7 @@ import re
 import shutil
 import time
 from pathlib import Path
+from browser_pool import DAILY_LIMIT
 from browser_queue import async_playwright
 from browser import launch_account_context, cookie_value, ensure_account_session, AccountSessionExpiredError, BrowserClosedByUserError, is_browser_closed_error
 from video_worker import POLL_JS, extract_unwatermarked_url, _download
@@ -189,9 +190,12 @@ class VideoScheduler:
             owners.add(owner)
         return owners
 
+    def request_slots(self):
+        return min(2 if self.dual_requests else 1, DAILY_LIMIT)
+
     def can_resume(self, account, task_id):
         owners = self.reservation_ids(account)
-        return task_id in owners or len(owners) < (2 if self.dual_requests else 1)
+        return task_id in owners or len(owners) < self.request_slots()
 
     def eligible(self, account):
         lock = self.pool._locks.get(account['name'])
@@ -202,13 +206,13 @@ class VideoScheduler:
         if not self.pool._schedulable(account, allow_reserved=True):
             return False
         owners = self.reservation_ids(account['name'])
-        if len(owners) >= 2:
+        if len(owners) >= self.request_slots():
             return False
         # Unfinished jobs reserve capacity without counting as received videos.
         unclaimed = sum(not self.pool._conn.execute(
             "SELECT 1 FROM video_job_account_claims WHERE task_id=? AND account=?",
             (owner, account['name'])).fetchone() for owner in owners)
-        return account['used_today'] + unclaimed < 2
+        return account['used_today'] + unclaimed < DAILY_LIMIT
 
     def recover_reservations(self):
         rows=self.store._conn.execute("SELECT * FROM tasks WHERE (status IN ('queued','processing') OR (status='needs_recovery' AND COALESCE(phase,'ready')<>'ready')) AND deleted_at IS NULL ORDER BY created_at").fetchall()

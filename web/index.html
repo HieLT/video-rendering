@@ -510,15 +510,17 @@ main.accounts-view{max-width:1440px}
       <button id="deleteSelectedAccounts" class="btn btn-danger" hidden disabled onclick="deleteSelectedRows('accounts')">Delete selected (0)</button>
       <button id="assignSelectedConnection" class="btn" hidden disabled onclick="openAccountConnections()">Gán kết nối</button>
       <p><label><input id="dualRequests" type="checkbox" onchange="setAccountRequestMode(this)"> Cho phép 2 request đồng thời / account</label></p>
-      <p class="tiny">Áp dụng cho Video Tasks và Projects. Hai video chạy trong hai chat riêng; quota vẫn tối đa 2 video/account. Khi tắt, các request đang chạy tiếp tục, request mới chờ account trống.</p>
+      <p class="tiny">Áp dụng cho Video Tasks và Projects. Hai video chạy trong hai chat riêng nếu còn quota; quota hiện tối đa 1 video/account nên request thứ hai sẽ chờ. Khi tắt, các request đang chạy tiếp tục, request mới chờ account trống.</p>
       <div class="account-groups" aria-label="Account email groups">
         <button class="account-group" id="accountGroupGmail" aria-pressed="true" onclick="switchAccountGroup('gmail')"><strong>Gmail (@gmail.com)</strong><span class="account-counts">Loading…</span></button>
         <button class="account-group" id="accountGroupOther" aria-pressed="false" onclick="switchAccountGroup('other')"><strong>Non-Gmail (không phải Gmail)</strong><span class="account-counts">Loading…</span></button>
+        <button class="account-group" id="accountGroupFacebook" aria-pressed="false" onclick="switchAccountGroup('facebook')"><strong>Facebook</strong><span class="account-counts">Loading…</span></button>
       </div>
-      <p class="tiny">Sẵn sàng gen: Dispatch bật, đăng nhập hợp lệ, còn quota/credit và còn slot request. Tài khoản chưa có email thuộc nhóm Non-Gmail.</p>
+      <p class="tiny">Sẵn sàng gen: Dispatch bật, đăng nhập hợp lệ, còn quota/credit và còn slot request. Acc Facebook nằm ở nhóm Facebook. Acc chưa có email (không phải Facebook) thuộc Non-Gmail.</p>
       <div class="account-groups">
         <button class="btn" id="dispatchGmail" disabled onclick="toggleGroupDispatch('gmail')">Gmail Dispatch</button>
         <button class="btn" id="dispatchOther" disabled onclick="toggleGroupDispatch('other')">Non-Gmail Dispatch</button>
+        <button class="btn" id="dispatchFacebook" disabled onclick="toggleGroupDispatch('facebook')">Facebook Dispatch</button>
       </div>
       <p class="tiny">B&#7853;t/t&#7855;t Dispatch cho c&#7843; nh&#243;m. Task &#273;&#227; g&#225;n account v&#7851;n ti&#7871;p t&#7909;c; task ch&#432;a g&#225;n ch&#7881; ch&#7885;n account &#273;ang b&#7853;t. Kh&#244;ng thay &#273;&#7893;i tr&#7841;ng th&#225;i &#273;&#259;ng nh&#7853;p.</p>
       <div id="accountDomains" class="account-groups" hidden></div>
@@ -822,7 +824,8 @@ async function stopDomainWeb(){
   catch(e){alert(e.message);}
 }
 function domainWebButton(domain){
-  return `<button class="btn" data-open-web-domain="${esc(domain)}" onclick="openDomainWeb(this.dataset.openWebDomain,this)">Open Web cả domain</button>`;
+  const label=domain==='facebook'?'Open Web cả Facebook':'Open Web cả domain';
+  return `<button class="btn" data-open-web-domain="${esc(domain)}" onclick="openDomainWeb(this.dataset.openWebDomain,this)">${label}</button>`;
 }
 
 const deleteSelection={accounts:new Set(),tasks:new Set()};
@@ -896,10 +899,11 @@ function openAccountActions(name,button){
   menu.dataset.account=name;
   menu.innerHTML=`<button role="menuitem" onclick="closeAccountActions();verify('${esc(name)}',this)">Verify</button><button role="menuitem" onclick="closeAccountActions();resetQuota('${esc(name)}',this)">Reset quota</button><button role="menuitem" onclick="closeAccountActions();openAddAccount('${esc(name)}')">Retry login</button><button role="menuitem" class="btn-danger" onclick="closeAccountActions();delAccount('${esc(name)}')">Delete account</button>`;
   const account=accountSnapshot.find(x=>x.name===name);
-  if(account?.account_type==='google'){
+  if(account?.account_type==='google'||account?.account_type==='facebook'){
     const resume=['deleted','submitting'].includes(account.dola_delete_phase);
     const busy=account.busy||account.active_requests||accountJobs[name]?.status==='running';
-    menu.innerHTML+=`<button role="menuitem" class="btn-danger" ${busy?'disabled':''} onclick="closeAccountActions();deleteDolaAcc('${esc(name)}',${resume})">${resume?'Resume Google login':'Delete Dola & re-login'}</button>`;
+    const provider=account.account_type==='facebook'?'Facebook':'Google';
+    menu.innerHTML+=`<button role="menuitem" class="btn-danger" ${busy?'disabled':''} onclick="closeAccountActions();deleteDolaAcc('${esc(name)}',${resume})">${resume?'Resume '+provider+' login':'Delete Dola & re-login'}</button>`;
   }
   menu.hidden=false;
   const rect=button.getBoundingClientRect(),height=menu.offsetHeight;
@@ -1002,9 +1006,14 @@ async function toggleGroupDispatch(group,domain=null){
   finally{try{await loadAccounts();}finally{dispatchUpdating=false;renderAccounts();}}
 }
 function accountEmailDomain(account){const match=/^[^@\s]+@([^@\s]+)$/.exec((account.email||'').trim().toLowerCase());return match?match[1]:'';}
+function accountPickerDomain(account){return accountEmailGroup(account)==='facebook'?'facebook':accountEmailDomain(account);}
+function accountPickerLabel(domain){return domain==='facebook'?'Facebook':(domain?'@'+domain:'Unknown domain');}
 function switchAccountDomain(domain){if(bulkDeleting.accounts)return;accountDomain=domain;deleteSelection.accounts.clear();renderAccounts();}
 q('#accountDomains').addEventListener('click',event=>{const button=event.target.closest('button');if(!button||button.disabled)return;if(button.dataset.domainAction==='filter')switchAccountDomain(button.dataset.domain);else if(button.dataset.domainAction==='dispatch')toggleGroupDispatch('other',button.dataset.domain);else switchAccountDomain(null);});
-function accountEmailGroup(account){return /^[^@\s]+@gmail\.com$/i.test((account.email||'').trim())?'gmail':'other';}
+function accountEmailGroup(account){
+  if((account.account_type||'').toLowerCase()==='facebook')return 'facebook';
+  return /^[^@\s]+@gmail\.com$/i.test((account.email||'').trim())?'gmail':'other';
+}
 function switchAccountGroup(group){
   if(bulkDeleting.accounts)return;
   accountGroup=group;accountDomain=null;
@@ -1045,13 +1054,13 @@ function renderAccounts(){
     proxyCounts.get(id).count++;
   }
   q('#accountProxyStats').innerHTML='<strong>Account theo proxy</strong><span class="tiny"> · Toàn bộ '+accountSnapshot.length+' account</span><div class="proxy-stats-list">'+[...proxyCounts].map(([id,item])=>`<div class="proxy-stat" data-proxy-stat="${esc(id)}"><span class="proxy-stat-label">${esc(item.label)}</span><span class="proxy-stat-count">${item.count} acc</span></div>`).join('')+'</div>';
-  for(const [group,id] of [['gmail','accountGroupGmail'],['other','accountGroupOther']]){
+  for(const [group,id,dispatchId,label] of [['gmail','accountGroupGmail','dispatchGmail','Gmail'],['other','accountGroupOther','dispatchOther','Non-Gmail'],['facebook','accountGroupFacebook','dispatchFacebook','Facebook']]){
     const members=accountSnapshot.filter(x=>accountEmailGroup(x)===group);
     const ready=members.filter(x=>x.ready_to_generate&&jobs[x.name]?.status!=='running').length;
     const enabledCount=members.filter(x=>x.scheduling).length;
-    const dispatchButton=q(group==='gmail'?'#dispatchGmail':'#dispatchOther');
+    const dispatchButton=q('#'+dispatchId);
     dispatchButton.disabled=dispatchUpdating||!members.length;
-    dispatchButton.textContent=(enabledCount?'T\u1eaft':'B\u1eadt')+' Dispatch '+(group==='gmail'?'Gmail':'Non-Gmail')+' ('+enabledCount+'/'+members.length+' \u0111ang b\u1eadt)';
+    dispatchButton.textContent=(enabledCount?'T\u1eaft':'B\u1eadt')+' Dispatch '+label+' ('+enabledCount+'/'+members.length+' \u0111ang b\u1eadt)';
 
     const button=q('#'+id);
     button.setAttribute('aria-pressed',String(group===accountGroup));
@@ -1083,7 +1092,7 @@ function renderAccounts(){
       index+1,
       `<span class="account-name" title="${esc(x.email||x.display_name||x.name)}">${esc(x.display_name||x.email||x.name)}${warn}</span><span class="account-secondary">${esc(({google:'Google',facebook:'Facebook',cookies:'Cookies',unknown:'Unknown'})[x.account_type]||'Unknown')}</span>`,
       `<select class="account-connection-select" aria-label="Kết nối account ${esc(x.email||x.name)}" data-account-connection="${esc(x.name)}" title="${esc(connectionChoices.find(c=>c.id===(x.connection_id||'direct'))?.label||'Kết nối không khả dụng')}" ${x.busy||x.active_requests||jb?.status==='running'||connectionUpdates.has(x.name)?'disabled':''} onchange="changeAccountConnection(this.dataset.accountConnection,this)">${connectionChoices.some(c=>c.id===(x.connection_id||'direct'))?'':`<option value="${esc(x.connection_id)}" selected disabled>Kết nối không khả dụng</option>`}${connectionOptions(x.connection_id||'direct')}</select>`,
-      badge+(jb?.kind==='delete_dola'&&jb.status==='running'?`<div class="tiny">${esc(jb.message||jb.stage)}</div>`:['deleted','submitting'].includes(x.dola_delete_phase)?'<div class="tiny">Deletion interrupted: resume Google login from Actions.</div>':'')+(x.active_requests?`<div class="tiny">${Number(x.active_requests)} request đang chạy</div>`:''),
+      badge+(jb?.kind==='delete_dola'&&jb.status==='running'?`<div class="tiny">${esc(jb.message||jb.stage)}</div>`:['deleted','submitting'].includes(x.dola_delete_phase)?'<div class="tiny">Deletion interrupted: resume '+((x.account_type||'')==='facebook'?'Facebook':'Google')+' login from Actions.</div>':'')+(x.active_requests?`<div class="tiny">${Number(x.active_requests)} request đang chạy</div>`:''),
       `<label class="sw"><input type="checkbox" ${x.scheduling?'checked':''} onchange="setSched('${x.name}',this.checked)"><i></i></label>`,
       `<b>${x.used_today}</b> / ${x.limit}<span class="account-secondary" title="Last used: ${esc(fmt(x.last_used_at))}">${x.last_used_at?'Last '+esc(fmtHM(x.last_used_at)):'Chưa dùng'}</span>`,
       accountTime(x.created_at),
@@ -1102,13 +1111,15 @@ function renderAccounts(){
       return `<section class="account-domain" data-account-domain="${esc(domain)}"><div class="toolbar"><h3>${esc(domain?'@'+domain:'Unknown domain')}</h3>${domainWebButton(domain)}</div><p>${members.length} t\u00e0i kho\u1ea3n &middot; ${ready} s\u1eb5n s\u00e0ng gen &middot; ${enabled}/${members.length} Dispatch b\u1eadt</p>${accountTable(members)}</section>`;
     }).join('');
   }else{
-    q('#accountsTable').innerHTML=domainWebButton('gmail.com')+accountTable(visible,true);
+    q('#accountsTable').innerHTML=domainWebButton(accountGroup==='facebook'?'facebook':'gmail.com')+accountTable(visible,true);
   }
   updateDeleteSelection('accounts');
 }
 
 async function deleteDolaAcc(name,resume=false){
-  if(!resume&&!confirm('Renew this Dola account? This permanently deletes its Dola data, signs in again with the saved Google profile, and resets local usage to 0/2 only after login is verified.'))return;
+  const account=accountSnapshot.find(x=>x.name===name);
+  const provider=(account?.account_type||'')==='facebook'?'Facebook':'Google';
+  if(!resume&&!confirm('Renew this Dola account? This permanently deletes its Dola data, signs in again with the saved '+provider+' profile, and resets local usage to 0/1 only after login is verified.'))return;
   try{await api('/api/admin/accounts/'+encodeURIComponent(name)+'/delete-dola'+(resume?'?resume=true':''),{method:'POST'});}
   catch(e){alert(e.message);}
   refresh();
@@ -2357,8 +2368,8 @@ window.ProjectReview = (() => {
     const accounts=[...data.accounts].sort((a,b)=>(Number(b.created_at)||0)-(Number(a.created_at)||0));
     for(const id of selected)if(!accounts.some(a=>a.uuid===id))accounts.push({uuid:id,name:id,email:'Unavailable account',scheduling:false});
     const chapter=!!state.projects.find(p=>p.id===state.project)?.parent_project_id;
-    const domains=[...new Set(accounts.map(accountEmailDomain))].sort();
-    panel('project-accounts',chapter?'Accounts for this chapter':'Accounts for this project',`<p>Optional: leave all unchecked to use all eligible accounts. ${chapter?'Settings saved here apply only to this chapter.':'Chapters inherit these settings unless configured separately.'} Dispatch, quota and request slots still apply.</p><p>Already submitted videos keep their original account. New submissions wait if none of the selected accounts are available.</p>${chapter?`<label><input type="checkbox" id="projectAccountInherit" ${settings.inherited?'checked':''}> Use parent project accounts</label>`:''}<div class="project-actions" id="runAccountDomains">${domains.map(d=>`<button class="btn" data-action="run-account-domain" data-domain="${esc(d)}">${esc(d?'@'+d:'Unknown domain')} (${accounts.filter(a=>accountEmailDomain(a)===d).length})</button>`).join('')}</div><p>Choose a domain tab to view accounts. Selections are kept when switching tabs.</p><input id="projectAccountSearch" placeholder="Search within domain"><div class="project-actions"><button class="btn" data-action="accounts-clear">Clear selection (All accounts)</button><button class="btn" data-action="accounts-select-visible">Select visible</button></div><div style="max-height:420px;overflow:auto" id="projectAccountChoices">${accounts.map(a=>`<label style="display:block;padding:8px;border-bottom:1px solid #ddd" hidden data-run-domain="${esc(accountEmailDomain(a))}" data-account-search="${esc([a.email,a.name].join(' ').toLowerCase())}"><input type="checkbox" value="${esc(a.uuid)}" ${selected.has(a.uuid)?'checked':''}> ${esc(a.email||a.display_name||a.name)} <small>${esc(a.name)} &middot; Dispatch ${a.scheduling?'on':'off'}</small></label>`).join('')}</div><p id="projectAccountCount"></p><button class="btn btn-p" data-action="save-project-accounts">Save accounts</button>`);
+    const domains=[...new Set(accounts.map(accountPickerDomain))].sort((a,b)=>Number(a==='facebook')-Number(b==='facebook')||String(a).localeCompare(String(b)));
+    panel('project-accounts',chapter?'Accounts for this chapter':'Accounts for this project',`<p>Optional: leave all unchecked to use all eligible accounts. ${chapter?'Settings saved here apply only to this chapter.':'Chapters inherit these settings unless configured separately.'} Dispatch, quota and request slots still apply.</p><p>Already submitted videos keep their original account. New submissions wait if none of the selected accounts are available.</p>${chapter?`<label><input type="checkbox" id="projectAccountInherit" ${settings.inherited?'checked':''}> Use parent project accounts</label>`:''}<div class="project-actions" id="runAccountDomains">${domains.map(d=>`<button class="btn" data-action="run-account-domain" data-domain="${esc(d)}">${esc(accountPickerLabel(d))} (${accounts.filter(a=>accountPickerDomain(a)===d).length})</button>`).join('')}</div><p>Choose a domain tab to view accounts. Selections are kept when switching tabs.</p><input id="projectAccountSearch" placeholder="Search within domain"><div class="project-actions"><button class="btn" data-action="accounts-clear">Clear selection (All accounts)</button><button class="btn" data-action="accounts-select-visible">Select visible</button></div><div style="max-height:420px;overflow:auto" id="projectAccountChoices">${accounts.map(a=>`<label style="display:block;padding:8px;border-bottom:1px solid #ddd" hidden data-run-domain="${esc(accountPickerDomain(a))}" data-account-search="${esc([a.email,a.name].join(' ').toLowerCase())}"><input type="checkbox" value="${esc(a.uuid)}" ${selected.has(a.uuid)?'checked':''}> ${esc(a.email||a.display_name||a.name)} <small>${esc(a.name)} &middot; Dispatch ${a.scheduling?'on':'off'}</small></label>`).join('')}</div><p id="projectAccountCount"></p><button class="btn btn-p" data-action="save-project-accounts">Save accounts</button>`);
     filterRunAccounts();updateProjectAccountCount();
   }
   function filterRunAccounts(){

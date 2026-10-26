@@ -42,7 +42,7 @@ from scene_generation import task_reference_paths
 from project_generation import submit_project_generation
 from account_import import parse_netscape, imported_account_flow, cookie_identity
 from add_account import add_account_flow
-from browser_pool import AllAccountsLimitedError, AllAccountsQuotaBlockedError, NoUsableAccountsError, BrowserPool
+from browser_pool import AllAccountsLimitedError, AllAccountsQuotaBlockedError, NoUsableAccountsError, BrowserPool, DAILY_LIMIT
 from media import download_reference_images, validate_reference_urls
 from reference_aliases import resolve_reference_aliases
 from store import PendingTaskLimitExceeded, TaskQuotaExceeded, TaskSubmissionConflict, TaskStore
@@ -724,7 +724,7 @@ class AccountGroupDispatch(BaseModel):
 async def admin_group_dispatch(group: str, body: AccountGroupDispatch,
                                x_admin_key: str | None = Header(default=None)):
     _admin_auth(x_admin_key)
-    if group not in ('gmail', 'other'):
+    if group not in ('gmail', 'other', 'facebook'):
         raise HTTPException(422, 'Unknown account group')
     count = pool.set_group_scheduling(group, body.enabled, body.domain)
     return {'ok': True, 'group': group, 'enabled': body.enabled, 'count': count}
@@ -784,26 +784,30 @@ async def admin_account_delete(name: str, x_admin_key: str | None = Header(defau
 async def _run_dola_delete(name: str, resume: bool = False):
     from dola_account_lifecycle import delete_and_relogin, checkpoint, read_checkpoint
     recovering_uncertain = resume and read_checkpoint(name).get("phase") == "submitting"
-    def report(stage, message):
-        if JOBS[name].get("stage") != stage:
-            logging.getLogger("uvicorn.error").info("[delete-dola] account=%s stage=%s", name, stage)
-        JOBS[name].update(stage=stage, message=message)
     try:
+        meta = pool._meta(name)
+        account_type = str((meta["account_type"] if meta else None) or "google").strip().lower()
+        provider = "Facebook" if account_type == "facebook" else "Google"
+        def report(stage, message):
+            if JOBS[name].get("stage") != stage:
+                logging.getLogger("uvicorn.error").info("[delete-dola] account=%s stage=%s", name, stage)
+            JOBS[name].update(stage=stage, message=message)
         async with pool.account_activity(name, "delete_dola"):
             # Keep failed/interrupted flows out of dispatch, including after restart.
-            pool.auth_result(name, "expired", "Dola deletion / Google re-login in progress")
-            await delete_and_relogin(name, pool._meta(name)["email"], report, resume=resume)
+            pool.auth_result(name, "expired", f"Dola deletion / {provider} re-login in progress")
+            await delete_and_relogin(name, meta["email"], report, resume=resume, account_type=account_type)
             report("verifying", "Verifying the new Dola session")
             from browser import inspect_account_session
             result = await inspect_account_session(name)
             if result["state"] != "active":
-                raise RuntimeError("Google re-login could not be verified")
+                raise RuntimeError(f"{provider} re-login could not be verified")
             state = pool.auth_result(name, "active", identity=result)
             if state != "active":
                 raise RuntimeError("Re-login identity duplicates another account")
             pool.reset_renewed_account_usage(name)
             checkpoint(name, "complete")
-            JOBS[name].update(status="success", stage="complete", message=("Google login verified; usage reset to 0/2; previous deletion result was not confirmed" if recovering_uncertain else "Account renewed; Google login verified; usage reset to 0/2"), error="")
+            usage = f"0/{DAILY_LIMIT}"
+            JOBS[name].update(status="success", stage="complete", message=(f"{provider} login verified; usage reset to {usage}; previous deletion result was not confirmed" if recovering_uncertain else f"Account renewed; {provider} login verified; usage reset to {usage}"), error="")
     except Exception as exc:
         # Never copy browser exception URLs (OAuth tokens) into logs / dashboard.
         import traceback
@@ -825,10 +829,10 @@ async def admin_delete_dola(name: str, resume: bool = False,
     if name not in pool.accounts:
         raise HTTPException(404, "Account not found")
     meta = pool._meta(name)
-    if meta["account_type"] != "google":
-        raise HTTPException(400, "Only Google accounts are supported; Facebook will be added later")
+    if meta["account_type"] not in ("google", "facebook"):
+        raise HTTPException(400, "Only Google and Facebook accounts are supported")
     if not meta["email"]:
-        raise HTTPException(400, "Account email is required to select the correct Google identity")
+        raise HTTPException(400, "Account email is required to select the correct login identity")
     if scheduler.reservation_ids(name):
         raise HTTPException(409, "Account has unfinished video tasks; finish or stop them first")
     from browser import ACTIVE_CONTEXTS
@@ -843,7 +847,8 @@ async def admin_delete_dola(name: str, resume: bool = False,
     else:
         if phase in ("submitting", "deleted"):
             raise HTTPException(409, "Previous deletion requires recovery; do not delete again")
-    pool.auth_result(name, "expired", "Dola deletion / Google re-login in progress")
+    provider = "Facebook" if meta["account_type"] == "facebook" else "Google"
+    pool.auth_result(name, "expired", f"Dola deletion / {provider} re-login in progress")
     JOBS[name] = {"kind":"delete_dola", "status":"running", "stage":"starting", "error":"", "started_at":time.time()}
     asyncio.create_task(_run_dola_delete(name, resume))
     return {"ok": True}
@@ -994,11 +999,8 @@ async def open_web_domain(body: DomainOpenWeb, x_admin_key: str | None = Header(
     global DOMAIN_WEB_QUEUE
     _admin_auth(x_admin_key)
     domain = body.domain.strip().lower().lstrip('@')
-    accounts = []
-    for account in pool.list_accounts():
-        match = re.fullmatch(r'[^@\s]+@([^@\s]+)', (account.get('email') or '').strip().lower())
-        if (match.group(1) if match else '') == domain:
-            accounts.append(account)
+    accounts = [account for account in pool.list_accounts()
+                if pool.matches_open_web_domain(account, domain)]
     if not accounts:
         raise HTTPException(404, 'Không có account thuộc domain này')
     if DOMAIN_WEB_QUEUE is None:

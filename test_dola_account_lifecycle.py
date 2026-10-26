@@ -33,7 +33,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(lifecycle.BrowserError):
             await lifecycle.wait_for_logged_out_page(SimpleNamespace(pages=[page]), timeout=1)
 
-    async def test_age_onboarding_is_scoped_to_callback(self):
+    async def test_age_onboarding_is_scoped_to_dola(self):
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             try:
@@ -43,9 +43,10 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
                 <div data-slot="dialog-footer"><button>No</button>
                 <button class="bg-dbx-fill-highlight" onclick="document.body.dataset.accepted='yes'">OK</button></div></div>'''
                 await page.route('**/*', lambda route: route.fulfill(body=html))
-                for url in ('https://example.com/auth/callback', 'https://www.dola.com/chat'):
-                    await page.goto(url)
-                    self.assertFalse(await lifecycle.confirm_adult_onboarding(page))
+                await page.goto('https://example.com/auth/callback')
+                self.assertFalse(await lifecycle.confirm_adult_onboarding(page))
+                await page.goto('https://www.dola.com/chat')
+                self.assertTrue(await lifecycle.confirm_adult_onboarding(page))
                 await page.goto('https://www.dola.com/auth/callback')
                 self.assertTrue(await lifecycle.confirm_adult_onboarding(page))
                 self.assertEqual(await page.locator('body').get_attribute('data-accepted'), 'yes')
@@ -73,6 +74,127 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await browser.close()
 
+    async def test_facebook_relogin_clicks_provider_icon(self):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                context = await browser.new_context()
+                await context.add_cookies([dict(name='sessionid', value='fixture', domain='www.dola.com', path='/')])
+                async def route(request):
+                    callback = '/auth/callback' in request.request.url
+                    body = ('<div data-testid="sidebar_footer_setting_entry">Account</div>' if callback else
+                            '''<div data-testid="login_content" role="dialog">
+                            <div data-disabled="false" role="button" onclick="window.open('/auth/callback')">
+                            <svg><path fill="#0068FF" d="M12 2C6.203 2 1.5 6.73 1.5 12.5"></path></svg>
+                            </div></div>''')
+                    await request.fulfill(body=body)
+                await context.route('**/*', route)
+                page = await context.new_page()
+                await lifecycle.relogin(context, page, '61595929468879', lambda *a: None, timeout=10,
+                                        account_type='facebook', account='fb-acc')
+                self.assertEqual(len(context.pages), 2)
+            finally:
+                await browser.close()
+
+    async def test_facebook_inline_delete_and_login_picker(self):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            try:
+                await page.route('**/*', lambda route: route.fulfill(body='''
+                <div role="dialog" data-state="open">
+                  <svg><path fill="#0068FF" d="M12 2C6.203 2 1.5 6.73 1.5 12.5"></path></svg>
+                  <button data-dbx-name="button" class="bg-dbx-function-danger" onclick="document.body.dataset.deleted=1">x</button>
+                </div>'''))
+                await page.goto('https://www.dola.com/chat')
+                button = await lifecycle.facebook_inline_delete_button(page)
+                self.assertIsNotNone(button)
+                self.assertFalse(await lifecycle.dola_login_visible(page))
+                await lifecycle.unique_click(button)
+                self.assertEqual(await page.locator('body').get_attribute('data-deleted'), '1')
+                await page.route('**/*', lambda route: route.fulfill(body='''
+                <div role="dialog" data-state="open">
+                  <div data-disabled="false" role="button" onclick="window.open('/auth/callback')">
+                    <svg><path fill="#0068FF" d="M12 2C6.203 2 1.5 6.73 1.5 12.5"></path></svg>
+                  </div>
+                </div>'''))
+                await page.goto('https://www.dola.com/chat')
+                self.assertIsNone(await lifecycle.facebook_inline_delete_button(page))
+                self.assertTrue(await lifecycle.dola_login_visible(page))
+                await page.route('**/*', lambda route: route.fulfill(body='''
+                <div role="dialog" data-state="open">
+                  <div data-slot="dialog-title" status="warning"></div>
+                  <button data-dbx-name="button" class="bg-dbx-function-danger"
+                    style="width:220px;height:40px">x</button>
+                </div>'''))
+                await page.goto('https://www.dola.com/chat')
+                self.assertIsNone(await lifecycle.facebook_inline_delete_button(page))
+                await page.route('**/*', lambda route: route.fulfill(body='''
+                <div role="dialog">
+                  <svg><path fill="#0068FF" d="M12 2C6.203 2 1.5 6.73 1.5 12.5"></path></svg>
+                  <button data-dbx-name="button" style="background:#ef4444;width:220px;height:40px"
+                    onclick="document.body.dataset.painted='yes'">x</button>
+                </div>'''))
+                await page.goto('https://www.dola.com/chat')
+                painted = await lifecycle.facebook_inline_delete_button(page)
+                self.assertIsNotNone(painted)
+                await lifecycle.unique_click(painted)
+                self.assertEqual(await page.locator('body').get_attribute('data-painted'), 'yes')
+                await page.route('**/*', lambda route: route.fulfill(body='''
+                <div role="dialog">
+                  <button style="background:#ef4444;width:220px;height:40px"
+                    onclick="document.body.dataset.brand='yes'">x</button>
+                </div>'''))
+                await page.goto('https://www.dola.com/chat')
+                brand = await lifecycle.facebook_inline_delete_button(page)
+                self.assertIsNotNone(brand)
+                await lifecycle.unique_click(brand)
+                self.assertEqual(await page.locator('body').get_attribute('data-brand'), 'yes')
+                await page.route('**/*', lambda route: route.fulfill(body='''
+                <div data-slot="dialog-content" style="position:fixed;inset:0">
+                  <div onclick="document.body.dataset.pill='yes'"
+                       style="width:220px;height:44px">
+                    <span style="display:block;background:#ef4444;width:220px;height:44px"></span>
+                  </div>
+                </div>'''))
+                await page.goto('https://www.dola.com/chat')
+                pill = await lifecycle.facebook_inline_delete_button(page)
+                self.assertIsNotNone(pill)
+                await lifecycle.unique_click(pill)
+                self.assertEqual(await page.locator('body').get_attribute('data-pill'), 'yes')
+                await page.route('**/*', lambda route: route.fulfill(body='''
+                <div role="dialog">
+                  <button role="button" style="background:#ef4444;width:220px;height:40px"
+                    onclick="document.body.dataset.nested='yes'">
+                    <span role="button" style="background:#ef4444;width:200px;height:36px"></span>
+                  </button>
+                </div>'''))
+                await page.goto('https://www.dola.com/chat')
+                nested = await lifecycle.facebook_inline_delete_button(page)
+                self.assertIsNotNone(nested)
+                await lifecycle.unique_click(nested)
+                self.assertEqual(await page.locator('body').get_attribute('data-nested'), 'yes')
+            finally:
+                await browser.close()
+
+    async def test_age_dialog_without_slot_attributes(self):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            try:
+                await page.route('**/*', lambda route: route.fulfill(body='''
+                <div role="dialog">
+                  <p>18</p>
+                  <button>No</button>
+                  <button style="background:#2563eb;width:80px;height:36px"
+                    onclick="document.body.dataset.accepted='yes'">OK</button>
+                </div>'''))
+                await page.goto('https://www.dola.com/chat')
+                self.assertTrue(await lifecycle.confirm_adult_onboarding(page))
+                self.assertEqual(await page.locator('body').get_attribute('data-accepted'), 'yes')
+            finally:
+                await browser.close()
+
     async def test_endpoint_guards(self):
         tree = ast.parse(Path("server.py").read_text(encoding="utf-8"))
         node = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "admin_delete_dola")
@@ -88,16 +210,14 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         exec(compile(ast.Module(body=[node],type_ignores=[]), "server.py", "exec"),env)
         endpoint=env["admin_delete_dola"]
         with patch.object(lifecycle,"read_checkpoint",return_value={}), patch("browser.ACTIVE_CONTEXTS",{}):
-            for provider, used, expected in (("facebook",2,400),):
-                meta["account_type"]=provider; pool.used_today=lambda n:used
-                with self.assertRaises(HTTPException) as caught: await endpoint("test")
-                self.assertEqual(caught.exception.status_code,expected)
-            meta["account_type"]="google"
-            for used in (0, 1, 2):
+            meta["account_type"]="cookies"
+            with self.assertRaises(HTTPException) as caught: await endpoint("test")
+            self.assertEqual(caught.exception.status_code,400)
+            for provider in ("facebook", "google"):
+                meta["account_type"]=provider
                 env["JOBS"].clear()
-                pool.used_today=lambda n:used
                 await endpoint("test")
-            self.assertEqual(queued,[("test",False)] * 3)
+            self.assertEqual(queued,[("test",False)] * 2)
             with self.assertRaises(HTTPException) as caught: await endpoint("test")
             self.assertEqual(caught.exception.status_code,409)
         env["JOBS"].clear(); pool.used_today=lambda n:0
@@ -143,9 +263,15 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         async def activity(*args):
             yield
         for state in ("active", "expired"):
-            pool = SimpleNamespace(account_activity=activity, _meta=lambda n: {"email":"test@example.com"},
+            import sqlite3
+            db = sqlite3.connect(":memory:")
+            db.row_factory = sqlite3.Row
+            db.execute("CREATE TABLE meta(email TEXT, account_type TEXT)")
+            db.execute("INSERT INTO meta VALUES ('test@example.com','google')")
+            row = db.execute("SELECT * FROM meta").fetchone()
+            pool = SimpleNamespace(account_activity=activity, _meta=lambda n: row,
                                    auth_result=Mock(return_value="active"), reset_renewed_account_usage=Mock())
-            env = dict(pool=pool, JOBS={"test":{}}, logging=logging)
+            env = dict(pool=pool, JOBS={"test":{}}, logging=logging, DAILY_LIMIT=1)
             exec(compile(ast.Module(body=[node], type_ignores=[]), "server.py", "exec"), env)
             with patch.object(lifecycle, "read_checkpoint", return_value={}), patch.object(lifecycle, "checkpoint") as saved, patch.object(lifecycle, "delete_and_relogin", new_callable=AsyncMock), patch("browser.inspect_account_session", new=AsyncMock(return_value={"state":state})):
                 await env["_run_dola_delete"]("test")
@@ -185,6 +311,14 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await page.get_by_role('menuitem', name='Resume Google login').count(), 1)
                 await page.evaluate("closeAccountActions(); accountSnapshot[0].active_requests=1; openAccountActions('test',q('#trigger'))")
                 self.assertTrue(await page.get_by_role('menuitem', name='Resume Google login').is_disabled())
+                await page.evaluate("closeAccountActions(); accountSnapshot[0]={name:'fb',account_type:'facebook'}; openAccountActions('fb',q('#trigger'))")
+                self.assertEqual(await page.get_by_role('menuitem', name='Delete Dola & re-login').count(), 1)
+                await page.evaluate("window.confirm=msg=>{window.lastConfirm=msg;return true}; deleteDolaAcc('fb')")
+                self.assertIn('Facebook', await page.evaluate('lastConfirm'))
+                self.assertIn('0/1', await page.evaluate('lastConfirm'))
+                self.assertEqual(await page.evaluate('calls[1][0]'), '/api/admin/accounts/fb/delete-dola')
+                await page.evaluate("closeAccountActions(); accountSnapshot[0].dola_delete_phase='deleted'; openAccountActions('fb',q('#trigger'))")
+                self.assertEqual(await page.get_by_role('menuitem', name='Resume Facebook login').count(), 1)
             finally:
                 await browser.close()
 
