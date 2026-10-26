@@ -721,6 +721,7 @@ async def _prepare_video_composer(page, account: str, needs_upload: bool):
         # Reuse the active video composer after a rejection. The entry button
         # disappears once video mode opens; its absence is not a click failure.
         opened = False
+        skill_opened = False
         for attempt in range(1, 61):
             _, root = await _composer(page)
             if await _video_composer_ready(root, needs_upload):
@@ -731,6 +732,20 @@ async def _prepare_video_composer(page, account: str, needs_upload: bool):
             if not opened and await button.is_visible() and await button.is_enabled():
                 await button.click(timeout=10000)
                 opened = True
+            elif not opened and not skill_opened:
+                # Pro mode collapses generation actions into the Skill picker.
+                skill_button = page.get_by_test_id("general-agent-skill-button")
+                if await skill_button.is_visible() and await skill_button.is_enabled():
+                    await skill_button.click(timeout=10000)
+                    skill_opened = True
+                    await page.wait_for_timeout(500)
+                    video_skill = page.get_by_text(
+                        re.compile(r"^(?:\u52d5\u753b\u3092\u4f5c\u6210|Create (?:a )?video)$", re.I),
+                        exact=True,
+                    ).last
+                    if await video_skill.is_visible():
+                        await video_skill.click(timeout=10000)
+                        opened = True
             await page.wait_for_timeout(500)
         raise TimeoutError("Video composer controls did not become ready after 60 checks")
     except Exception:
@@ -1032,6 +1047,7 @@ async def _select_video_duration(page, duration: int, account: str):
 async def generate_video(account: str, prompt: str, ratio: str = None,
                          duration: int = None, timeout: int = None,
                          model: str = "seedance_v2.0", use_extension: bool = True,
+                         chat_mode: str = "fast",
                          on_conversation_id=None, on_poll=None, on_balance=None,
                          reference_image_paths: list[str] | None = None,
                          on_submit=None, name: str = "", single_attempt=False, monitor=None, on_rejected=None,
@@ -1045,6 +1061,11 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
         model_key = "seedance_v2.0"
     else:
         raise ValueError(f"Unsupported model: {model} (supported: seedance-2.0 / seedance-2.5)")
+    chat_mode_key = (chat_mode or "fast").strip().lower()
+    if chat_mode_key not in ("fast", "pro"):
+        raise ValueError("Unsupported chat mode (supported: fast / pro)")
+    if chat_mode_key == "pro" and (model_key != "seedance_v2.0" or duration != 15):
+        raise ValueError("Pro chat mode currently requires Seedance 2.0 at 15 seconds")
     if duration is not None and duration not in (10, 15, 30):
         raise ValueError("Dola supports durations of 10s, 15s, and 30s via extension")
     if duration == 30 and not use_extension:
@@ -1069,6 +1090,19 @@ async def generate_video(account: str, prompt: str, ratio: str = None,
             cookies = await context.cookies("https://www.dola.com")
             ms_token, fp = cookie_value(cookies, "msToken"), cookie_value(cookies, "s_v_web_id")
             await ensure_account_session(page, context)
+
+            if chat_mode_key == "pro":
+                # Select Dola's response mode before opening the video composer.
+                mode_button = page.get_by_role(
+                    "button", name=re.compile(r"^(?:高速|Fast)(?:\s|$)", re.I)
+                ).last
+                await mode_button.click(timeout=5000)
+                menu = page.locator('[role="menu"][data-state="open"]:visible')
+                await menu.wait_for(state="visible", timeout=5000)
+                pro_option = menu.get_by_text(re.compile(r"^(?:プロ|Pro)$", re.I)).last
+                await pro_option.click(timeout=5000)
+                await menu.wait_for(state="hidden", timeout=5000)
+                _log(f"[{account}] Dola chat mode selected: pro")
 
             after_index = after_index_start
             indexed_conversation_id = start_conversation_id

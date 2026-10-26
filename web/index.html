@@ -578,6 +578,7 @@ main.accounts-view{max-width:1440px}
           <div class="field"><label for="videoModel">Model</label><select id="videoModel"><option value="seedance-2.0">Seedance 2.0</option><option value="seedance-2.5">Seedance 2.5</option></select></div>
           <div class="field"><label for="videoRatio">Ratio</label><select id="videoRatio"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="3:4">3:4</option></select></div>
           <div class="field"><label for="videoDuration">Duration</label><select id="videoDuration"><option value="10">10s</option><option value="15">15s</option><option value="30">30s</option></select></div>
+          <div class="field"><label for="videoChatMode">Chat mode</label><select id="videoChatMode"><option value="fast">Fast</option><option value="pro">Pro (Seedance 2.0, 15s)</option></select></div>
           <div class="field"><label for="videoCount">Videos</label><select id="videoCount" onchange="updateVideoCount()"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option></select></div>
           <button class="btn btn-p" id="generateBtn" onclick="submitVideoTask()">Generate Video &rarr;</button>
         </div>
@@ -1276,6 +1277,15 @@ function updateVideoCount(){
   if(!q('#generateBtn').disabled)q('#generateBtn').textContent=count===1?'Generate Video \u2192':`Generate ${count} videos \u2192`;
   q('#videoCountHint').textContent=`Create ${count} video${count===1?'':'s'} - uses quota for ${count} generation${count===1?'':'s'}`;
 }
+function updateVideoChatModeAvailability(){
+  const supported=q('#videoModel').value==='seedance-2.0'&&Number(q('#videoDuration').value)===15;
+  const mode=q('#videoChatMode');
+  mode.disabled=!supported;
+  if(!supported)mode.value='fast';
+}
+q('#videoModel').addEventListener('change',updateVideoChatModeAvailability);
+q('#videoDuration').addEventListener('change',updateVideoChatModeAvailability);
+updateVideoChatModeAvailability();
 async function submitVideoTask(){
   if(q('#generateBtn').disabled)return;
   const prompt=q('#videoPrompt').value.trim();
@@ -1286,7 +1296,7 @@ async function submitVideoTask(){
   const apiKey=q('#videoApiKey').value.trim();
   const headers=apiKey?{Authorization:'Bearer '+apiKey}:{};
   const btn=q('#generateBtn');
-  const settings={model:q('#videoModel').value,ratio:q('#videoRatio').value,duration:Number(q('#videoDuration').value),count:Number(q('#videoCount').value),reference_aliases:startEnd?startEndReferenceAliases():files.map((_,index)=>referenceAliases[index]||'')};
+  const settings={model:q('#videoModel').value,ratio:q('#videoRatio').value,duration:Number(q('#videoDuration').value),chat_mode:q('#videoChatMode').value,count:Number(q('#videoCount').value),reference_aliases:startEnd?startEndReferenceAliases():files.map((_,index)=>referenceAliases[index]||'')};
   btn.disabled=true;btn.textContent='Submitting...';
   try{
     let referenceImages=[];

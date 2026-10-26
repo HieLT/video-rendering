@@ -182,6 +182,7 @@ class VideoGenRequest(BaseModel):
     batch_id: str | None = Field(None, min_length=1, max_length=200)
     name: str | None = Field(None, max_length=200)
     model: str = "seedance-2.0"
+    chat_mode: str = "fast"
     prompt: str = Field(..., min_length=1)
     size: str | None = None
     ratio: str | None = None
@@ -381,6 +382,15 @@ async def create_video(req: VideoGenRequest, authorization: str | None = Header(
 
 async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, prepare_only=False, project_id=None, scene_updated_at=None, generation_request_id=None, candidates_per_scene=1, studio_task_id=None):
     """Shared admission, task snapshots and scheduling for legacy and scene inputs."""
+    chat_mode = (req.chat_mode or "fast").strip().lower()
+    if chat_mode not in ("fast", "pro"):
+        raise HTTPException(422, "chat_mode must be fast or pro")
+    if chat_mode == "pro":
+        model_key = req.model.lower().replace("-", "_")
+        if model_key not in ("seedance_2.0", "seedance_v2.0", "seedance_20", "seedance_v20") or (req.duration or 10) != 15:
+            raise HTTPException(422, "Pro chat mode currently requires Seedance 2.0 at 15 seconds")
+        if project_id is not None or scene_id is not None or prepare_only:
+            raise HTTPException(422, "Pro chat mode is currently supported for standalone video tasks only")
     if project_id is not None:
         return await submit_project_generation(project_id, client, store, VideoGenRequest, _submit_video, _run_task, config.MAX_PENDING_TASKS, candidates_per_scene, generation_request_id)
     if (req.batch_id or '').startswith('studio_') and not studio_task_id:
@@ -464,7 +474,7 @@ async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, 
         if scene_id is None or reference_snapshot is None:
             raise ValueError("Project batch preparation requires persistent scene references")
         return dict(scene_id=scene_id, model=req.model, prompt=prompt, ratio=ratio or "default",
-                    duration=duration, start_end=req.start_end, name=req.name,
+                    duration=duration, chat_mode=chat_mode, start_end=req.start_end, name=req.name,
                     reference_images=reference_images, reference_snapshot=reference_snapshot)
     # Resolve again after URL validation awaits, then persist without yielding.
     references = []
@@ -484,6 +494,7 @@ async def _submit_video(req, client, *, scene_id=None, reference_snapshot=None, 
     try:
         store.create_batch(
             task_ids, req.model, prompt, ratio or "default", duration,
+            chat_mode=chat_mode,
             reference_images={key: json.dumps(value, ensure_ascii=False) for key, value in task_references.items()},
             batch_id=batch_id, start_end=req.start_end,
             append_batch=(bool(req.batch_id) and scene_id is None and

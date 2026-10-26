@@ -536,7 +536,8 @@ class BrowserPool:
                              model: str = "seedance_v2.0", on_conversation_id=None,
                              on_poll=None, on_balance=None,
                              reference_image_paths: list[str] | None = None,
-                             on_account_selected=None, name: str = "", on_wait=None):
+                             on_account_selected=None, name: str = "", on_wait=None,
+                             chat_mode: str = "fast"):
         # FIFO admission gates are released as soon as an account lock is held,
         # so running workers retain the existing parallelism.
         if not hasattr(self, '_admission_waiters'):
@@ -566,7 +567,7 @@ class BrowserPool:
                         prompt, ratio, duration, model, on_conversation_id=on_conversation_id,
                         on_poll=on_poll, on_balance=on_balance,
                         reference_image_paths=reference_image_paths,
-                        on_account_selected=selected, name=name)
+                        on_account_selected=selected, name=name, chat_mode=chat_mode)
                 except AccountTemporarilyUnavailable:
                     if on_wait:
                         on_wait()
@@ -579,7 +580,8 @@ class BrowserPool:
                              model: str = "seedance_v2.0", on_conversation_id=None,
                              on_poll=None, on_balance=None,
                              reference_image_paths: list[str] | None = None,
-                             on_account_selected=None, name: str = "") -> dict:
+                             on_account_selected=None, name: str = "",
+                             chat_mode: str = "fast") -> dict:
         """Picks an idle schedulable account; automatically rotates on quota/risk limits."""
         async with self.semaphore:
             last_err = None
@@ -612,7 +614,7 @@ class BrowserPool:
                             account, prompt, ratio, duration, model=model,
                             on_conversation_id=on_conversation_id, on_poll=on_poll,
                             on_balance=on_balance, reference_image_paths=reference_image_paths,
-                            on_submit=on_submit, name=name)
+                            on_submit=on_submit, name=name, chat_mode=chat_mode)
                         self._claim(account)
                         self._conn.execute(
                             "UPDATE accounts_meta SET last_used_at=? WHERE name=?",

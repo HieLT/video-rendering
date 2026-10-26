@@ -79,6 +79,7 @@ class TaskStore(ProductionStoreMixin):
                 for column, definition in (
                     ("retry_history", "TEXT DEFAULT '[]'"),
                     ("name", "TEXT DEFAULT ''"),
+                    ("chat_mode", "TEXT NOT NULL DEFAULT 'fast'"),
                     ("edit_selected", "INTEGER NOT NULL DEFAULT 0"),
                     ("tag_filename", "TEXT"),
                     ("phase", "TEXT DEFAULT 'ready'"),
@@ -195,6 +196,7 @@ class TaskStore(ProductionStoreMixin):
         batch_id=None,
         name=None,
         *,
+        chat_mode="fast",
         scene_id=None,
         reference_snapshot=None,
         guard_scene=False,
@@ -254,6 +256,7 @@ class TaskStore(ProductionStoreMixin):
                     prompt,
                     ratio,
                     duration,
+                    chat_mode,
                     account,
                     now,
                     now,
@@ -290,7 +293,7 @@ class TaskStore(ProductionStoreMixin):
         return 'batch_' + hashlib.sha256(json.dumps([scope,identifier,request_id,client_hash]).encode()).hexdigest()
 
     def _insert_task_rows(self, rows):
-        self._conn.executemany("INSERT INTO tasks (id,model,prompt,ratio,duration,status,account,created_at,updated_at,conversation_id,deadline_at,last_poll_at,failure_code,reference_images,api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,start_end,batch_id,batch_index,batch_count,name,scene_id,reference_snapshot) VALUES (?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+        self._conn.executemany("INSERT INTO tasks (id,model,prompt,ratio,duration,chat_mode,status,account,created_at,updated_at,conversation_id,deadline_at,last_poll_at,failure_code,reference_images,api_key_hash,api_key_name,started_at,finished_at,client_concurrency_limit,start_end,batch_id,batch_index,batch_count,name,scene_id,reference_snapshot) VALUES (?,?,?,?,?,?,'queued',?,?,?,NULL,NULL,0,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
 
     def _project_generation_status(self, project_id):
         self._require('projects', project_id)

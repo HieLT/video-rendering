@@ -411,6 +411,7 @@ class VideoScheduler:
             return await worker.generate_video(
                 row["account"],row["prompt"],ratio=None if row["ratio"]=="default" else row["ratio"],
                 duration=row["duration"],model=row["model"],reference_image_paths=paths,
+                chat_mode=row.get("chat_mode") or "fast",
                 on_submit=before_dispatch,on_conversation_id=conversation,
                 single_attempt=False,monitor=monitor,on_rejected=rejected,
                 start_conversation_id=row.get("conversation_id"),after_index_start=row.get("after_index") or 0)
